@@ -1,0 +1,4 @@
+interface:
+  display_name: "Audit Usage Privacy"
+  short_description: "Keep sensitive conversation content out of exports"
+  default_prompt: "Use $audit-usage-privacy to review this ingestion or export change."

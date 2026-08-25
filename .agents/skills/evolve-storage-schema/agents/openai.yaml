@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolve Storage Schema"
+  short_description: "Change SQLite and PostgreSQL schemas safely"
+  default_prompt: "Use $evolve-storage-schema to plan and implement this data model change."

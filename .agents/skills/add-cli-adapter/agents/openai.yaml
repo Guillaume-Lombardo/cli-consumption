@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add CLI Adapter"
+  short_description: "Add a privacy-safe AI CLI ingestion adapter"
+  default_prompt: "Use $add-cli-adapter to implement the next AI CLI provider."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Yolo GitHub"
+  short_description: "Publish, squash-merge, and clean up a PR"
+  default_prompt: "Use $yolo to publish, squash-merge, and clean up the current GitHub work."

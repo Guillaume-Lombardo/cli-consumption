@@ -39,6 +39,7 @@ cli-consumption = "cli_consumption.cli:app"
 
 [dependency-groups]
 dev = [
+  "pre-commit>=4.6.2",
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "ruff>=0.11",

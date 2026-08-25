@@ -7,6 +7,7 @@ git switch main
 git pull --ff-only
 git switch -c feat/short-description
 uv sync --all-groups
+uv run pre-commit install
 ```
 
 Use `uv add`, `uv remove`, and `uv lock` for dependency changes. Do not edit the lock

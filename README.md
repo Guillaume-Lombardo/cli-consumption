@@ -127,6 +127,8 @@ Run `uv run cli-consumption COMMAND --help` for every option.
 
 ```bash
 uv sync --all-groups
+uv run pre-commit install
+uv run pre-commit run --all-files
 uv run ruff format --check .
 uv run ruff check .
 uv run ty check

@@ -30,12 +30,16 @@ accepted architecture decision.
   retention, or compatibility changes.
 - Use `.agents/skills/audit-usage-privacy` for collectors, API payloads, exports,
   dashboards, logging, or changes that can cross the privacy boundary.
+- Use `.agents/skills/yeet-github` only when explicitly asked to publish a draft pull
+  request. Use `.agents/skills/yolo` only when explicitly invoked for the full publish,
+  squash-merge, and cleanup workflow.
 
 ## Quality gates
 
 Run all of the following before requesting review:
 
 ```bash
+uv run pre-commit run --all-files
 uv run ruff format --check .
 uv run ruff check .
 uv run ty check

@@ -53,3 +53,47 @@ def test_collect_and_export(tmp_path: Path, rollout_factory) -> None:
     )
     assert result.exit_code == 0, result.output
     assert (reports / "dashboard.html").is_file()
+
+    safe_reports = tmp_path / "safe-reports"
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "--database",
+            str(database),
+            "--output",
+            str(safe_reports),
+            "--share-safe",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert [path.name for path in safe_reports.iterdir()] == ["dashboard.html"]
+    assert "desktop" not in (safe_reports / "dashboard.html").read_text()
+
+    (safe_reports / "detailed.csv").write_text("sensitive", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "--database",
+            str(database),
+            "--output",
+            str(safe_reports),
+            "--share-safe",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "must be empty" in result.output
+
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "--database",
+            str(database),
+            "--share-safe",
+            "--no-dashboard",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "requires --dashboard" in result.output

@@ -30,6 +30,26 @@ def test_collects_and_deduplicates_copied_rollouts(
     assert conversation["visible_output_tokens"] == 15
     assert snapshot.model_calls[0]["model"] == "gpt-5.6"
     assert snapshot.tool_calls[0]["tool_name"] == "exec_command"
+    assert snapshot.work_items == [
+        {
+            "id": "codex:conversation-1:work:1",
+            "conversation_id": "codex:conversation-1",
+            "turn_id": "codex:conversation-1:turn-1",
+            "sequence": 1,
+            "kind": "command",
+            "tool_name": None,
+            "started_at_ms": 1000,
+            "completed_at_ms": 2000,
+            "duration_ms": 1000,
+            "status": "completed",
+        }
+    ]
+    assert snapshot.context_samples[0]["input_tokens"] == 100
+    assert snapshot.context_samples[0]["context_window_tokens"] == 1000
+    assert snapshot.turn_settings[0]["effort"] == "high"
+    assert snapshot.turn_settings[0]["collaboration_mode"] == "default"
+    assert snapshot.turn_settings[0]["service_tier"] == "priority"
+    assert snapshot.compaction_events[0]["timestamp"] == "2026-08-25T10:00:05+00:00"
     assert "secret value" not in str(snapshot.to_dict())
 
 
@@ -96,3 +116,44 @@ def test_subagent_metadata_excludes_agent_paths(
     assert snapshot.subagents[0]["tokens_used"] == 42
     assert "agent_path" not in snapshot.subagents[0]
     assert "/private/agent/path" not in str(snapshot.to_dict())
+
+
+def test_work_items_normalize_failures_and_reject_arbitrary_dimensions(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    path = rollout_factory(home)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            '{"timestamp":"2026-08-25T10:00:06Z","type":"event_msg",'
+            '"payload":{"type":"item_completed","turn_id":"turn-1",'
+            '"started_at_ms":3000,"completed_at_ms":2500,"item":{'
+            '"type":"McpToolCall","tool":"secret value with spaces",'
+            '"status":"completed","error":{"secret":"privacy canary"}}}}\n'
+        )
+        handle.write(
+            '{"timestamp":"2026-08-25T10:00:07Z","type":"turn_context",'
+            '"payload":{"turn_id":"turn-1","model":"privacy canary",'
+            '"effort":"privacy canary","collaboration_mode":{'
+            '"mode":"privacy canary","settings":{"secret":"privacy canary"}}}}\n'
+        )
+        handle.write(
+            '{"timestamp":"2026-08-25T10:00:08Z","type":"event_msg",'
+            '"payload":{"type":"token_count","info":{'
+            '"model_context_window":Infinity,"last_token_usage":{'
+            '"input_tokens":Infinity,"cached_input_tokens":-1,'
+            '"output_tokens":"privacy canary","total_tokens":Infinity}}}}\n'
+        )
+
+    snapshot = CodexAdapter().collect([("machine", home)])
+
+    failed = snapshot.work_items[-1]
+    assert failed["kind"] == "mcp-tool"
+    assert failed["tool_name"] is None
+    assert failed["duration_ms"] == 0
+    assert failed["status"] == "failed"
+    assert snapshot.turn_settings[0]["model"] == "gpt-5.6"
+    assert snapshot.turn_settings[0]["effort"] == "medium"
+    assert snapshot.model_calls[-1]["total_tokens"] == 0
+    assert len(snapshot.context_samples) == 1
+    assert "privacy canary" not in str(snapshot.to_dict())

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 from datetime import UTC, datetime
@@ -28,6 +29,22 @@ KNOWN_NESTED_TOOLS = {
     "web__run",
     "write_stdin",
 }
+WORK_ITEM_KINDS = {
+    "AgentMessage": "message",
+    "CollabAgentToolCall": "agent-coordination",
+    "CommandExecution": "command",
+    "ContextCompaction": "compaction",
+    "DynamicToolCall": "dynamic-tool",
+    "Extension": "extension",
+    "FileChange": "file-change",
+    "ImageView": "media",
+    "McpToolCall": "mcp-tool",
+    "Reasoning": "reasoning",
+    "SubAgentActivity": "subagent-activity",
+    "UserMessage": "user-message",
+}
+SAFE_DIMENSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
+MAX_BIGINT = 9_223_372_036_854_775_807
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
@@ -226,7 +243,17 @@ class CodexAdapter:
         totals = empty_tokens()
         call_sequence = 0
         tool_sequence = 0
+        work_sequence = 0
+        compaction_sequence = 0
         compactions = 0
+        setting_defaults: dict[str, str | int | None] = {
+            "model": None,
+            "effort": None,
+            "collaboration_mode": None,
+            "service_tier": None,
+            "context_window_tokens": None,
+        }
+        settings_by_turn: dict[str, dict[str, str | int | None]] = {}
 
         for event in events:
             timestamp = parse_timestamp(event.get("timestamp"))
@@ -237,16 +264,68 @@ class CodexAdapter:
             payload_type = payload.get("type")
             if event_type == "compacted":
                 compactions += 1
+                compaction_sequence += 1
+                snapshot.compaction_events.append(
+                    {
+                        "id": f"{record_id}:compaction:{compaction_sequence}",
+                        "conversation_id": record_id,
+                        "turn_id": (
+                            f"{record_id}:{active_turn_id}" if active_turn_id else None
+                        ),
+                        "sequence": compaction_sequence,
+                        "timestamp": _iso(timestamp),
+                    }
+                )
+            if event_type == "event_msg" and payload_type == "thread_settings_applied":
+                raw_settings = payload.get("thread_settings")
+                if isinstance(raw_settings, dict):
+                    updates: dict[str, str | int | None] = {
+                        "model": _safe_dimension(raw_settings.get("model"), 255),
+                        "effort": _safe_dimension(
+                            raw_settings.get("reasoning_effort"), 64
+                        ),
+                        "collaboration_mode": _collaboration_mode(
+                            raw_settings.get("collaboration_mode")
+                        ),
+                        "service_tier": _safe_dimension(
+                            raw_settings.get("service_tier"), 64
+                        ),
+                    }
+                    _merge_present(setting_defaults, updates)
+                    if active_turn_id and active_turn_id in settings_by_turn:
+                        _merge_present(settings_by_turn[active_turn_id], updates)
             if event_type == "turn_context":
                 active_turn_id = (
                     str(payload.get("turn_id") or active_turn_id or "") or None
                 )
-                active_model = str(payload.get("model") or active_model or "") or None
+                active_model = (
+                    _safe_dimension(payload.get("model"), 255) or active_model
+                )
                 if active_model:
                     models.add(active_model)
+                if active_turn_id:
+                    settings_by_turn[active_turn_id] = {
+                        **setting_defaults,
+                        "model": active_model,
+                        "effort": _safe_dimension(payload.get("effort"), 64)
+                        or setting_defaults["effort"],
+                        "collaboration_mode": _collaboration_mode(
+                            payload.get("collaboration_mode")
+                        )
+                        or setting_defaults["collaboration_mode"],
+                    }
             if event_type == "event_msg" and payload_type == "task_started":
                 active_turn_id = str(payload.get("turn_id") or "") or None
                 if active_turn_id:
+                    settings = settings_by_turn.setdefault(
+                        active_turn_id, dict(setting_defaults)
+                    )
+                    settings["model"] = active_model or settings["model"]
+                    context_window = _positive_integer_or_none(
+                        payload.get("model_context_window")
+                    )
+                    if context_window is not None:
+                        settings["context_window_tokens"] = context_window
                     turns[active_turn_id] = {
                         "id": f"{record_id}:{active_turn_id}",
                         "conversation_id": record_id,
@@ -279,6 +358,33 @@ class CodexAdapter:
                     )
                 active_turn_id = None
                 continue
+            if event_type == "event_msg" and payload_type == "item_completed":
+                item = payload.get("item")
+                if not isinstance(item, dict):
+                    continue
+                work_sequence += 1
+                started_at_ms = _integer_or_none(payload.get("started_at_ms"))
+                completed_at_ms = _integer_or_none(payload.get("completed_at_ms"))
+                turn_id = str(payload.get("turn_id") or active_turn_id or "") or None
+                snapshot.work_items.append(
+                    {
+                        "id": f"{record_id}:work:{work_sequence}",
+                        "conversation_id": record_id,
+                        "turn_id": f"{record_id}:{turn_id}" if turn_id else None,
+                        "sequence": work_sequence,
+                        "kind": WORK_ITEM_KINDS.get(
+                            str(item.get("type") or ""), "other"
+                        ),
+                        "tool_name": _safe_dimension(item.get("tool"), 512),
+                        "started_at_ms": started_at_ms,
+                        "completed_at_ms": completed_at_ms,
+                        "duration_ms": _interval_duration(
+                            started_at_ms, completed_at_ms
+                        ),
+                        "status": _work_item_status(item),
+                    }
+                )
+                continue
             if event_type == "event_msg" and payload_type == "token_count":
                 info = payload.get("info")
                 usage = info.get("last_token_usage") if isinstance(info, dict) else None
@@ -286,7 +392,8 @@ class CodexAdapter:
                     continue
                 call_sequence += 1
                 tokens = {
-                    field: int(usage.get(field, 0) or 0) for field in TOKEN_FIELDS
+                    field: _nonnegative_integer(usage.get(field))
+                    for field in TOKEN_FIELDS
                 }
                 tokens.update(_derived_tokens(tokens))
                 for field, value in tokens.items():
@@ -307,6 +414,25 @@ class CodexAdapter:
                         **tokens,
                     }
                 )
+                context_window = _positive_integer_or_none(
+                    info.get("model_context_window")
+                )
+                if context_window is not None:
+                    if active_turn_id and active_turn_id in settings_by_turn:
+                        settings_by_turn[active_turn_id]["context_window_tokens"] = (
+                            context_window
+                        )
+                    snapshot.context_samples.append(
+                        {
+                            "id": f"{record_id}:context:{call_sequence}",
+                            "conversation_id": record_id,
+                            "turn_id": turn["id"] if turn else None,
+                            "sequence": call_sequence,
+                            "timestamp": _iso(timestamp),
+                            "input_tokens": max(0, tokens["input_tokens"]),
+                            "context_window_tokens": context_window,
+                        }
+                    )
                 continue
             if event_type == "response_item" and payload_type in {
                 "custom_tool_call",
@@ -333,6 +459,20 @@ class CodexAdapter:
             if turn["ended_at"] is None:
                 turn["ended_at"] = _iso(ended_at)
             snapshot.turns.append(turn)
+            external_turn_id = str(turn["external_id"])
+            settings = settings_by_turn.get(external_turn_id, setting_defaults)
+            snapshot.turn_settings.append(
+                {
+                    "id": f"{record_id}:settings:{external_turn_id}",
+                    "conversation_id": record_id,
+                    "turn_id": str(turn["id"]),
+                    "model": settings["model"],
+                    "effort": settings["effort"],
+                    "collaboration_mode": settings["collaboration_mode"],
+                    "service_tier": settings["service_tier"],
+                    "context_window_tokens": settings["context_window_tokens"],
+                }
+            )
         snapshot.conversations.append(
             {
                 "id": record_id,
@@ -379,9 +519,73 @@ def _derived_tokens(tokens: dict[str, int]) -> dict[str, int]:
     }
 
 
+def _safe_dimension(value: object, maximum: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or len(normalized) > maximum:
+        return None
+    return normalized if SAFE_DIMENSION.fullmatch(normalized) else None
+
+
+def _merge_present(
+    target: dict[str, str | int | None], updates: dict[str, str | int | None]
+) -> None:
+    target.update((key, value) for key, value in updates.items() if value is not None)
+
+
+def _collaboration_mode(value: object) -> str | None:
+    if isinstance(value, dict):
+        value = value.get("mode")
+    return _safe_dimension(value, 64)
+
+
+def _work_item_status(item: dict[str, Any]) -> str:
+    exit_code = item.get("exit_code")
+    if (
+        isinstance(exit_code, int)
+        and not isinstance(exit_code, bool)
+        and exit_code != 0
+    ):
+        return "failed"
+    if item.get("success") is False or bool(item.get("error")):
+        return "failed"
+    status = str(item.get("status") or "").lower().replace("_", "-")
+    if status in {"completed", "success", "succeeded"}:
+        return "completed"
+    if status in {"failed", "error", "errored"}:
+        return "failed"
+    if status in {"in-progress", "running", "pending"}:
+        return "in-progress"
+    return "unknown"
+
+
+def _interval_duration(
+    started_at_ms: int | None, completed_at_ms: int | None
+) -> int | None:
+    if started_at_ms is None or completed_at_ms is None:
+        return None
+    return max(0, completed_at_ms - started_at_ms)
+
+
+def _positive_integer_or_none(value: object) -> int | None:
+    parsed = _integer_or_none(value)
+    return parsed if parsed is not None and parsed > 0 else None
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
 def _integer_or_none(value: object) -> int | None:
-    return int(value) if isinstance(value, int | float) else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    parsed = int(value)
+    return parsed if -MAX_BIGINT <= parsed <= MAX_BIGINT else None
+
+
+def _nonnegative_integer(value: object) -> int:
+    parsed = _integer_or_none(value)
+    return max(0, parsed or 0)

@@ -36,6 +36,8 @@ async def test_collector_requires_token_and_ingests_snapshot(
         assert response.status_code == 200
         assert response.json()["written"] == 1
         assert read_table(engine, "conversations")[0]["source_machine"] == "laptop"
+        assert read_table(engine, "work_items")[0]["kind"] == "command"
+        assert read_table(engine, "context_samples")[0]["input_tokens"] == 100
 
         invalid = snapshot.to_dict()
         invalid["conversations"][0]["prompt"] = "privacy canary"
@@ -46,4 +48,14 @@ async def test_collector_requires_token_and_ingests_snapshot(
         )
         assert response.status_code == 422
         assert "privacy canary" not in response.text
+
+        invalid = snapshot.to_dict()
+        invalid["work_items"][0]["kind"] = "privacy_canary"
+        response = await client.post(
+            "/api/v1/snapshots",
+            json=invalid,
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert response.status_code == 422
+        assert "privacy_canary" not in response.text
     engine.dispose()

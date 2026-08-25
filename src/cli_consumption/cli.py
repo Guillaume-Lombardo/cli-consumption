@@ -132,15 +132,32 @@ def export_command(
     ] = "cli-consumption.sqlite",
     output: Annotated[Path, typer.Option("--output", "-o")] = Path("reports"),
     dashboard: Annotated[bool, typer.Option("--dashboard/--no-dashboard")] = True,
+    share_safe: Annotated[
+        bool,
+        typer.Option(
+            "--share-safe",
+            help=("Write only a pseudonymized dashboard; omit detailed CSV exports."),
+        ),
+    ] = False,
 ) -> None:
     """Export normalized SQL tables to CSV and a self-contained HTML dashboard."""
+    if share_safe and not dashboard:
+        raise typer.BadParameter("--share-safe requires --dashboard")
+    if (
+        share_safe
+        and output.is_dir()
+        and any(path.name != "dashboard.html" for path in output.iterdir())
+    ):
+        raise typer.BadParameter(
+            "--share-safe output directory must be empty or contain only dashboard.html"
+        )
     engine = create_database_engine(database)
     try:
         initialize_database(engine)
-        paths = export_csv(engine, output)
+        paths = [] if share_safe else export_csv(engine, output)
         if dashboard:
             dashboard_path = output / "dashboard.html"
-            generate_dashboard(engine, dashboard_path)
+            generate_dashboard(engine, dashboard_path, share_safe=share_safe)
             paths.append(dashboard_path)
     finally:
         engine.dispose()

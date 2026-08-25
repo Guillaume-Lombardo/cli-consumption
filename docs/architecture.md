@@ -14,8 +14,9 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> CSV/dashbo
 
 ## Components
 
-- `adapters`: parse a CLI's local data into conversations, turns, model calls, and tool
-  calls. Codex is the first complete implementation.
+- `adapters`: parse a CLI's local data into conversations, turns, model calls, tool
+  calls, context-pressure samples, bounded turn settings, compactions, and content-free
+  work-item intervals. Codex is the first complete implementation.
 - `models`: define the transport boundary shared by offline and API ingestion.
 - `storage`: owns the normalized schema, idempotent replacement rules, SQLite, and
   PostgreSQL engine creation.
@@ -57,6 +58,14 @@ change.
 Conversation records use a provider-qualified stable ID. Repeated ingestion skips an
 identical or less complete record. A more complete copy atomically replaces the
 conversation and its child records.
+
+Workflow analytics use additive child tables: `work_items`, `context_samples`,
+`turn_settings`, and `compaction_events`. Existing SQLite and PostgreSQL databases gain
+these tables through SQLAlchemy `create_all`; no existing table is altered. Older
+snapshots omit the new lists and remain valid on a newer collector. A newer client sent
+to an older strict API is rejected before ingestion, so central deployments must
+upgrade the server first. Downgrading a writer after rich metadata has been ingested is
+not supported because old writers do not know how to replace the new child rows.
 
 ## Adapter roadmap
 

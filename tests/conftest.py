@@ -32,14 +32,36 @@ def rollout_factory():
                 },
             },
             {
+                "timestamp": "2026-08-25T10:00:00.250Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "thread_settings_applied",
+                    "thread_settings": {
+                        "model": "gpt-5.6",
+                        "reasoning_effort": "medium",
+                        "collaboration_mode": {"mode": "default", "settings": {}},
+                        "service_tier": "priority",
+                    },
+                },
+            },
+            {
                 "timestamp": "2026-08-25T10:00:00.500Z",
                 "type": "turn_context",
-                "payload": {"turn_id": "turn-1", "model": "gpt-5.6"},
+                "payload": {
+                    "turn_id": "turn-1",
+                    "model": "gpt-5.6",
+                    "effort": "high",
+                    "collaboration_mode": {"mode": "default", "settings": {}},
+                },
             },
             {
                 "timestamp": "2026-08-25T10:00:01Z",
                 "type": "event_msg",
-                "payload": {"type": "task_started", "turn_id": "turn-1"},
+                "payload": {
+                    "type": "task_started",
+                    "turn_id": "turn-1",
+                    "model_context_window": 1000,
+                },
             },
             {
                 "timestamp": "2026-08-25T10:00:02Z",
@@ -47,6 +69,7 @@ def rollout_factory():
                 "payload": {
                     "type": "token_count",
                     "info": {
+                        "model_context_window": 1000,
                         "last_token_usage": {
                             "input_tokens": 100,
                             "cached_input_tokens": 40,
@@ -54,7 +77,7 @@ def rollout_factory():
                             "output_tokens": 20,
                             "reasoning_output_tokens": 5,
                             "total_tokens": 120,
-                        }
+                        },
                     },
                 },
             },
@@ -65,6 +88,24 @@ def rollout_factory():
                     "type": "function_call",
                     "name": "exec",
                     "input": "await tools.exec_command({cmd: 'secret value'})",
+                },
+            },
+            {
+                "timestamp": "2026-08-25T10:00:03.500Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "thread_id": conversation_id,
+                    "turn_id": "turn-1",
+                    "started_at_ms": 1000,
+                    "completed_at_ms": 2000,
+                    "item": {
+                        "type": "CommandExecution",
+                        "status": "completed",
+                        "exit_code": 0,
+                        "command": "secret value",
+                        "stdout": "secret value",
+                    },
                 },
             },
             {

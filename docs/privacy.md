@@ -36,3 +36,11 @@ An exported database still reveals work patterns, model choices, project names, 
 activity times. Treat it as private operational data. Restrict filesystem and database
 access, use TLS for remote collection, rotate tokens, and define a retention policy
 appropriate to the environment.
+
+The self-contained dashboard embeds only the normalized fields needed for its charts
+and filters. It replaces conversation and turn identifiers with document-local numeric
+keys and excludes provider IDs, content hashes, source values, project mapping sources,
+subagent nicknames, and ingestion-run IDs. Derived rates, percentiles, tool categories,
+and period comparisons are computed inside the document. The remaining project names,
+machine labels, model names, tool names, roles, token counters, statuses, and activity
+timestamps are still private operational metadata.

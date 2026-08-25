@@ -2,23 +2,147 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy.engine import Engine
 
 from cli_consumption.storage import read_table
 
+TOKEN_FIELDS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "cache_write_input_tokens",
+    "uncached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "visible_output_tokens",
+    "unattributed_tokens",
+    "total_tokens",
+)
+
 
 def generate_dashboard(engine: Engine, output: Path) -> None:
-    payload = {
-        "conversations": read_table(engine, "conversations"),
-        "modelCalls": read_table(engine, "model_calls"),
-        "toolCalls": read_table(engine, "tool_calls"),
-        "turns": read_table(engine, "turns"),
-        "subagents": read_table(engine, "subagents"),
-    }
-    encoded = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
+    encoded = json.dumps(
+        _dashboard_payload(engine), separators=(",", ":"), ensure_ascii=True
+    )
+    encoded = (
+        encoded.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(_document(encoded), encoding="utf-8")
+
+
+def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
+    """Return only metadata needed by the dashboard, with local relationship keys."""
+    conversations = read_table(engine, "conversations")
+    turns = read_table(engine, "turns")
+    model_calls = read_table(engine, "model_calls")
+    tool_calls = read_table(engine, "tool_calls")
+    subagents = read_table(engine, "subagents")
+    ingestion_runs = read_table(engine, "ingestion_runs")
+
+    conversation_keys = {
+        str(row["id"]): index for index, row in enumerate(conversations)
+    }
+    external_keys = {
+        (
+            str(row["provider"]),
+            str(row["source_machine"]),
+            str(row["external_id"]),
+        ): index
+        for index, row in enumerate(conversations)
+    }
+    turn_keys = {str(row["id"]): index for index, row in enumerate(turns)}
+
+    def tokens(row: dict[str, Any]) -> dict[str, int]:
+        return {field: int(row[field]) for field in TOKEN_FIELDS}
+
+    return {
+        "conversations": [
+            {
+                "key": index,
+                "provider": row["provider"],
+                "machine": row["source_machine"],
+                "project": row["project"],
+                "startedAt": row["started_at"],
+                "endedAt": row["ended_at"],
+                "durationSeconds": row["duration_seconds"],
+                "models": json.loads(row["models_json"]),
+                "turns": row["iterations"],
+                "modelCalls": row["model_calls"],
+                "toolCalls": row["tool_calls"],
+                "compactions": row["compactions"],
+                **tokens(row),
+            }
+            for index, row in enumerate(conversations)
+        ],
+        "turns": [
+            {
+                "key": index,
+                "conversationKey": conversation_keys[str(row["conversation_id"])],
+                "startedAt": row["started_at"],
+                "endedAt": row["ended_at"],
+                "status": row["status"],
+                "durationMs": row["duration_ms"],
+                "ttftMs": row["time_to_first_token_ms"],
+                "modelCalls": row["model_calls"],
+                "toolCalls": row["tool_calls"],
+                **tokens(row),
+            }
+            for index, row in enumerate(turns)
+        ],
+        "modelCalls": [
+            {
+                "conversationKey": conversation_keys[str(row["conversation_id"])],
+                "turnKey": turn_keys.get(str(row["turn_id"])),
+                "timestamp": row["timestamp"],
+                "model": row["model"],
+                **tokens(row),
+            }
+            for row in model_calls
+        ],
+        "toolCalls": [
+            {
+                "conversationKey": conversation_keys[str(row["conversation_id"])],
+                "turnKey": turn_keys.get(str(row["turn_id"])),
+                "sequence": row["sequence"],
+                "timestamp": row["timestamp"],
+                "tool": row["tool_name"],
+            }
+            for row in tool_calls
+        ],
+        "subagents": [
+            {
+                "conversationKey": external_keys.get(
+                    (
+                        str(row["provider"]),
+                        str(row["source_machine"]),
+                        str(row["parent_thread_id"]),
+                    )
+                ),
+                "provider": row["provider"],
+                "machine": row["source_machine"],
+                "status": row["status"],
+                "createdAtMs": row["created_at_ms"],
+                "updatedAtMs": row["updated_at_ms"],
+                "role": row["agent_role"] or "unspecified",
+                "tokens": row["tokens_used"],
+            }
+            for row in subagents
+        ],
+        "ingestionRuns": [
+            {
+                "provider": row["provider"],
+                "ingestedAt": row["ingested_at"],
+                "received": row["conversations_received"],
+                "written": row["conversations_written"],
+                "skipped": row["conversations_skipped"],
+                "malformed": row["malformed_records"],
+                "duplicates": row["duplicate_conversations"],
+            }
+            for row in ingestion_runs
+        ],
+    }
 
 
 def _document(payload: str) -> str:
@@ -29,75 +153,108 @@ def _document(payload: str) -> str:
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CLI Consumption</title>
   <style>
-    :root {{ color-scheme: dark; --bg:#07111f; --panel:#101e31; --ink:#eef6ff;
-      --muted:#91a7bf; --accent:#5eead4; --accent2:#60a5fa; --line:#233b55; }}
-    * {{ box-sizing:border-box }} body {{ margin:0; background:radial-gradient(circle at 85% 0,#12335a 0,transparent 32%),var(--bg); color:var(--ink); font:15px/1.5 Inter,ui-sans-serif,system-ui,sans-serif }}
-    main {{ max-width:1280px; margin:auto; padding:42px 24px 64px }}
+    :root {{ color-scheme:dark; --bg:#07111f; --panel:#101e31; --panel2:#0c1929; --ink:#eef6ff; --muted:#91a7bf; --accent:#5eead4; --blue:#60a5fa; --violet:#a78bfa; --amber:#fbbf24; --red:#fb7185; --line:#233b55; }}
+    * {{ box-sizing:border-box }}
+    body {{ margin:0; background:radial-gradient(circle at 85% 0,#12335a 0,transparent 32%),var(--bg); color:var(--ink); font:15px/1.5 Inter,ui-sans-serif,system-ui,sans-serif }}
+    main {{ max-width:1440px; margin:auto; padding:40px 24px 64px }}
     h1 {{ margin:0; font-size:clamp(32px,5vw,58px); letter-spacing:-.04em }}
+    h2 {{ margin:0; font-size:18px }} h3 {{ margin:0 0 12px; font-size:14px; color:var(--muted) }}
     .eyebrow {{ color:var(--accent); text-transform:uppercase; letter-spacing:.15em; font-size:12px; font-weight:800 }}
-    .subtitle {{ color:var(--muted); max-width:720px }}
-    .filters,.cards,.grid {{ display:grid; gap:14px }}
-    .filters {{ grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); margin:30px 0 18px }}
-    .cards {{ grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); margin-bottom:18px }}
-    .grid {{ grid-template-columns:repeat(auto-fit,minmax(360px,1fr)) }}
-    .panel,.card,select {{ border:1px solid var(--line); background:color-mix(in srgb,var(--panel) 92%,transparent); border-radius:16px }}
-    .panel {{ padding:22px; overflow:auto }} .card {{ padding:18px }}
-    .card strong {{ display:block; font-size:29px; letter-spacing:-.03em }} .card span,label {{ color:var(--muted) }}
-    label {{ display:grid; gap:6px; font-size:12px; text-transform:uppercase; letter-spacing:.08em }}
-    select {{ color:var(--ink); padding:10px 12px; width:100% }}
-    h2 {{ margin:0 0 18px; font-size:18px }} table {{ width:100%; border-collapse:collapse; white-space:nowrap }}
-    th,td {{ padding:9px 8px; border-bottom:1px solid var(--line); text-align:left }} th {{ color:var(--muted); font-size:11px; text-transform:uppercase }}
-    .bars {{ display:grid; gap:10px }} .bar {{ display:grid; grid-template-columns:minmax(100px,1fr) 4fr auto; gap:10px; align-items:center }}
-    .track {{ height:10px; background:#1a2d43; border-radius:99px; overflow:hidden }} .fill {{ height:100%; background:linear-gradient(90deg,var(--accent2),var(--accent)); border-radius:99px }}
-    .empty {{ color:var(--muted); padding:30px 0 }} footer {{ color:var(--muted); margin-top:26px }}
+    .subtitle,.muted,.definition {{ color:var(--muted) }} .subtitle {{ max-width:780px }}
+    .filters,.cards,.grid,.metric-grid,.quality-grid {{ display:grid; gap:14px }}
+    .filters {{ grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); margin:28px 0 14px }}
+    .custom-dates {{ display:none; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px }} .custom-dates.visible {{ display:grid }}
+    .cards {{ grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); margin:18px 0 }}
+    .grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); margin-bottom:14px }}
+    .metric-grid,.quality-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)) }}
+    .panel,.card,select,input {{ border:1px solid var(--line); background:color-mix(in srgb,var(--panel) 93%,transparent); border-radius:16px }}
+    .panel {{ padding:21px; overflow:auto }} .panel.full {{ margin-bottom:14px }} .card {{ padding:17px }}
+    .panel-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:17px }}
+    .card strong {{ display:block; font-size:27px; letter-spacing:-.03em }} .card span,label {{ color:var(--muted) }}
+    .delta {{ font-size:12px; margin-top:4px }} .delta.up {{ color:var(--blue) }} .delta.down {{ color:var(--violet) }}
+    label {{ display:grid; gap:6px; font-size:11px; text-transform:uppercase; letter-spacing:.08em }}
+    select,input {{ color:var(--ink); padding:10px 12px; width:100% }}
+    table {{ width:100%; border-collapse:collapse; white-space:nowrap }} th,td {{ padding:9px 8px; border-bottom:1px solid var(--line); text-align:left }}
+    th {{ color:var(--muted); font-size:11px; text-transform:uppercase; cursor:pointer }} tbody tr:hover {{ background:#13243a }}
+    .bars {{ display:grid; gap:10px }} .bar {{ display:grid; grid-template-columns:minmax(110px,1.2fr) 4fr auto; gap:10px; align-items:center }}
+    .track {{ height:11px; display:flex; background:#1a2d43; border-radius:99px; overflow:hidden }} .fill {{ height:100%; background:linear-gradient(90deg,var(--blue),var(--accent)) }}
+    .seg-cache {{ background:var(--blue) }} .seg-uncached {{ background:var(--violet) }} .seg-visible {{ background:var(--accent) }} .seg-reasoning {{ background:var(--amber) }} .seg-other {{ background:var(--red) }}
+    .legend {{ display:flex; flex-wrap:wrap; gap:12px; margin:0 0 15px; color:var(--muted); font-size:12px }} .legend i {{ display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px }}
+    .stat {{ padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--panel2) }} .stat b {{ display:block; font-size:20px }}
+    .status {{ display:flex; height:13px; border-radius:99px; overflow:hidden; background:#1a2d43; margin:12px 0 }} .completed {{ background:var(--accent) }} .aborted {{ background:var(--red) }} .progress {{ background:var(--amber) }}
+    .empty {{ color:var(--muted); padding:26px 0 }} .definition {{ font-size:12px; margin:12px 0 0 }} footer {{ color:var(--muted); margin-top:26px }}
+    details {{ border-top:1px solid var(--line); margin-top:18px; padding-top:14px }} summary {{ cursor:pointer; color:var(--muted) }}
+    @media (max-width:850px) {{ .grid {{ grid-template-columns:1fr }} .bar {{ grid-template-columns:minmax(90px,1fr) 2fr auto }} }}
   </style>
 </head>
 <body><main>
   <div class="eyebrow">Local-first AI CLI observability</div>
   <h1>CLI Consumption</h1>
-  <p class="subtitle">Compare conversations, models, tokens, and tools without exporting prompts, responses, or tool arguments.</p>
+  <p class="subtitle">Understand activity, responsiveness, token composition, and workflows without exporting prompts, responses, or tool arguments.</p>
   <section class="filters">
+    <label>Period<select id="period"><option value="all">All history</option><option value="7">Latest 7 days</option><option value="30">Latest 30 days</option><option value="90">Latest 90 days</option><option value="custom">Custom range</option></select></label>
     <label>Provider<select id="provider"></select></label>
     <label>Machine<select id="machine"></select></label>
     <label>Project<select id="project"></select></label>
     <label>Model<select id="model"></select></label>
   </section>
+  <section class="custom-dates" id="customDates"><label>From<input type="date" id="from"></label><label>To<input type="date" id="to"></label></section>
   <section class="cards" id="cards"></section>
   <section class="grid">
-    <article class="panel"><h2>Token consumption by day</h2><div class="bars" id="days"></div></article>
-    <article class="panel"><h2>Token consumption by model</h2><div class="bars" id="models"></div></article>
-    <article class="panel"><h2>Most-used tools</h2><div class="bars" id="tools"></div></article>
+    <article class="panel"><div class="panel-head"><h2>Activity and token composition</h2><span class="muted" id="activityCaption"></span></div><div class="legend"><span><i class="seg-cache"></i>Cached input</span><span><i class="seg-uncached"></i>Uncached input</span><span><i class="seg-visible"></i>Visible output</span><span><i class="seg-reasoning"></i>Reasoning</span><span><i class="seg-other"></i>Unattributed</span></div><div class="bars" id="activity"></div></article>
+    <article class="panel"><div class="panel-head"><h2>Turn performance</h2><span class="muted">median / p95</span></div><div class="metric-grid" id="performance"></div><p class="definition">Duration is provider-reported turn duration. Active time merges overlapping turn intervals per machine.</p></article>
   </section>
-  <article class="panel" style="margin-top:14px"><h2>Conversations</h2><div id="table"></div></article>
+  <section class="grid">
+    <article class="panel"><div class="panel-head"><h2>Models</h2><span class="muted">tokens and efficiency</span></div><div id="models"></div></article>
+    <article class="panel"><div class="panel-head"><h2>Tools</h2><span class="muted">names only</span></div><h3>Top tools</h3><div class="bars" id="tools"></div><h3 style="margin-top:20px">Categories</h3><div class="bars" id="toolCategories"></div><h3 style="margin-top:20px">Frequent transitions</h3><div class="bars" id="toolTransitions"></div></article>
+  </section>
+  <section class="grid">
+    <article class="panel"><div class="panel-head"><h2>Workflow complexity</h2><span class="muted">turns, context, delegation</span></div><div class="metric-grid" id="workflow"></div><h3 style="margin-top:20px">Subagent roles</h3><div class="bars" id="agentRoles"></div></article>
+    <article class="panel"><div class="panel-head"><h2>Turn outcomes</h2><span class="muted">technical completion</span></div><div id="outcomes"></div><p class="definition">Completed means the provider closed the turn; it does not measure task quality or success.</p></article>
+  </section>
+  <article class="panel full"><div class="panel-head"><h2>Data quality</h2><span class="muted">coverage and ingestion health</span></div><div class="quality-grid" id="quality"></div></article>
+  <article class="panel full"><div class="panel-head"><h2>Conversation explorer</h2><span class="muted" id="conversationCount"></span></div><div id="table"></div><div id="conversationDetail"></div></article>
+  <details><summary>Metric definitions and privacy notes</summary><p class="definition">Token events are local usage metadata, not billing data. Cache rate is cached input divided by input. Reasoning share is reasoning output divided by output. Tokens per turn use completed and aborted turns with recorded usage. Subagent tokens are provider-reported and may overlap parent conversation totals. Project names and activity timestamps remain operationally sensitive even though conversation content is excluded.</p></details>
   <footer>Generated as a self-contained file. No network request is made.</footer>
 </main>
 <script>
 const data={payload};
-const $=id=>document.getElementById(id), fmt=n=>new Intl.NumberFormat().format(n||0);
-const convById=Object.fromEntries(data.conversations.map(c=>[c.id,c]));
-const modelsFor=c=>JSON.parse(c.models_json||'[]');
-function options(id, values){{ const e=$(id), current=e.value; e.innerHTML='<option value="">All</option>'+[...new Set(values.filter(Boolean))].sort().map(v=>`<option>${{escapeHtml(v)}}</option>`).join(''); e.value=current; }}
-function escapeHtml(v){{ return String(v).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c])); }}
-function selected(){{ return {{provider:$('provider').value,machine:$('machine').value,project:$('project').value,model:$('model').value}}; }}
-function render(){{
-  const f=selected();
-  const conversations=data.conversations.filter(c=>(!f.provider||c.provider===f.provider)&&(!f.machine||c.source_machine===f.machine)&&(!f.project||c.project===f.project)&&(!f.model||modelsFor(c).includes(f.model)));
-  const ids=new Set(conversations.map(c=>c.id));
-  const calls=data.modelCalls.filter(c=>ids.has(c.conversation_id)&&(!f.model||c.model===f.model));
-  const tools=data.toolCalls.filter(c=>ids.has(c.conversation_id));
-  const turns=data.turns.filter(c=>ids.has(c.conversation_id));
-  const machines=new Set(conversations.map(c=>c.source_machine));
-  const subagents=data.subagents.filter(s=>(!f.provider||s.provider===f.provider)&&(!f.machine||s.source_machine===f.machine)&&machines.has(s.source_machine));
-  const total=(rows,key)=>rows.reduce((n,r)=>n+(Number(r[key])||0),0);
-  $('cards').innerHTML=[['Conversations',conversations.length],['Model calls',calls.length],['Total tokens',total(calls,'total_tokens')],['Cached input',total(calls,'cached_input_tokens')],['Output tokens',total(calls,'output_tokens')],['Subagents',subagents.length],['Max active turns',maxConcurrent(turns)]].map(([k,v])=>`<div class="card"><span>${{k}}</span><strong>${{fmt(v)}}</strong></div>`).join('');
-  drawBars('days',group(calls.map(c=>({{...c,day:(c.timestamp||'unknown').slice(0,10)}})),'day','total_tokens'));
-  drawBars('models',group(calls,'model','total_tokens'));
-  drawBars('tools',group(tools,'tool_name'));
-  $('table').innerHTML=conversations.length?`<table><thead><tr><th>Provider</th><th>Machine</th><th>Project</th><th>Started</th><th>Models</th><th>Turns</th><th>Tokens</th></tr></thead><tbody>${{conversations.slice().sort((a,b)=>(b.started_at||'').localeCompare(a.started_at||'')).map(c=>`<tr><td>${{escapeHtml(c.provider)}}</td><td>${{escapeHtml(c.source_machine)}}</td><td>${{escapeHtml(c.project)}}</td><td>${{escapeHtml(c.started_at||'')}}</td><td>${{escapeHtml(modelsFor(c).join(', '))}}</td><td>${{fmt(c.iterations)}}</td><td>${{fmt(c.total_tokens)}}</td></tr>`).join('')}}</tbody></table>`:'<div class="empty">No conversations match these filters.</div>';
-}}
-function group(rows,label,value){{ const out={{}}; rows.forEach(r=>out[r[label]||'unknown']=(out[r[label]||'unknown']||0)+(value?(Number(r[value])||0):1)); return Object.entries(out).sort((a,b)=>b[1]-a[1]).slice(0,12); }}
-function maxConcurrent(turns){{ const points=[]; turns.forEach(t=>{{ if(t.started_at&&t.ended_at){{ points.push([t.started_at,1],[t.ended_at,-1]); }} }}); points.sort((a,b)=>a[0].localeCompare(b[0])||a[1]-b[1]); let active=0,max=0; points.forEach(p=>{{active+=p[1];max=Math.max(max,active)}}); return max; }}
-function drawBars(id,rows){{ const max=Math.max(...rows.map(x=>x[1]),1); $(id).innerHTML=rows.map(([k,v])=>`<div class="bar"><span title="${{escapeHtml(k)}}">${{escapeHtml(k)}}</span><div class="track"><div class="fill" style="width:${{100*v/max}}%"></div></div><b>${{fmt(v)}}</b></div>`).join('')||'<div class="empty">No data.</div>'; }}
-options('provider',data.conversations.map(c=>c.provider)); options('machine',data.conversations.map(c=>c.source_machine)); options('project',data.conversations.map(c=>c.project)); options('model',data.modelCalls.map(c=>c.model));
-document.querySelectorAll('select').forEach(e=>e.addEventListener('change',render)); render();
+const $=id=>document.getElementById(id), number=new Intl.NumberFormat(), compact=new Intl.NumberFormat(undefined,{{notation:'compact',maximumFractionDigits:1}});
+const fmt=n=>number.format(Math.round(Number(n)||0)), short=n=>compact.format(Number(n)||0), pct=n=>`${{(Number(n)||0).toFixed(1)}}%`;
+const convByKey=Object.fromEntries(data.conversations.map(c=>[c.key,c]));
+const validDate=v=>v&&Number.isFinite(Date.parse(v)), day=v=>validDate(v)?v.slice(0,10):'unknown';
+const total=(rows,key)=>rows.reduce((n,r)=>n+(Number(r[key])||0),0);
+const ratio=(a,b)=>b?100*a/b:0;
+let currentSlice=null,tableSort={{key:'startedAt',direction:-1}};
+function options(id,values){{const e=$(id),current=e.value;e.innerHTML='<option value="">All</option>'+[...new Set(values.filter(Boolean))].sort().map(v=>`<option value="${{escapeHtml(v)}}">${{escapeHtml(v)}}</option>`).join('');e.value=current;}}
+function escapeHtml(v){{return String(v).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));}}
+function percentile(values,p){{const xs=values.map(Number).filter(Number.isFinite).sort((a,b)=>a-b);if(!xs.length)return null;const i=(xs.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);return xs[lo]+(xs[hi]-xs[lo])*(i-lo);}}
+function rangeFor(period){{const dates=[...data.conversations.map(c=>c.startedAt),...data.modelCalls.map(c=>c.timestamp)].filter(validDate).map(Date.parse);if(!dates.length)return null;const max=new Date(Math.max(...dates));max.setUTCHours(23,59,59,999);let start=null,end=max;if(period==='custom'){{const f=$('from').value,t=$('to').value;start=f?new Date(`${{f}}T00:00:00Z`):null;end=t?new Date(`${{t}}T23:59:59.999Z`):max;}}else if(period!=='all'){{start=new Date(max);start.setUTCDate(start.getUTCDate()-Number(period)+1);start.setUTCHours(0,0,0,0);}}if(!start)return{{start:null,end,previous:null}};const width=end-start;return{{start,end,previous:{{start:new Date(start-width-1),end:new Date(start-1)}}}};}}
+function inRange(value,range){{if(!range||!validDate(value))return !range||!range.start;const time=Date.parse(value);return(!range.start||time>=range.start)&&time<=range.end;}}
+function selected(){{return{{provider:$('provider').value,machine:$('machine').value,project:$('project').value,model:$('model').value,range:rangeFor($('period').value)}};}}
+function baseConversations(f){{return data.conversations.filter(c=>(!f.provider||c.provider===f.provider)&&(!f.machine||c.machine===f.machine)&&(!f.project||c.project===f.project)&&(!f.model||c.models.includes(f.model)));}}
+function slice(f,range=f.range){{const base=baseConversations(f),keys=new Set(base.map(c=>c.key));let calls=data.modelCalls.filter(c=>keys.has(c.conversationKey)&&inRange(c.timestamp,range)&&(!f.model||c.model===f.model));const turnKeys=f.model?new Set(calls.map(c=>c.turnKey)):null;const turns=data.turns.filter(t=>keys.has(t.conversationKey)&&inRange(t.startedAt,range)&&(!turnKeys||turnKeys.has(t.key)));const allowedTurns=new Set(turns.map(t=>t.key));calls=calls.filter(c=>c.turnKey===null||allowedTurns.has(c.turnKey));const tools=data.toolCalls.filter(t=>keys.has(t.conversationKey)&&inRange(t.timestamp,range)&&(!f.model||allowedTurns.has(t.turnKey)));const activeConversationKeys=new Set([...turns.map(t=>t.conversationKey),...calls.map(c=>c.conversationKey),...tools.map(t=>t.conversationKey)]);const conversations=base.filter(c=>(inRange(c.startedAt,range)||activeConversationKeys.has(c.key))&&(!f.model||calls.some(x=>x.conversationKey===c.key)));const activeKeys=new Set(conversations.map(c=>c.key));const subagents=data.subagents.filter(s=>s.conversationKey!==null&&activeKeys.has(s.conversationKey)&&inEpochRange(s.createdAtMs,range));return{{conversations,turns,calls,tools,subagents}};}}
+function inEpochRange(value,range){{if(value===null||value===undefined)return !range||!range.start;const time=Number(value);return(!range||!range.start||time>=range.start.getTime())&&(!range||time<=range.end.getTime());}}
+function activeMs(turns){{const groups={{}};turns.forEach(t=>{{const c=convByKey[t.conversationKey];if(!c||!validDate(t.startedAt)||!validDate(t.endedAt))return;(groups[c.machine]??=[]).push([Date.parse(t.startedAt),Date.parse(t.endedAt)]);}});let sum=0;Object.values(groups).forEach(intervals=>{{intervals.sort((a,b)=>a[0]-b[0]);let current=null;intervals.forEach(([start,end])=>{{if(!current)current=[start,end];else if(start<=current[1])current[1]=Math.max(current[1],end);else{{sum+=current[1]-current[0];current=[start,end];}}}});if(current)sum+=current[1]-current[0];}});return sum;}}
+function maxConcurrent(turns){{const byMachine={{}};turns.forEach(t=>{{const c=convByKey[t.conversationKey];if(!c||!validDate(t.startedAt)||!validDate(t.endedAt))return;(byMachine[c.machine]??=[]).push([Date.parse(t.startedAt),1],[Date.parse(t.endedAt),-1]);}});let peak=0;Object.values(byMachine).forEach(points=>{{points.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);let active=0;points.forEach(([,delta])=>{{active+=delta;peak=Math.max(peak,active);}});}});return peak;}}
+function metrics(s){{const closed=s.turns.filter(t=>t.status==='completed'||t.status==='aborted'),durations=closed.map(t=>t.durationMs).filter(x=>x!==null),ttfts=closed.map(t=>t.ttftMs).filter(x=>x!==null),input=total(s.calls,'input_tokens'),cached=total(s.calls,'cached_input_tokens'),output=total(s.calls,'output_tokens'),tokens=total(s.calls,'total_tokens'),activeDays=new Set(s.turns.map(t=>day(t.startedAt)).filter(x=>x!=='unknown')).size;return{{turns:s.turns.length,completed:s.turns.filter(t=>t.status==='completed').length,aborted:s.turns.filter(t=>t.status==='aborted').length,tokens,tokensPerTurn:closed.length?tokens/closed.length:0,cacheRate:ratio(cached,input),durationP50:percentile(durations,.5),durationP95:percentile(durations,.95),ttftP50:percentile(ttfts,.5),ttftP95:percentile(ttfts,.95),abortRate:ratio(s.turns.filter(t=>t.status==='aborted').length,closed.length),reasoningShare:ratio(total(s.calls,'reasoning_output_tokens'),output),activeMs:activeMs(closed),activeDays}};}}
+function delta(current,previous){{if(previous===null||previous===undefined||!Number.isFinite(previous)||previous===0)return'';const change=100*(current-previous)/Math.abs(previous);return`<div class="delta ${{change>=0?'up':'down'}}">${{change>=0?'+':''}}${{change.toFixed(1)}}% vs previous period</div>`;}}
+function card(label,value,current,previous){{return`<div class="card"><span>${{label}}</span><strong>${{value}}</strong>${{delta(current,previous)}}</div>`;}}
+function stat(label,value,detail=''){{return`<div class="stat"><span class="muted">${{label}}</span><b>${{value}}</b>${{detail?`<small class="muted">${{detail}}</small>`:''}}</div>`;}}
+function group(rows,key,value=null){{const out={{}};rows.forEach(r=>{{const label=r[key]||'unknown';out[label]=(out[label]||0)+(value?(Number(r[value])||0):1);}});return Object.entries(out).sort((a,b)=>b[1]-a[1]);}}
+function toolCategory(name){{if(['spawn_agent','wait_agent','list_agents','send_message','followup_task','interrupt_agent'].includes(name))return'Agent coordination';if(['exec_command','write_stdin','wait'].includes(name))return'Shell and processes';if(['apply_patch','view_image'].includes(name))return'Files and workspace';if(name==='web__run')return'Web';if(['update_plan','create_goal','get_goal','update_goal'].includes(name))return'Planning';if(name.includes('imagegen'))return'Media';if(name.startsWith('mcp__')||name.includes('mcp_resource'))return'Integrations';return'Other';}}
+function drawBars(id,rows,formatter=fmt){{const shown=rows.slice(0,12),max=Math.max(...shown.map(x=>x[1]),1);$(id).innerHTML=shown.map(([k,v])=>`<div class="bar"><span title="${{escapeHtml(k)}}">${{escapeHtml(k)}}</span><div class="track"><div class="fill" style="width:${{100*v/max}}%"></div></div><b>${{formatter(v)}}</b></div>`).join('')||'<div class="empty">No data.</div>';}}
+function drawActivity(calls){{const days={{}};calls.forEach(c=>{{const key=day(c.timestamp),row=days[key]??={{cached:0,uncached:0,visible:0,reasoning:0,other:0,total:0}};row.cached+=Number(c.cached_input_tokens)||0;row.uncached+=Number(c.uncached_input_tokens)||0;row.visible+=Number(c.visible_output_tokens)||0;row.reasoning+=Number(c.reasoning_output_tokens)||0;row.other+=Number(c.unattributed_tokens)||0;row.total+=Number(c.total_tokens)||0;}});const rows=Object.entries(days).sort((a,b)=>a[0].localeCompare(b[0])).slice(-31),max=Math.max(...rows.map(([,v])=>v.total),1);$('activity').innerHTML=rows.map(([label,v])=>`<div class="bar"><span>${{escapeHtml(label)}}</span><div class="track">${{[['cache','cached'],['uncached','uncached'],['visible','visible'],['reasoning','reasoning'],['other','other']].map(([css,key])=>`<div class="seg-${{css}}" style="width:${{100*v[key]/max}}%" title="${{key}}: ${{fmt(v[key])}}"></div>`).join('')}}</div><b>${{short(v.total)}}</b></div>`).join('')||'<div class="empty">No data.</div>';$('activityCaption').textContent=rows.length?`${{rows.length}} active days shown`:'';}}
+function renderModels(calls){{const rows={{}};calls.forEach(c=>{{const r=rows[c.model]??={{calls:0,tokens:0,input:0,cached:0,output:0,reasoning:0,turns:new Set}};r.calls++;r.tokens+=Number(c.total_tokens)||0;r.input+=Number(c.input_tokens)||0;r.cached+=Number(c.cached_input_tokens)||0;r.output+=Number(c.output_tokens)||0;r.reasoning+=Number(c.reasoning_output_tokens)||0;if(c.turnKey!==null)r.turns.add(c.turnKey);}});const entries=Object.entries(rows).sort((a,b)=>b[1].tokens-a[1].tokens);$('models').innerHTML=entries.length?`<table><thead><tr><th>Model</th><th>Tokens</th><th>Tokens / turn</th><th>Usage events</th><th>Cache</th><th>Reasoning</th></tr></thead><tbody>${{entries.map(([name,r])=>`<tr><td>${{escapeHtml(name)}}</td><td>${{fmt(r.tokens)}}</td><td>${{short(r.tokens/(r.turns.size||1))}}</td><td>${{fmt(r.calls)}}</td><td>${{pct(ratio(r.cached,r.input))}}</td><td>${{pct(ratio(r.reasoning,r.output))}}</td></tr>`).join('')}}</tbody></table>`:'<div class="empty">No data.</div>';}}
+function toolTransitions(tools){{const byTurn={{}};tools.filter(t=>t.turnKey!==null).forEach(t=>(byTurn[t.turnKey]??=[]).push(t));const transitions=[];Object.values(byTurn).forEach(rows=>{{rows.sort((a,b)=>a.sequence-b.sequence);for(let i=1;i<rows.length;i++)transitions.push({{transition:`${{rows[i-1].tool}} → ${{rows[i].tool}}`}});}});return group(transitions,'transition');}}
+function renderOutcomes(turns){{const counts={{completed:0,aborted:0,'in-progress':0}};turns.forEach(t=>counts[t.status]=(counts[t.status]||0)+1);const totalTurns=turns.length||1;$('outcomes').innerHTML=`<div class="status"><div class="completed" style="width:${{100*(counts.completed||0)/totalTurns}}%"></div><div class="aborted" style="width:${{100*(counts.aborted||0)/totalTurns}}%"></div><div class="progress" style="width:${{100*(counts['in-progress']||0)/totalTurns}}%"></div></div><div class="metric-grid">${{stat('Completed',fmt(counts.completed||0),pct(100*(counts.completed||0)/totalTurns))}}${{stat('Aborted',fmt(counts.aborted||0),pct(100*(counts.aborted||0)/totalTurns))}}${{stat('In progress',fmt(counts['in-progress']||0),pct(100*(counts['in-progress']||0)/totalTurns))}}${{stat('Closed turns',fmt((counts.completed||0)+(counts.aborted||0)))}}</div>`;}}
+function renderQuality(s){{const durationCoverage=ratio(s.turns.filter(t=>t.durationMs!==null).length,s.turns.length),ttftCoverage=ratio(s.turns.filter(t=>t.ttftMs!==null).length,s.turns.length),unknown=ratio(s.calls.filter(c=>!c.model||c.model==='unknown').length,s.calls.length),unattributed=ratio(total(s.calls,'unattributed_tokens'),total(s.calls,'total_tokens')),unmapped=ratio(data.subagents.filter(x=>x.conversationKey===null).length,data.subagents.length),runs=data.ingestionRuns,latest=runs.map(r=>r.ingestedAt).filter(Boolean).sort().at(-1),malformed=total(runs,'malformed'),duplicates=total(runs,'duplicates');$('quality').innerHTML=stat('Turn duration coverage',pct(durationCoverage))+stat('TTFT coverage',pct(ttftCoverage))+stat('Unknown model events',pct(unknown))+stat('Unattributed tokens',pct(unattributed))+stat('Unmapped subagents',pct(unmapped))+stat('Malformed records',fmt(malformed))+stat('Deduplicated conversations',fmt(duplicates))+stat('Latest ingestion',latest?new Date(latest).toLocaleString():'Unknown');}}
+function sortExplorer(key){{if(tableSort.key===key)tableSort.direction*=-1;else tableSort={{key,direction:key==='startedAt'?-1:1}};if(currentSlice)renderTable(currentSlice.conversations,currentSlice.turns);}}
+function renderTable(conversations,turns){{const statuses={{}};turns.forEach(t=>{{const s=statuses[t.conversationKey]??={{completed:0,aborted:0,progress:0}};if(t.status==='completed')s.completed++;else if(t.status==='aborted')s.aborted++;else s.progress++;}});const value=(c,key)=>key==='models'?c.models.join(', '):key==='outcome'?(statuses[c.key]?.aborted?'aborted':statuses[c.key]?.progress?'in progress':statuses[c.key]?.completed?'completed':'unknown'):c[key];const rows=conversations.slice().sort((a,b)=>{{const av=value(a,tableSort.key)??'',bv=value(b,tableSort.key)??'';return tableSort.direction*(typeof av==='number'&&typeof bv==='number'?av-bv:String(av).localeCompare(String(bv)));}});$('conversationCount').textContent=`${{rows.length}} conversations`;$('conversationDetail').innerHTML='';$('table').innerHTML=rows.length?`<table><thead><tr><th onclick="sortExplorer('startedAt')">Started</th><th onclick="sortExplorer('provider')">Provider</th><th onclick="sortExplorer('machine')">Machine</th><th onclick="sortExplorer('project')">Project</th><th onclick="sortExplorer('models')">Models</th><th onclick="sortExplorer('turns')">Turns</th><th onclick="sortExplorer('outcome')">Outcome</th><th onclick="sortExplorer('compactions')">Compactions</th><th onclick="sortExplorer('total_tokens')">Tokens</th><th onclick="sortExplorer('durationSeconds')">Wall duration</th></tr></thead><tbody>${{rows.map(c=>{{const s=statuses[c.key]||{{completed:0,aborted:0,progress:0}},outcome=s.aborted?'aborted':s.progress?'in progress':s.completed?'completed':'unknown';return`<tr style="cursor:pointer" onclick="showConversation(${{c.key}})"><td>${{escapeHtml(c.startedAt||'')}}</td><td>${{escapeHtml(c.provider)}}</td><td>${{escapeHtml(c.machine)}}</td><td>${{escapeHtml(c.project)}}</td><td>${{escapeHtml(c.models.join(', '))}}</td><td>${{fmt(c.turns)}}</td><td>${{outcome}}</td><td>${{fmt(c.compactions)}}</td><td>${{fmt(c.total_tokens)}}</td><td>${{formatDuration((Number(c.durationSeconds)||0)*1000)}}</td></tr>`;}}).join('')}}</tbody></table>`:'<div class="empty">No conversations match these filters.</div>';}}
+function showConversation(key){{if(!currentSlice)return;const c=convByKey[key],turns=currentSlice.turns.filter(t=>t.conversationKey===key),calls=currentSlice.calls.filter(x=>x.conversationKey===key),tools=currentSlice.tools.filter(x=>x.conversationKey===key),closed=turns.filter(t=>t.status==='completed'||t.status==='aborted'),durations=closed.map(t=>t.durationMs).filter(x=>x!==null),ttfts=closed.map(t=>t.ttftMs).filter(x=>x!==null);$('conversationDetail').innerHTML=`<details open><summary>${{escapeHtml(c.project)}} · ${{escapeHtml(c.startedAt||'')}}</summary><div class="quality-grid" style="margin-top:14px">${{stat('Turns in range',fmt(turns.length))}}${{stat('Tokens in range',fmt(total(calls,'total_tokens')))}}${{stat('Median TTFT',formatDuration(percentile(ttfts,.5)))}}${{stat('Median duration',formatDuration(percentile(durations,.5)))}}${{stat('Tool calls',fmt(tools.length))}}${{stat('Compactions',fmt(c.compactions))}}</div><h3 style="margin-top:16px">Tools in this conversation</h3><div class="bars">${{group(tools,'tool').slice(0,8).map(([name,count])=>`<div class="bar"><span>${{escapeHtml(name)}}</span><div class="track"><div class="fill" style="width:${{100*count/Math.max(tools.length,1)}}%"></div></div><b>${{fmt(count)}}</b></div>`).join('')||'<div class="empty">No tool calls.</div>'}}</div></details>`;}}
+function formatDuration(ms){{if(ms===null||ms===undefined||!Number.isFinite(Number(ms)))return'—';const seconds=Number(ms)/1000;if(seconds<60)return`${{seconds.toFixed(1)}}s`;if(seconds<3600)return`${{(seconds/60).toFixed(1)}}m`;return`${{(seconds/3600).toFixed(1)}}h`;}}
+function render(){{const f=selected(),s=slice(f),m=metrics(s),previous=f.range?.previous?metrics(slice(f,f.range.previous)):null,closed=s.turns.filter(t=>t.status==='completed'||t.status==='aborted');currentSlice=s;$('cards').innerHTML=card('Closed turns',fmt(m.completed+m.aborted),m.completed+m.aborted,previous?previous.completed+previous.aborted:null)+card('Active days',fmt(m.activeDays),m.activeDays,previous?.activeDays)+card('Total tokens',short(m.tokens),m.tokens,previous?.tokens)+card('Tokens / turn',short(m.tokensPerTurn),m.tokensPerTurn,previous?.tokensPerTurn,true)+card('Cache rate',pct(m.cacheRate),m.cacheRate,previous?.cacheRate)+card('Median TTFT',formatDuration(m.ttftP50),m.ttftP50,previous?.ttftP50,true)+card('Median duration',formatDuration(m.durationP50),m.durationP50,previous?.durationP50,true)+card('Abort rate',pct(m.abortRate),m.abortRate,previous?.abortRate,true)+card('Active time',formatDuration(m.activeMs),m.activeMs,previous?.activeMs);drawActivity(s.calls);$('performance').innerHTML=stat('TTFT',formatDuration(m.ttftP50),`p95 ${{formatDuration(m.ttftP95)}}`)+stat('Turn duration',formatDuration(m.durationP50),`p95 ${{formatDuration(m.durationP95)}}`)+stat('Tokens / closed turn',short(m.tokensPerTurn))+stat('Reasoning share',pct(m.reasoningShare));renderModels(s.calls);drawBars('tools',group(s.tools,'tool'));drawBars('toolCategories',group(s.tools.map(t=>({{category:toolCategory(t.tool)}})),'category'));drawBars('toolTransitions',toolTransitions(s.tools));const compacted=s.conversations.filter(c=>Number(c.compactions)>0).length,compactions=total(s.conversations,'compactions'),delegated=new Set(s.subagents.map(x=>x.conversationKey)).size,subTokens=total(s.subagents,'tokens');$('workflow').innerHTML=stat('Tools / turn',closed.length?(s.tools.length/closed.length).toFixed(1):'0')+stat('Turns using tools',pct(ratio(s.turns.filter(t=>t.toolCalls>0).length,s.turns.length)))+stat('Compacted conversations',pct(ratio(compacted,s.conversations.length)),`${{(100*compactions/Math.max(s.turns.length,1)).toFixed(1)}} / 100 turns`)+stat('Delegating conversations',pct(ratio(delegated,s.conversations.length)),`${{fmt(s.subagents.length)}} subagents`)+stat('Reported subagent tokens',short(subTokens),'may overlap parent totals')+stat('Peak concurrent turns',fmt(maxConcurrent(closed)),'per-machine peak');drawBars('agentRoles',group(s.subagents,'role'));renderOutcomes(s.turns);renderQuality(s);renderTable(s.conversations,s.turns);}}
+options('provider',data.conversations.map(c=>c.provider));options('machine',data.conversations.map(c=>c.machine));options('project',data.conversations.map(c=>c.project));options('model',data.modelCalls.map(c=>c.model));
+const dates=data.conversations.map(c=>c.startedAt).filter(validDate).sort();if(dates.length){{$('from').value=dates[0].slice(0,10);$('to').value=dates.at(-1).slice(0,10);}}
+document.querySelectorAll('select,input').forEach(e=>e.addEventListener('change',()=>{{$('customDates').classList.toggle('visible',$('period').value==='custom');render();}}));render();
 </script></body></html>"""

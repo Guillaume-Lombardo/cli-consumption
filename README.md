@@ -27,6 +27,12 @@ uv run cli-consumption export --output reports
 Open `reports/dashboard.html` locally. The generated dashboard is self-contained and
 makes no network requests.
 
+The dashboard supports time, provider, machine, project, and model filters. It reports
+period-over-period activity, token composition, cache efficiency, turn latency and
+duration percentiles, technical completion status, tool usage, compactions, subagent
+delegation, and ingestion quality. Token events are local usage metadata rather than
+billing records, and a technically completed turn is not a measure of task quality.
+
 After the package is published to PyPI, the same CLI can run without a permanent
 installation:
 

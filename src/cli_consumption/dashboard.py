@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +23,13 @@ TOKEN_FIELDS = (
 )
 
 
-def generate_dashboard(engine: Engine, output: Path) -> None:
+def generate_dashboard(
+    engine: Engine, output: Path, *, share_safe: bool = False
+) -> None:
     encoded = json.dumps(
-        _dashboard_payload(engine), separators=(",", ":"), ensure_ascii=True
+        _dashboard_payload(engine, share_safe=share_safe),
+        separators=(",", ":"),
+        ensure_ascii=True,
     )
     encoded = (
         encoded.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
@@ -32,12 +38,16 @@ def generate_dashboard(engine: Engine, output: Path) -> None:
     output.write_text(_document(encoded), encoding="utf-8")
 
 
-def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
+def _dashboard_payload(engine: Engine, *, share_safe: bool = False) -> dict[str, Any]:
     """Return only metadata needed by the dashboard, with local relationship keys."""
     conversations = read_table(engine, "conversations")
     turns = read_table(engine, "turns")
     model_calls = read_table(engine, "model_calls")
     tool_calls = read_table(engine, "tool_calls")
+    work_items = read_table(engine, "work_items")
+    context_samples = read_table(engine, "context_samples")
+    turn_settings = read_table(engine, "turn_settings")
+    compaction_events = read_table(engine, "compaction_events")
     subagents = read_table(engine, "subagents")
     ingestion_runs = read_table(engine, "ingestion_runs")
 
@@ -53,21 +63,58 @@ def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
         for index, row in enumerate(conversations)
     }
     turn_keys = {str(row["id"]): index for index, row in enumerate(turns)}
+    projects = _aliases(
+        (str(row["project"]) for row in conversations), "project", share_safe
+    )
+    machines = _aliases(
+        (str(row["source_machine"]) for row in conversations),
+        "machine",
+        share_safe,
+    )
+    model_names = {
+        *(
+            str(model)
+            for row in conversations
+            for model in json.loads(row["models_json"])
+        ),
+        *(str(row["model"]) for row in model_calls),
+        *(str(row["model"]) for row in turn_settings if row["model"]),
+    }
+    models = _aliases(model_names, "model", share_safe)
+    roles = _aliases(
+        (str(row["agent_role"] or "unspecified") for row in subagents),
+        "role",
+        share_safe,
+    )
+
+    def timestamp(value: Any) -> Any:
+        return _round_timestamp(value) if share_safe else value
+
+    def epoch(value: Any) -> Any:
+        return _round_epoch_day(value) if share_safe else value
+
+    def tool(value: Any) -> Any:
+        if not share_safe or value is None:
+            return value
+        return _tool_category(str(value))
 
     def tokens(row: dict[str, Any]) -> dict[str, int]:
         return {field: int(row[field]) for field in TOKEN_FIELDS}
 
     return {
+        "meta": {"shareSafe": share_safe},
         "conversations": [
             {
                 "key": index,
                 "provider": row["provider"],
-                "machine": row["source_machine"],
-                "project": row["project"],
-                "startedAt": row["started_at"],
-                "endedAt": row["ended_at"],
+                "machine": machines[str(row["source_machine"])],
+                "project": projects[str(row["project"])],
+                "startedAt": timestamp(row["started_at"]),
+                "endedAt": timestamp(row["ended_at"]),
                 "durationSeconds": row["duration_seconds"],
-                "models": json.loads(row["models_json"]),
+                "models": [
+                    models[str(model)] for model in json.loads(row["models_json"])
+                ],
                 "turns": row["iterations"],
                 "modelCalls": row["model_calls"],
                 "toolCalls": row["tool_calls"],
@@ -80,8 +127,8 @@ def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
             {
                 "key": index,
                 "conversationKey": conversation_keys[str(row["conversation_id"])],
-                "startedAt": row["started_at"],
-                "endedAt": row["ended_at"],
+                "startedAt": timestamp(row["started_at"]),
+                "endedAt": timestamp(row["ended_at"]),
                 "status": row["status"],
                 "durationMs": row["duration_ms"],
                 "ttftMs": row["time_to_first_token_ms"],
@@ -95,8 +142,8 @@ def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
             {
                 "conversationKey": conversation_keys[str(row["conversation_id"])],
                 "turnKey": turn_keys.get(str(row["turn_id"])),
-                "timestamp": row["timestamp"],
-                "model": row["model"],
+                "timestamp": timestamp(row["timestamp"]),
+                "model": models[str(row["model"])],
                 **tokens(row),
             }
             for row in model_calls
@@ -106,10 +153,52 @@ def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
                 "conversationKey": conversation_keys[str(row["conversation_id"])],
                 "turnKey": turn_keys.get(str(row["turn_id"])),
                 "sequence": row["sequence"],
-                "timestamp": row["timestamp"],
-                "tool": row["tool_name"],
+                "timestamp": timestamp(row["timestamp"]),
+                "tool": tool(row["tool_name"]),
             }
             for row in tool_calls
+        ],
+        "workItems": [
+            {
+                "conversationKey": conversation_keys[str(row["conversation_id"])],
+                "turnKey": turn_keys.get(str(row["turn_id"])),
+                "kind": row["kind"],
+                "tool": tool(row["tool_name"]),
+                "startedAtMs": epoch(row["started_at_ms"]),
+                "durationMs": row["duration_ms"],
+                "status": row["status"],
+            }
+            for row in work_items
+        ],
+        "contextSamples": [
+            {
+                "conversationKey": conversation_keys[str(row["conversation_id"])],
+                "turnKey": turn_keys.get(str(row["turn_id"])),
+                "timestamp": timestamp(row["timestamp"]),
+                "inputTokens": row["input_tokens"],
+                "contextWindowTokens": row["context_window_tokens"],
+            }
+            for row in context_samples
+        ],
+        "turnSettings": [
+            {
+                "conversationKey": conversation_keys[str(row["conversation_id"])],
+                "turnKey": turn_keys.get(str(row["turn_id"])),
+                "model": models[str(row["model"])] if row["model"] else None,
+                "effort": row["effort"],
+                "mode": row["collaboration_mode"],
+                "tier": row["service_tier"],
+                "contextWindowTokens": row["context_window_tokens"],
+            }
+            for row in turn_settings
+        ],
+        "compactions": [
+            {
+                "conversationKey": conversation_keys[str(row["conversation_id"])],
+                "turnKey": turn_keys.get(str(row["turn_id"])),
+                "timestamp": timestamp(row["timestamp"]),
+            }
+            for row in compaction_events
         ],
         "subagents": [
             {
@@ -120,12 +209,22 @@ def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
                         str(row["parent_thread_id"]),
                     )
                 ),
+                "childConversationKey": external_keys.get(
+                    (
+                        str(row["provider"]),
+                        str(row["source_machine"]),
+                        str(row["child_thread_id"]),
+                    )
+                ),
                 "provider": row["provider"],
-                "machine": row["source_machine"],
+                "machine": machines.get(
+                    str(row["source_machine"]),
+                    "machine-unmapped" if share_safe else row["source_machine"],
+                ),
                 "status": row["status"],
-                "createdAtMs": row["created_at_ms"],
-                "updatedAtMs": row["updated_at_ms"],
-                "role": row["agent_role"] or "unspecified",
+                "createdAtMs": epoch(row["created_at_ms"]),
+                "updatedAtMs": epoch(row["updated_at_ms"]),
+                "role": roles[str(row["agent_role"] or "unspecified")],
                 "tokens": row["tokens_used"],
             }
             for row in subagents
@@ -133,7 +232,7 @@ def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
         "ingestionRuns": [
             {
                 "provider": row["provider"],
-                "ingestedAt": row["ingested_at"],
+                "ingestedAt": timestamp(row["ingested_at"]),
                 "received": row["conversations_received"],
                 "written": row["conversations_written"],
                 "skipped": row["conversations_skipped"],
@@ -143,6 +242,63 @@ def _dashboard_payload(engine: Engine) -> dict[str, list[dict[str, Any]]]:
             for row in ingestion_runs
         ],
     }
+
+
+def _aliases(values: Any, prefix: str, enabled: bool) -> dict[str, str]:
+    unique = sorted(set(values))
+    if not enabled:
+        return {value: value for value in unique}
+    return {value: f"{prefix}-{index}" for index, value in enumerate(unique, 1)}
+
+
+def _round_timestamp(value: Any) -> Any:
+    if not isinstance(value, str):
+        return None
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return f"{instant.date().isoformat()}T00:00:00+00:00"
+
+
+def _round_epoch_day(value: Any) -> Any:
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+    ):
+        return None
+    try:
+        instant = datetime.fromtimestamp(value / 1000, UTC)
+    except (OSError, OverflowError, ValueError):
+        return None
+    rounded = instant.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(rounded.timestamp() * 1000)
+
+
+def _tool_category(name: str) -> str:
+    if name in {
+        "spawn_agent",
+        "wait_agent",
+        "list_agents",
+        "send_message",
+        "followup_task",
+        "interrupt_agent",
+    }:
+        return "Agent coordination"
+    if name in {"exec_command", "write_stdin", "wait"}:
+        return "Shell and processes"
+    if name in {"apply_patch", "view_image"}:
+        return "Files and workspace"
+    if name == "web__run":
+        return "Web"
+    if name in {"update_plan", "create_goal", "get_goal", "update_goal"}:
+        return "Planning"
+    if "imagegen" in name:
+        return "Media"
+    if name.startswith("mcp__") or "mcp_resource" in name:
+        return "Integrations"
+    return "Other"
 
 
 def _document(payload: str) -> str:
@@ -171,7 +327,8 @@ def _document(payload: str) -> str:
     .panel {{ padding:21px; overflow:auto }} .panel.full {{ margin-bottom:14px }} .card {{ padding:17px }}
     .panel-head {{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:17px }}
     .card strong {{ display:block; font-size:27px; letter-spacing:-.03em }} .card span,label {{ color:var(--muted) }}
-    .delta {{ font-size:12px; margin-top:4px }} .delta.up {{ color:var(--blue) }} .delta.down {{ color:var(--violet) }}
+    .delta {{ font-size:12px; margin-top:4px }} .delta.better {{ color:var(--accent) }} .delta.worse {{ color:var(--red) }} .delta.neutral {{ color:var(--muted) }}
+    .badge {{ display:none; width:max-content; margin-top:10px; padding:5px 9px; border:1px solid var(--accent); border-radius:99px; color:var(--accent); font-size:11px; text-transform:uppercase; letter-spacing:.08em }} .badge.visible {{ display:block }}
     label {{ display:grid; gap:6px; font-size:11px; text-transform:uppercase; letter-spacing:.08em }}
     select,input {{ color:var(--ink); padding:10px 12px; width:100% }}
     table {{ width:100%; border-collapse:collapse; white-space:nowrap }} th,td {{ padding:9px 8px; border-bottom:1px solid var(--line); text-align:left }}
@@ -191,6 +348,7 @@ def _document(payload: str) -> str:
   <div class="eyebrow">Local-first AI CLI observability</div>
   <h1>CLI Consumption</h1>
   <p class="subtitle">Understand activity, responsiveness, token composition, and workflows without exporting prompts, responses, or tool arguments.</p>
+  <div class="badge" id="privacyBadge">Share-safe dashboard</div>
   <section class="filters">
     <label>Period<select id="period"><option value="all">All history</option><option value="7">Latest 7 days</option><option value="30">Latest 30 days</option><option value="90">Latest 90 days</option><option value="custom">Custom range</option></select></label>
     <label>Provider<select id="provider"></select></label>
@@ -202,7 +360,7 @@ def _document(payload: str) -> str:
   <section class="cards" id="cards"></section>
   <section class="grid">
     <article class="panel"><div class="panel-head"><h2>Activity and token composition</h2><span class="muted" id="activityCaption"></span></div><div class="legend"><span><i class="seg-cache"></i>Cached input</span><span><i class="seg-uncached"></i>Uncached input</span><span><i class="seg-visible"></i>Visible output</span><span><i class="seg-reasoning"></i>Reasoning</span><span><i class="seg-other"></i>Unattributed</span></div><div class="bars" id="activity"></div></article>
-    <article class="panel"><div class="panel-head"><h2>Turn performance</h2><span class="muted">median / p95</span></div><div class="metric-grid" id="performance"></div><p class="definition">Duration is provider-reported turn duration. Active time merges overlapping turn intervals per machine.</p></article>
+    <article class="panel"><div class="panel-head"><h2>Turn performance</h2><span class="muted">p50 / p75 / p95</span></div><div id="performance"></div><p class="definition">Duration is provider-reported. Technical throughput is closed turns per active hour: overlapping intervals are merged in detailed reports, while share-safe reports sum turn durations. It is not a productivity score.</p></article>
   </section>
   <section class="grid">
     <article class="panel"><div class="panel-head"><h2>Models</h2><span class="muted">tokens and efficiency</span></div><div id="models"></div></article>
@@ -212,9 +370,14 @@ def _document(payload: str) -> str:
     <article class="panel"><div class="panel-head"><h2>Workflow complexity</h2><span class="muted">turns, context, delegation</span></div><div class="metric-grid" id="workflow"></div><h3 style="margin-top:20px">Subagent roles</h3><div class="bars" id="agentRoles"></div></article>
     <article class="panel"><div class="panel-head"><h2>Turn outcomes</h2><span class="muted">technical completion</span></div><div id="outcomes"></div><p class="definition">Completed means the provider closed the turn; it does not measure task quality or success.</p></article>
   </section>
+  <section class="grid">
+    <article class="panel"><div class="panel-head"><h2>Context pressure</h2><span class="muted">latest-call input / context window</span></div><div class="metric-grid" id="contextPressure"></div><h3 style="margin-top:20px">Turn configurations</h3><div class="bars" id="turnConfigurations"></div></article>
+    <article class="panel"><div class="panel-head"><h2>Technical work items</h2><span class="muted">content-free intervals</span></div><div class="metric-grid" id="workReliability"></div><h3 style="margin-top:20px">Time by category</h3><div class="bars" id="workKinds"></div></article>
+  </section>
+  <article class="panel full"><div class="panel-head"><h2>Cohort comparison</h2><label style="min-width:190px">Break down by<select id="cohortDimension"><option value="project">Project</option><option value="model">Model</option><option value="effort">Reasoning effort</option><option value="mode">Collaboration mode</option><option value="delegation">Delegation</option><option value="compaction">Compaction</option></select></label></div><div id="cohorts"></div><p class="definition">Cohort differences are correlations. They do not establish productivity, quality, or causality.</p></article>
   <article class="panel full"><div class="panel-head"><h2>Data quality</h2><span class="muted">coverage and ingestion health</span></div><div class="quality-grid" id="quality"></div></article>
   <article class="panel full"><div class="panel-head"><h2>Conversation explorer</h2><span class="muted" id="conversationCount"></span></div><div id="table"></div><div id="conversationDetail"></div></article>
-  <details><summary>Metric definitions and privacy notes</summary><p class="definition">Token events are local usage metadata, not billing data. Cache rate is cached input divided by input. Reasoning share is reasoning output divided by output. Tokens per turn use completed and aborted turns with recorded usage. Subagent tokens are provider-reported and may overlap parent conversation totals. Project names and activity timestamps remain operationally sensitive even though conversation content is excluded.</p></details>
+  <details><summary>Metric definitions and privacy notes</summary><p class="definition">Token events are local usage metadata, not billing data. Cache rate is cached input divided by input. Reasoning share is reasoning output divided by output. Context pressure uses the latest model-call input tokens divided by the reported model context window; it is not cumulative spend. Tokens per turn use completed and aborted turn totals. Subagent tokens may overlap parent totals. Detailed exports retain operationally sensitive project, machine, model, tool, role, and timestamp metadata. Share-safe exports pseudonymize labels, group tools, round dates to days, and omit CSV files.</p></details>
   <footer>Generated as a self-contained file. No network request is made.</footer>
 </main>
 <script>
@@ -222,6 +385,7 @@ const data={payload};
 const $=id=>document.getElementById(id), number=new Intl.NumberFormat(), compact=new Intl.NumberFormat(undefined,{{notation:'compact',maximumFractionDigits:1}});
 const fmt=n=>number.format(Math.round(Number(n)||0)), short=n=>compact.format(Number(n)||0), pct=n=>`${{(Number(n)||0).toFixed(1)}}%`;
 const convByKey=Object.fromEntries(data.conversations.map(c=>[c.key,c]));
+const settingByTurn=Object.fromEntries(data.turnSettings.filter(s=>s.turnKey!==null).map(s=>[s.turnKey,s]));
 const validDate=v=>v&&Number.isFinite(Date.parse(v)), day=v=>validDate(v)?v.slice(0,10):'unknown';
 const total=(rows,key)=>rows.reduce((n,r)=>n+(Number(r[key])||0),0);
 const ratio=(a,b)=>b?100*a/b:0;
@@ -233,28 +397,35 @@ function rangeFor(period){{const dates=[...data.conversations.map(c=>c.startedAt
 function inRange(value,range){{if(!range||!validDate(value))return !range||!range.start;const time=Date.parse(value);return(!range.start||time>=range.start)&&time<=range.end;}}
 function selected(){{return{{provider:$('provider').value,machine:$('machine').value,project:$('project').value,model:$('model').value,range:rangeFor($('period').value)}};}}
 function baseConversations(f){{return data.conversations.filter(c=>(!f.provider||c.provider===f.provider)&&(!f.machine||c.machine===f.machine)&&(!f.project||c.project===f.project)&&(!f.model||c.models.includes(f.model)));}}
-function slice(f,range=f.range){{const base=baseConversations(f),keys=new Set(base.map(c=>c.key));let calls=data.modelCalls.filter(c=>keys.has(c.conversationKey)&&inRange(c.timestamp,range)&&(!f.model||c.model===f.model));const turnKeys=f.model?new Set(calls.map(c=>c.turnKey)):null;const turns=data.turns.filter(t=>keys.has(t.conversationKey)&&inRange(t.startedAt,range)&&(!turnKeys||turnKeys.has(t.key)));const allowedTurns=new Set(turns.map(t=>t.key));calls=calls.filter(c=>c.turnKey===null||allowedTurns.has(c.turnKey));const tools=data.toolCalls.filter(t=>keys.has(t.conversationKey)&&inRange(t.timestamp,range)&&(!f.model||allowedTurns.has(t.turnKey)));const activeConversationKeys=new Set([...turns.map(t=>t.conversationKey),...calls.map(c=>c.conversationKey),...tools.map(t=>t.conversationKey)]);const conversations=base.filter(c=>(inRange(c.startedAt,range)||activeConversationKeys.has(c.key))&&(!f.model||calls.some(x=>x.conversationKey===c.key)));const activeKeys=new Set(conversations.map(c=>c.key));const subagents=data.subagents.filter(s=>s.conversationKey!==null&&activeKeys.has(s.conversationKey)&&inEpochRange(s.createdAtMs,range));return{{conversations,turns,calls,tools,subagents}};}}
+function slice(f,range=f.range){{const base=baseConversations(f),keys=new Set(base.map(c=>c.key));let calls=data.modelCalls.filter(c=>keys.has(c.conversationKey)&&inRange(c.timestamp,range)&&(!f.model||c.model===f.model));const modelTurns=f.model?new Set(calls.map(c=>c.turnKey).filter(k=>k!==null)):null;const turns=data.turns.filter(t=>keys.has(t.conversationKey)&&inRange(t.startedAt,range)&&(!modelTurns||modelTurns.has(t.key)));const allowedTurns=new Set(turns.map(t=>t.key));calls=calls.filter(c=>c.turnKey===null||allowedTurns.has(c.turnKey));const tools=data.toolCalls.filter(t=>keys.has(t.conversationKey)&&inRange(t.timestamp,range)&&(!f.model||t.turnKey!==null&&allowedTurns.has(t.turnKey)));const work=data.workItems.filter(w=>keys.has(w.conversationKey)&&(!f.model||w.turnKey!==null&&allowedTurns.has(w.turnKey))&&inEpochRange(w.startedAtMs,range));const contexts=data.contextSamples.filter(c=>keys.has(c.conversationKey)&&inRange(c.timestamp,range)&&(!f.model||c.turnKey!==null&&allowedTurns.has(c.turnKey)));const settings=data.turnSettings.filter(s=>keys.has(s.conversationKey)&&s.turnKey!==null&&allowedTurns.has(s.turnKey));const compactions=data.compactions.filter(c=>keys.has(c.conversationKey)&&inRange(c.timestamp,range)&&(!f.model||c.turnKey!==null&&allowedTurns.has(c.turnKey)));const activeConversationKeys=new Set([...turns.map(t=>t.conversationKey),...calls.map(c=>c.conversationKey),...tools.map(t=>t.conversationKey)]);const conversations=base.filter(c=>(inRange(c.startedAt,range)||activeConversationKeys.has(c.key))&&(!f.model||calls.some(x=>x.conversationKey===c.key)));const activeKeys=new Set(conversations.map(c=>c.key));const subagents=data.subagents.filter(s=>s.conversationKey!==null&&activeKeys.has(s.conversationKey)&&inEpochRange(s.createdAtMs,range));return{{conversations,turns,calls,tools,work,contexts,settings,compactions,subagents}};}}
 function inEpochRange(value,range){{if(value===null||value===undefined)return !range||!range.start;const time=Number(value);return(!range||!range.start||time>=range.start.getTime())&&(!range||time<=range.end.getTime());}}
-function activeMs(turns){{const groups={{}};turns.forEach(t=>{{const c=convByKey[t.conversationKey];if(!c||!validDate(t.startedAt)||!validDate(t.endedAt))return;(groups[c.machine]??=[]).push([Date.parse(t.startedAt),Date.parse(t.endedAt)]);}});let sum=0;Object.values(groups).forEach(intervals=>{{intervals.sort((a,b)=>a[0]-b[0]);let current=null;intervals.forEach(([start,end])=>{{if(!current)current=[start,end];else if(start<=current[1])current[1]=Math.max(current[1],end);else{{sum+=current[1]-current[0];current=[start,end];}}}});if(current)sum+=current[1]-current[0];}});return sum;}}
-function maxConcurrent(turns){{const byMachine={{}};turns.forEach(t=>{{const c=convByKey[t.conversationKey];if(!c||!validDate(t.startedAt)||!validDate(t.endedAt))return;(byMachine[c.machine]??=[]).push([Date.parse(t.startedAt),1],[Date.parse(t.endedAt),-1]);}});let peak=0;Object.values(byMachine).forEach(points=>{{points.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);let active=0;points.forEach(([,delta])=>{{active+=delta;peak=Math.max(peak,active);}});}});return peak;}}
-function metrics(s){{const closed=s.turns.filter(t=>t.status==='completed'||t.status==='aborted'),durations=closed.map(t=>t.durationMs).filter(x=>x!==null),ttfts=closed.map(t=>t.ttftMs).filter(x=>x!==null),input=total(s.calls,'input_tokens'),cached=total(s.calls,'cached_input_tokens'),output=total(s.calls,'output_tokens'),tokens=total(s.calls,'total_tokens'),activeDays=new Set(s.turns.map(t=>day(t.startedAt)).filter(x=>x!=='unknown')).size;return{{turns:s.turns.length,completed:s.turns.filter(t=>t.status==='completed').length,aborted:s.turns.filter(t=>t.status==='aborted').length,tokens,tokensPerTurn:closed.length?tokens/closed.length:0,cacheRate:ratio(cached,input),durationP50:percentile(durations,.5),durationP95:percentile(durations,.95),ttftP50:percentile(ttfts,.5),ttftP95:percentile(ttfts,.95),abortRate:ratio(s.turns.filter(t=>t.status==='aborted').length,closed.length),reasoningShare:ratio(total(s.calls,'reasoning_output_tokens'),output),activeMs:activeMs(closed),activeDays}};}}
-function delta(current,previous){{if(previous===null||previous===undefined||!Number.isFinite(previous)||previous===0)return'';const change=100*(current-previous)/Math.abs(previous);return`<div class="delta ${{change>=0?'up':'down'}}">${{change>=0?'+':''}}${{change.toFixed(1)}}% vs previous period</div>`;}}
-function card(label,value,current,previous){{return`<div class="card"><span>${{label}}</span><strong>${{value}}</strong>${{delta(current,previous)}}</div>`;}}
+function activeMs(turns){{if(data.meta.shareSafe)return total(turns,'durationMs');const groups={{}};turns.forEach(t=>{{const c=convByKey[t.conversationKey];if(!c||!validDate(t.startedAt)||!validDate(t.endedAt))return;(groups[c.machine]??=[]).push([Date.parse(t.startedAt),Date.parse(t.endedAt)]);}});let sum=0;Object.values(groups).forEach(intervals=>{{intervals.sort((a,b)=>a[0]-b[0]);let current=null;intervals.forEach(([start,end])=>{{if(!current)current=[start,end];else if(start<=current[1])current[1]=Math.max(current[1],end);else{{sum+=current[1]-current[0];current=[start,end];}}}});if(current)sum+=current[1]-current[0];}});return sum;}}
+function maxConcurrent(turns){{if(data.meta.shareSafe)return null;const byMachine={{}};turns.forEach(t=>{{const c=convByKey[t.conversationKey];if(!c||!validDate(t.startedAt)||!validDate(t.endedAt))return;(byMachine[c.machine]??=[]).push([Date.parse(t.startedAt),1],[Date.parse(t.endedAt),-1]);}});let peak=0;Object.values(byMachine).forEach(points=>{{points.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);let active=0;points.forEach(([,change])=>{{active+=change;peak=Math.max(peak,active);}});}});return peak;}}
+function metrics(s){{const closed=s.turns.filter(t=>t.status==='completed'||t.status==='aborted'),closedKeys=new Set(closed.map(t=>t.key)),closedCalls=s.calls.filter(c=>c.turnKey!==null&&closedKeys.has(c.turnKey)),durations=closed.map(t=>t.durationMs).filter(x=>x!==null),ttfts=closed.map(t=>t.ttftMs).filter(x=>x!==null),turnTokens=closed.map(t=>t.total_tokens),turnTools=closed.map(t=>t.toolCalls),input=total(closedCalls,'input_tokens'),cached=total(closedCalls,'cached_input_tokens'),output=total(closedCalls,'output_tokens'),tokens=total(closedCalls,'total_tokens'),active=activeMs(closed),pressures=s.contexts.map(c=>100*Number(c.inputTokens)/Number(c.contextWindowTokens)).filter(Number.isFinite),activeDays=new Set(s.turns.map(t=>day(t.startedAt)).filter(x=>x!=='unknown')).size;return{{turns:s.turns.length,completed:s.turns.filter(t=>t.status==='completed').length,aborted:s.turns.filter(t=>t.status==='aborted').length,tokens,tokensPerTurn:percentile(turnTokens,.5),toolsPerTurn:percentile(turnTools,.5),cacheRate:ratio(cached,input),durationP50:percentile(durations,.5),durationP75:percentile(durations,.75),durationP95:percentile(durations,.95),ttftP50:percentile(ttfts,.5),ttftP75:percentile(ttfts,.75),ttftP95:percentile(ttfts,.95),tokenP75:percentile(turnTokens,.75),tokenP95:percentile(turnTokens,.95),toolP75:percentile(turnTools,.75),toolP95:percentile(turnTools,.95),abortRate:ratio(s.turns.filter(t=>t.status==='aborted').length,closed.length),reasoningShare:ratio(total(closedCalls,'reasoning_output_tokens'),output),activeMs:active,throughput:active?3600000*closed.length/active:0,pressureP50:percentile(pressures,.5),pressureP95:percentile(pressures,.95),activeDays}};}}
+function delta(current,previous,preference='neutral'){{if(previous===null||previous===undefined||!Number.isFinite(previous)||previous===0)return'';const change=100*(current-previous)/Math.abs(previous),better=preference==='higher'?change>0:preference==='lower'?change<0:null,style=better===null?'neutral':better?'better':'worse';return`<div class="delta ${{style}}">${{change>=0?'+':''}}${{change.toFixed(1)}}% vs previous period</div>`;}}
+function card(label,value,current,previous,preference='neutral'){{return`<div class="card"><span>${{label}}</span><strong>${{value}}</strong>${{delta(current,previous,preference)}}</div>`;}}
 function stat(label,value,detail=''){{return`<div class="stat"><span class="muted">${{label}}</span><b>${{value}}</b>${{detail?`<small class="muted">${{detail}}</small>`:''}}</div>`;}}
 function group(rows,key,value=null){{const out={{}};rows.forEach(r=>{{const label=r[key]||'unknown';out[label]=(out[label]||0)+(value?(Number(r[value])||0):1);}});return Object.entries(out).sort((a,b)=>b[1]-a[1]);}}
-function toolCategory(name){{if(['spawn_agent','wait_agent','list_agents','send_message','followup_task','interrupt_agent'].includes(name))return'Agent coordination';if(['exec_command','write_stdin','wait'].includes(name))return'Shell and processes';if(['apply_patch','view_image'].includes(name))return'Files and workspace';if(name==='web__run')return'Web';if(['update_plan','create_goal','get_goal','update_goal'].includes(name))return'Planning';if(name.includes('imagegen'))return'Media';if(name.startsWith('mcp__')||name.includes('mcp_resource'))return'Integrations';return'Other';}}
+function toolCategory(name){{const categories=['Agent coordination','Shell and processes','Files and workspace','Web','Planning','Media','Integrations','Other'];if(categories.includes(name))return name;if(['spawn_agent','wait_agent','list_agents','send_message','followup_task','interrupt_agent'].includes(name))return'Agent coordination';if(['exec_command','write_stdin','wait'].includes(name))return'Shell and processes';if(['apply_patch','view_image'].includes(name))return'Files and workspace';if(name==='web__run')return'Web';if(['update_plan','create_goal','get_goal','update_goal'].includes(name))return'Planning';if(name.includes('imagegen'))return'Media';if(name.startsWith('mcp__')||name.includes('mcp_resource'))return'Integrations';return'Other';}}
 function drawBars(id,rows,formatter=fmt){{const shown=rows.slice(0,12),max=Math.max(...shown.map(x=>x[1]),1);$(id).innerHTML=shown.map(([k,v])=>`<div class="bar"><span title="${{escapeHtml(k)}}">${{escapeHtml(k)}}</span><div class="track"><div class="fill" style="width:${{100*v/max}}%"></div></div><b>${{formatter(v)}}</b></div>`).join('')||'<div class="empty">No data.</div>';}}
-function drawActivity(calls){{const days={{}};calls.forEach(c=>{{const key=day(c.timestamp),row=days[key]??={{cached:0,uncached:0,visible:0,reasoning:0,other:0,total:0}};row.cached+=Number(c.cached_input_tokens)||0;row.uncached+=Number(c.uncached_input_tokens)||0;row.visible+=Number(c.visible_output_tokens)||0;row.reasoning+=Number(c.reasoning_output_tokens)||0;row.other+=Number(c.unattributed_tokens)||0;row.total+=Number(c.total_tokens)||0;}});const rows=Object.entries(days).sort((a,b)=>a[0].localeCompare(b[0])).slice(-31),max=Math.max(...rows.map(([,v])=>v.total),1);$('activity').innerHTML=rows.map(([label,v])=>`<div class="bar"><span>${{escapeHtml(label)}}</span><div class="track">${{[['cache','cached'],['uncached','uncached'],['visible','visible'],['reasoning','reasoning'],['other','other']].map(([css,key])=>`<div class="seg-${{css}}" style="width:${{100*v[key]/max}}%" title="${{key}}: ${{fmt(v[key])}}"></div>`).join('')}}</div><b>${{short(v.total)}}</b></div>`).join('')||'<div class="empty">No data.</div>';$('activityCaption').textContent=rows.length?`${{rows.length}} active days shown`:'';}}
+function drawActivity(calls,range){{const totals={{}};calls.forEach(c=>{{const key=day(c.timestamp),row=totals[key]??={{cached:0,uncached:0,visible:0,reasoning:0,other:0,total:0}};row.cached+=Number(c.cached_input_tokens)||0;row.uncached+=Number(c.uncached_input_tokens)||0;row.visible+=Number(c.visible_output_tokens)||0;row.reasoning+=Number(c.reasoning_output_tokens)||0;row.other+=Number(c.unattributed_tokens)||0;row.total+=Number(c.total_tokens)||0;}});const observed=Object.keys(totals).filter(k=>k!=='unknown').sort(),end=range?.end||new Date(observed.length?`${{observed.at(-1)}}T23:59:59Z`:Date.now()),start=new Date(Math.max(range?.start?.getTime()||-Infinity,end.getTime()-30*86400000)),rows=[];start.setUTCHours(0,0,0,0);for(let cursor=new Date(start);cursor<=end;cursor.setUTCDate(cursor.getUTCDate()+1)){{const label=cursor.toISOString().slice(0,10);rows.push([label,totals[label]||{{cached:0,uncached:0,visible:0,reasoning:0,other:0,total:0}}]);}}const shown=rows.slice(-31),max=Math.max(...shown.map(([,v])=>v.total),1);$('activity').innerHTML=shown.map(([label,v])=>`<div class="bar"><span>${{escapeHtml(label)}}</span><div class="track">${{[['cache','cached'],['uncached','uncached'],['visible','visible'],['reasoning','reasoning'],['other','other']].map(([css,key])=>`<div class="seg-${{css}}" style="width:${{100*v[key]/max}}%" title="${{key}}: ${{fmt(v[key])}}"></div>`).join('')}}</div><b>${{short(v.total)}}</b></div>`).join('')||'<div class="empty">No data.</div>';$('activityCaption').textContent=shown.length?`${{shown.length}} calendar days shown`:'';}}
 function renderModels(calls){{const rows={{}};calls.forEach(c=>{{const r=rows[c.model]??={{calls:0,tokens:0,input:0,cached:0,output:0,reasoning:0,turns:new Set}};r.calls++;r.tokens+=Number(c.total_tokens)||0;r.input+=Number(c.input_tokens)||0;r.cached+=Number(c.cached_input_tokens)||0;r.output+=Number(c.output_tokens)||0;r.reasoning+=Number(c.reasoning_output_tokens)||0;if(c.turnKey!==null)r.turns.add(c.turnKey);}});const entries=Object.entries(rows).sort((a,b)=>b[1].tokens-a[1].tokens);$('models').innerHTML=entries.length?`<table><thead><tr><th>Model</th><th>Tokens</th><th>Tokens / turn</th><th>Usage events</th><th>Cache</th><th>Reasoning</th></tr></thead><tbody>${{entries.map(([name,r])=>`<tr><td>${{escapeHtml(name)}}</td><td>${{fmt(r.tokens)}}</td><td>${{short(r.tokens/(r.turns.size||1))}}</td><td>${{fmt(r.calls)}}</td><td>${{pct(ratio(r.cached,r.input))}}</td><td>${{pct(ratio(r.reasoning,r.output))}}</td></tr>`).join('')}}</tbody></table>`:'<div class="empty">No data.</div>';}}
 function toolTransitions(tools){{const byTurn={{}};tools.filter(t=>t.turnKey!==null).forEach(t=>(byTurn[t.turnKey]??=[]).push(t));const transitions=[];Object.values(byTurn).forEach(rows=>{{rows.sort((a,b)=>a.sequence-b.sequence);for(let i=1;i<rows.length;i++)transitions.push({{transition:`${{rows[i-1].tool}} → ${{rows[i].tool}}`}});}});return group(transitions,'transition');}}
 function renderOutcomes(turns){{const counts={{completed:0,aborted:0,'in-progress':0}};turns.forEach(t=>counts[t.status]=(counts[t.status]||0)+1);const totalTurns=turns.length||1;$('outcomes').innerHTML=`<div class="status"><div class="completed" style="width:${{100*(counts.completed||0)/totalTurns}}%"></div><div class="aborted" style="width:${{100*(counts.aborted||0)/totalTurns}}%"></div><div class="progress" style="width:${{100*(counts['in-progress']||0)/totalTurns}}%"></div></div><div class="metric-grid">${{stat('Completed',fmt(counts.completed||0),pct(100*(counts.completed||0)/totalTurns))}}${{stat('Aborted',fmt(counts.aborted||0),pct(100*(counts.aborted||0)/totalTurns))}}${{stat('In progress',fmt(counts['in-progress']||0),pct(100*(counts['in-progress']||0)/totalTurns))}}${{stat('Closed turns',fmt((counts.completed||0)+(counts.aborted||0)))}}</div>`;}}
-function renderQuality(s){{const durationCoverage=ratio(s.turns.filter(t=>t.durationMs!==null).length,s.turns.length),ttftCoverage=ratio(s.turns.filter(t=>t.ttftMs!==null).length,s.turns.length),unknown=ratio(s.calls.filter(c=>!c.model||c.model==='unknown').length,s.calls.length),unattributed=ratio(total(s.calls,'unattributed_tokens'),total(s.calls,'total_tokens')),unmapped=ratio(data.subagents.filter(x=>x.conversationKey===null).length,data.subagents.length),runs=data.ingestionRuns,latest=runs.map(r=>r.ingestedAt).filter(Boolean).sort().at(-1),malformed=total(runs,'malformed'),duplicates=total(runs,'duplicates');$('quality').innerHTML=stat('Turn duration coverage',pct(durationCoverage))+stat('TTFT coverage',pct(ttftCoverage))+stat('Unknown model events',pct(unknown))+stat('Unattributed tokens',pct(unattributed))+stat('Unmapped subagents',pct(unmapped))+stat('Malformed records',fmt(malformed))+stat('Deduplicated conversations',fmt(duplicates))+stat('Latest ingestion',latest?new Date(latest).toLocaleString():'Unknown');}}
+function renderPerformance(m){{$('performance').innerHTML=`<table><thead><tr><th>Metric</th><th>p50</th><th>p75</th><th>p95</th></tr></thead><tbody><tr><td>TTFT</td><td>${{formatDuration(m.ttftP50)}}</td><td>${{formatDuration(m.ttftP75)}}</td><td>${{formatDuration(m.ttftP95)}}</td></tr><tr><td>Turn duration</td><td>${{formatDuration(m.durationP50)}}</td><td>${{formatDuration(m.durationP75)}}</td><td>${{formatDuration(m.durationP95)}}</td></tr><tr><td>Tokens / turn</td><td>${{short(m.tokensPerTurn)}}</td><td>${{short(m.tokenP75)}}</td><td>${{short(m.tokenP95)}}</td></tr><tr><td>Tools / turn</td><td>${{fmt(m.toolsPerTurn)}}</td><td>${{fmt(m.toolP75)}}</td><td>${{fmt(m.toolP95)}}</td></tr></tbody></table>`;}}
+function renderContext(s,m){{const high=s.contexts.filter(c=>100*Number(c.inputTokens)/Number(c.contextWindowTokens)>=80).length,covered=new Set(s.contexts.map(c=>c.turnKey).filter(k=>k!==null)).size;$('contextPressure').innerHTML=stat('Median pressure',pct(m.pressureP50))+stat('p95 pressure',pct(m.pressureP95))+stat('Samples at ≥80%',fmt(high))+stat('Turn coverage',pct(ratio(covered,s.turns.length)))+stat('Compactions',fmt(s.compactions.length),`${{(100*s.compactions.length/Math.max(s.turns.length,1)).toFixed(1)}} / 100 turns`)+stat('Reasoning share',pct(m.reasoningShare));const configs=[];s.settings.forEach(x=>{{if(x.effort)configs.push({{label:`effort: ${{x.effort}}`}});if(x.mode)configs.push({{label:`mode: ${{x.mode}}`}});if(x.tier)configs.push({{label:`tier: ${{x.tier}}`}});}});drawBars('turnConfigurations',group(configs,'label'));}}
+function renderWork(s){{const timed=s.work.filter(w=>w.durationMs!==null),closed=s.work.filter(w=>w.status==='completed'||w.status==='failed'),failed=s.work.filter(w=>w.status==='failed'),durations=timed.map(w=>w.durationMs);$('workReliability').innerHTML=stat('Observed items',fmt(s.work.length))+stat('Duration coverage',pct(ratio(timed.length,s.work.length)))+stat('Technical failure rate',pct(ratio(failed.length,closed.length)))+stat('Median duration',formatDuration(percentile(durations,.5)),`p95 ${{formatDuration(percentile(durations,.95))}}`);drawBars('workKinds',group(timed,'kind','durationMs'),formatDuration);}}
+function delegationStats(s){{const edges=s.subagents.filter(x=>x.childConversationKey!==null),children=new Set(edges.map(x=>x.childConversationKey)),closedChildren=[...children].filter(key=>{{const turns=s.turns.filter(t=>t.conversationKey===key);return turns.length&&turns.every(t=>t.status!=='in-progress');}}),fanouts={{}};edges.forEach(e=>fanouts[e.conversationKey]=(fanouts[e.conversationKey]||0)+1);const adjacency={{}};edges.forEach(e=>(adjacency[e.conversationKey]??=[]).push(e.childConversationKey));function depth(key,path=new Set()){{if(path.has(key))return 0;const next=new Set(path);next.add(key);return 1+Math.max(0,...(adjacency[key]||[]).map(child=>depth(child,next)));}}return{{mapped:edges.length,closed:closedChildren.length,maxFanout:Math.max(0,...Object.values(fanouts)),maxDepth:Math.max(0,...Object.keys(adjacency).map(Number).map(key=>depth(key)-1))}};}}
+function cohortLabel(turn,dimension,s){{const conv=convByKey[turn.conversationKey],setting=settingByTurn[turn.key];if(dimension==='project')return conv?.project||'unknown';if(dimension==='model')return setting?.model||conv?.models?.join(', ')||'unknown';if(dimension==='effort')return setting?.effort||'unknown';if(dimension==='mode')return setting?.mode||'unknown';if(dimension==='delegation')return s.subagents.some(x=>x.conversationKey===turn.conversationKey)?'delegated':'not delegated';if(dimension==='compaction')return s.compactions.some(x=>x.conversationKey===turn.conversationKey)?'compacted':'not compacted';return'unknown';}}
+function renderCohorts(s){{const dimension=$('cohortDimension').value,rows={{}},pressureByTurn={{}};s.contexts.forEach(c=>{{if(c.turnKey===null)return;(pressureByTurn[c.turnKey]??=[]).push(100*Number(c.inputTokens)/Number(c.contextWindowTokens));}});s.turns.filter(t=>t.status==='completed'||t.status==='aborted').forEach(t=>{{const label=cohortLabel(t,dimension,s),r=rows[label]??={{turns:[],durations:[],tokens:[],tools:[],pressures:[],aborted:0}};r.turns.push(t);if(t.durationMs!==null)r.durations.push(t.durationMs);r.tokens.push(t.total_tokens);r.tools.push(t.toolCalls);r.pressures.push(...(pressureByTurn[t.key]||[]));if(t.status==='aborted')r.aborted++;}});const entries=Object.entries(rows).filter(([,r])=>!data.meta.shareSafe||r.turns.length>=5).sort((a,b)=>b[1].turns.length-a[1].turns.length);$('cohorts').innerHTML=entries.length?`<table><thead><tr><th>Cohort</th><th>Closed turns</th><th>Median duration</th><th>Median tokens</th><th>Tools / turn</th><th>Context p95</th><th>Abort rate</th></tr></thead><tbody>${{entries.map(([label,r])=>`<tr><td>${{escapeHtml(label)}}</td><td>${{fmt(r.turns.length)}}</td><td>${{formatDuration(percentile(r.durations,.5))}}</td><td>${{short(percentile(r.tokens,.5))}}</td><td>${{(total(r.tools.map(value=>({{value}})),'value')/r.turns.length).toFixed(1)}}</td><td>${{pct(percentile(r.pressures,.95))}}</td><td>${{pct(ratio(r.aborted,r.turns.length))}}</td></tr>`).join('')}}</tbody></table>`:'<div class="empty">No cohort has enough data for this selection.</div>';}}
+function renderQuality(s,f){{const durationCoverage=ratio(s.turns.filter(t=>t.durationMs!==null).length,s.turns.length),ttftCoverage=ratio(s.turns.filter(t=>t.ttftMs!==null).length,s.turns.length),unknown=ratio(s.calls.filter(c=>!c.model||c.model==='unknown').length,s.calls.length),unattributed=ratio(total(s.calls,'unattributed_tokens'),total(s.calls,'total_tokens')),unmapped=ratio(s.subagents.filter(x=>x.childConversationKey===null).length,s.subagents.length),runs=data.ingestionRuns.filter(r=>(!f.provider||r.provider===f.provider)&&inRange(r.ingestedAt,f.range)),latest=runs.map(r=>r.ingestedAt).filter(Boolean).sort().at(-1),malformed=total(runs,'malformed'),duplicates=total(runs,'duplicates');$('quality').innerHTML=stat('Turn duration coverage',pct(durationCoverage))+stat('TTFT coverage',pct(ttftCoverage))+stat('Unknown model events',pct(unknown))+stat('Unattributed tokens',pct(unattributed))+stat('Unmapped child threads',pct(unmapped))+stat('Malformed records',fmt(malformed))+stat('Deduplicated conversations',fmt(duplicates))+stat('Latest matching ingestion',latest?new Date(latest).toLocaleString():'Unknown');}}
 function sortExplorer(key){{if(tableSort.key===key)tableSort.direction*=-1;else tableSort={{key,direction:key==='startedAt'?-1:1}};if(currentSlice)renderTable(currentSlice.conversations,currentSlice.turns);}}
-function renderTable(conversations,turns){{const statuses={{}};turns.forEach(t=>{{const s=statuses[t.conversationKey]??={{completed:0,aborted:0,progress:0}};if(t.status==='completed')s.completed++;else if(t.status==='aborted')s.aborted++;else s.progress++;}});const value=(c,key)=>key==='models'?c.models.join(', '):key==='outcome'?(statuses[c.key]?.aborted?'aborted':statuses[c.key]?.progress?'in progress':statuses[c.key]?.completed?'completed':'unknown'):c[key];const rows=conversations.slice().sort((a,b)=>{{const av=value(a,tableSort.key)??'',bv=value(b,tableSort.key)??'';return tableSort.direction*(typeof av==='number'&&typeof bv==='number'?av-bv:String(av).localeCompare(String(bv)));}});$('conversationCount').textContent=`${{rows.length}} conversations`;$('conversationDetail').innerHTML='';$('table').innerHTML=rows.length?`<table><thead><tr><th onclick="sortExplorer('startedAt')">Started</th><th onclick="sortExplorer('provider')">Provider</th><th onclick="sortExplorer('machine')">Machine</th><th onclick="sortExplorer('project')">Project</th><th onclick="sortExplorer('models')">Models</th><th onclick="sortExplorer('turns')">Turns</th><th onclick="sortExplorer('outcome')">Outcome</th><th onclick="sortExplorer('compactions')">Compactions</th><th onclick="sortExplorer('total_tokens')">Tokens</th><th onclick="sortExplorer('durationSeconds')">Wall duration</th></tr></thead><tbody>${{rows.map(c=>{{const s=statuses[c.key]||{{completed:0,aborted:0,progress:0}},outcome=s.aborted?'aborted':s.progress?'in progress':s.completed?'completed':'unknown';return`<tr style="cursor:pointer" onclick="showConversation(${{c.key}})"><td>${{escapeHtml(c.startedAt||'')}}</td><td>${{escapeHtml(c.provider)}}</td><td>${{escapeHtml(c.machine)}}</td><td>${{escapeHtml(c.project)}}</td><td>${{escapeHtml(c.models.join(', '))}}</td><td>${{fmt(c.turns)}}</td><td>${{outcome}}</td><td>${{fmt(c.compactions)}}</td><td>${{fmt(c.total_tokens)}}</td><td>${{formatDuration((Number(c.durationSeconds)||0)*1000)}}</td></tr>`;}}).join('')}}</tbody></table>`:'<div class="empty">No conversations match these filters.</div>';}}
-function showConversation(key){{if(!currentSlice)return;const c=convByKey[key],turns=currentSlice.turns.filter(t=>t.conversationKey===key),calls=currentSlice.calls.filter(x=>x.conversationKey===key),tools=currentSlice.tools.filter(x=>x.conversationKey===key),closed=turns.filter(t=>t.status==='completed'||t.status==='aborted'),durations=closed.map(t=>t.durationMs).filter(x=>x!==null),ttfts=closed.map(t=>t.ttftMs).filter(x=>x!==null);$('conversationDetail').innerHTML=`<details open><summary>${{escapeHtml(c.project)}} · ${{escapeHtml(c.startedAt||'')}}</summary><div class="quality-grid" style="margin-top:14px">${{stat('Turns in range',fmt(turns.length))}}${{stat('Tokens in range',fmt(total(calls,'total_tokens')))}}${{stat('Median TTFT',formatDuration(percentile(ttfts,.5)))}}${{stat('Median duration',formatDuration(percentile(durations,.5)))}}${{stat('Tool calls',fmt(tools.length))}}${{stat('Compactions',fmt(c.compactions))}}</div><h3 style="margin-top:16px">Tools in this conversation</h3><div class="bars">${{group(tools,'tool').slice(0,8).map(([name,count])=>`<div class="bar"><span>${{escapeHtml(name)}}</span><div class="track"><div class="fill" style="width:${{100*count/Math.max(tools.length,1)}}%"></div></div><b>${{fmt(count)}}</b></div>`).join('')||'<div class="empty">No tool calls.</div>'}}</div></details>`;}}
+function renderTable(conversations,turns){{const statuses={{}};turns.forEach(t=>{{const s=statuses[t.conversationKey]??={{completed:0,aborted:0,progress:0}};if(t.status==='completed')s.completed++;else if(t.status==='aborted')s.aborted++;else s.progress++;}});const outcome=c=>{{const s=statuses[c.key];return s?.aborted?'contains abort':s?.progress?'in progress':s?.completed?'technically closed':'unknown';}},value=(c,key)=>key==='models'?c.models.join(', '):key==='outcome'?outcome(c):c[key];const rows=conversations.slice().sort((a,b)=>{{const av=value(a,tableSort.key)??'',bv=value(b,tableSort.key)??'';return tableSort.direction*(typeof av==='number'&&typeof bv==='number'?av-bv:String(av).localeCompare(String(bv)));}});$('conversationCount').textContent=`${{rows.length}} conversations`;$('conversationDetail').innerHTML='';$('table').innerHTML=rows.length?`<table><thead><tr><th onclick="sortExplorer('startedAt')">Started</th><th onclick="sortExplorer('provider')">Provider</th><th onclick="sortExplorer('machine')">Machine</th><th onclick="sortExplorer('project')">Project</th><th onclick="sortExplorer('models')">Models</th><th onclick="sortExplorer('turns')">Turns</th><th onclick="sortExplorer('outcome')">Technical status</th><th onclick="sortExplorer('compactions')">Compactions</th><th onclick="sortExplorer('total_tokens')">Tokens</th><th onclick="sortExplorer('durationSeconds')">Wall duration</th></tr></thead><tbody>${{rows.map(c=>`<tr style="cursor:pointer" onclick="showConversation(${{c.key}})"><td>${{escapeHtml(c.startedAt||'')}}</td><td>${{escapeHtml(c.provider)}}</td><td>${{escapeHtml(c.machine)}}</td><td>${{escapeHtml(c.project)}}</td><td>${{escapeHtml(c.models.join(', '))}}</td><td>${{fmt(c.turns)}}</td><td>${{outcome(c)}}</td><td>${{fmt(c.compactions)}}</td><td>${{fmt(c.total_tokens)}}</td><td>${{formatDuration((Number(c.durationSeconds)||0)*1000)}}</td></tr>`).join('')}}</tbody></table>`:'<div class="empty">No conversations match these filters.</div>';}}
+function showConversation(key){{if(!currentSlice)return;const c=convByKey[key],turns=currentSlice.turns.filter(t=>t.conversationKey===key),calls=currentSlice.calls.filter(x=>x.conversationKey===key),tools=currentSlice.tools.filter(x=>x.conversationKey===key),work=currentSlice.work.filter(x=>x.conversationKey===key),contexts=currentSlice.contexts.filter(x=>x.conversationKey===key),closed=turns.filter(t=>t.status==='completed'||t.status==='aborted'),durations=closed.map(t=>t.durationMs).filter(x=>x!==null),ttfts=closed.map(t=>t.ttftMs).filter(x=>x!==null),pressures=contexts.map(x=>100*Number(x.inputTokens)/Number(x.contextWindowTokens));$('conversationDetail').innerHTML=`<details open><summary>${{escapeHtml(c.project)}} · ${{escapeHtml(c.startedAt||'')}}</summary><div class="quality-grid" style="margin-top:14px">${{stat('Turns in range',fmt(turns.length))}}${{stat('Tokens in range',fmt(total(calls,'total_tokens')))}}${{stat('Median TTFT',formatDuration(percentile(ttfts,.5)))}}${{stat('Median duration',formatDuration(percentile(durations,.5)))}}${{stat('Context p95',pct(percentile(pressures,.95)))}}${{stat('Technical work items',fmt(work.length))}}</div><h3 style="margin-top:16px">Tools in this conversation</h3><div class="bars">${{group(tools,'tool').slice(0,8).map(([name,count])=>`<div class="bar"><span>${{escapeHtml(name)}}</span><div class="track"><div class="fill" style="width:${{100*count/Math.max(tools.length,1)}}%"></div></div><b>${{fmt(count)}}</b></div>`).join('')||'<div class="empty">No tool calls.</div>'}}</div></details>`;}}
 function formatDuration(ms){{if(ms===null||ms===undefined||!Number.isFinite(Number(ms)))return'—';const seconds=Number(ms)/1000;if(seconds<60)return`${{seconds.toFixed(1)}}s`;if(seconds<3600)return`${{(seconds/60).toFixed(1)}}m`;return`${{(seconds/3600).toFixed(1)}}h`;}}
-function render(){{const f=selected(),s=slice(f),m=metrics(s),previous=f.range?.previous?metrics(slice(f,f.range.previous)):null,closed=s.turns.filter(t=>t.status==='completed'||t.status==='aborted');currentSlice=s;$('cards').innerHTML=card('Closed turns',fmt(m.completed+m.aborted),m.completed+m.aborted,previous?previous.completed+previous.aborted:null)+card('Active days',fmt(m.activeDays),m.activeDays,previous?.activeDays)+card('Total tokens',short(m.tokens),m.tokens,previous?.tokens)+card('Tokens / turn',short(m.tokensPerTurn),m.tokensPerTurn,previous?.tokensPerTurn,true)+card('Cache rate',pct(m.cacheRate),m.cacheRate,previous?.cacheRate)+card('Median TTFT',formatDuration(m.ttftP50),m.ttftP50,previous?.ttftP50,true)+card('Median duration',formatDuration(m.durationP50),m.durationP50,previous?.durationP50,true)+card('Abort rate',pct(m.abortRate),m.abortRate,previous?.abortRate,true)+card('Active time',formatDuration(m.activeMs),m.activeMs,previous?.activeMs);drawActivity(s.calls);$('performance').innerHTML=stat('TTFT',formatDuration(m.ttftP50),`p95 ${{formatDuration(m.ttftP95)}}`)+stat('Turn duration',formatDuration(m.durationP50),`p95 ${{formatDuration(m.durationP95)}}`)+stat('Tokens / closed turn',short(m.tokensPerTurn))+stat('Reasoning share',pct(m.reasoningShare));renderModels(s.calls);drawBars('tools',group(s.tools,'tool'));drawBars('toolCategories',group(s.tools.map(t=>({{category:toolCategory(t.tool)}})),'category'));drawBars('toolTransitions',toolTransitions(s.tools));const compacted=s.conversations.filter(c=>Number(c.compactions)>0).length,compactions=total(s.conversations,'compactions'),delegated=new Set(s.subagents.map(x=>x.conversationKey)).size,subTokens=total(s.subagents,'tokens');$('workflow').innerHTML=stat('Tools / turn',closed.length?(s.tools.length/closed.length).toFixed(1):'0')+stat('Turns using tools',pct(ratio(s.turns.filter(t=>t.toolCalls>0).length,s.turns.length)))+stat('Compacted conversations',pct(ratio(compacted,s.conversations.length)),`${{(100*compactions/Math.max(s.turns.length,1)).toFixed(1)}} / 100 turns`)+stat('Delegating conversations',pct(ratio(delegated,s.conversations.length)),`${{fmt(s.subagents.length)}} subagents`)+stat('Reported subagent tokens',short(subTokens),'may overlap parent totals')+stat('Peak concurrent turns',fmt(maxConcurrent(closed)),'per-machine peak');drawBars('agentRoles',group(s.subagents,'role'));renderOutcomes(s.turns);renderQuality(s);renderTable(s.conversations,s.turns);}}
+function render(){{const f=selected(),s=slice(f),m=metrics(s),previous=f.range?.previous?metrics(slice(f,f.range.previous)):null,closed=s.turns.filter(t=>t.status==='completed'||t.status==='aborted'),delegation=delegationStats(s),peak=maxConcurrent(closed),compacted=new Set(s.compactions.map(c=>c.conversationKey)).size,delegated=new Set(s.subagents.map(x=>x.conversationKey)).size,subTokens=total(s.subagents,'tokens');currentSlice=s;$('cards').innerHTML=card('Closed turns',fmt(m.completed+m.aborted),m.completed+m.aborted,previous?previous.completed+previous.aborted:null)+card('Active days',fmt(m.activeDays),m.activeDays,previous?.activeDays,'higher')+card('Total tokens',short(m.tokens),m.tokens,previous?.tokens)+card('Median tokens / turn',short(m.tokensPerTurn),m.tokensPerTurn,previous?.tokensPerTurn)+card('Median TTFT',formatDuration(m.ttftP50),m.ttftP50,previous?.ttftP50,'lower')+card('Median duration',formatDuration(m.durationP50),m.durationP50,previous?.durationP50,'lower')+card('Technical throughput',m.throughput.toFixed(1)+'/h',m.throughput,previous?.throughput,'higher')+card('Context pressure p95',pct(m.pressureP95),m.pressureP95,previous?.pressureP95,'lower')+card(data.meta.shareSafe?'Summed turn time':'Active time',formatDuration(m.activeMs),m.activeMs,previous?.activeMs);drawActivity(s.calls,f.range);renderPerformance(m);renderModels(s.calls);drawBars('tools',group(s.tools,'tool'));drawBars('toolCategories',group(s.tools.map(t=>({{category:toolCategory(t.tool)}})),'category'));drawBars('toolTransitions',toolTransitions(s.tools));$('workflow').innerHTML=stat('Turns using tools',pct(ratio(s.turns.filter(t=>t.toolCalls>0).length,s.turns.length)))+stat('Compacted conversations',pct(ratio(compacted,s.conversations.length)))+stat('Delegating conversations',pct(ratio(delegated,s.conversations.length)),`${{fmt(s.subagents.length)}} edges`)+stat('Mapped child threads',fmt(delegation.mapped),`${{fmt(delegation.closed)}} technically closed`)+stat('Max delegation fan-out',fmt(delegation.maxFanout))+stat('Max delegation depth',fmt(delegation.maxDepth))+stat('Reported subagent tokens',short(subTokens),'may overlap parent totals')+stat('Peak concurrent turns',peak===null?'Hidden':fmt(peak),data.meta.shareSafe?'exact times rounded':'per-machine peak');drawBars('agentRoles',group(s.subagents,'role'));renderOutcomes(s.turns);renderContext(s,m);renderWork(s);renderCohorts(s);renderQuality(s,f);renderTable(s.conversations,s.turns);}}
 options('provider',data.conversations.map(c=>c.provider));options('machine',data.conversations.map(c=>c.machine));options('project',data.conversations.map(c=>c.project));options('model',data.modelCalls.map(c=>c.model));
 const dates=data.conversations.map(c=>c.startedAt).filter(validDate).sort();if(dates.length){{$('from').value=dates[0].slice(0,10);$('to').value=dates.at(-1).slice(0,10);}}
+if(data.meta.shareSafe)$('privacyBadge').classList.add('visible');
 document.querySelectorAll('select,input').forEach(e=>e.addEventListener('change',()=>{{$('customDates').classList.toggle('visible',$('period').value==='custom');render();}}));render();
 </script></body></html>"""

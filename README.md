@@ -29,9 +29,21 @@ makes no network requests.
 
 The dashboard supports time, provider, machine, project, and model filters. It reports
 period-over-period activity, token composition, cache efficiency, turn latency and
-duration percentiles, technical completion status, tool usage, compactions, subagent
-delegation, and ingestion quality. Token events are local usage metadata rather than
-billing records, and a technically completed turn is not a measure of task quality.
+duration distributions, technical throughput, context pressure, content-free work-item
+duration and reliability, configuration cohorts, compactions, subagent delegation, and
+ingestion quality. Token events are local usage metadata rather than billing records,
+and a technically completed turn is not a measure of task quality or productivity.
+
+For a dashboard that is safer to share, omit the detailed CSV exports, pseudonymize
+machine, project, model, and role labels, group tool names, round timestamps to days,
+and hide small rows in the cohort-comparison view:
+
+```bash
+uv run cli-consumption export --output shared-report --share-safe
+```
+
+Share-safe reports still disclose aggregate work patterns and must be treated as
+private operational data.
 
 After the package is published to PyPI, the same CLI can run without a permanent
 installation:

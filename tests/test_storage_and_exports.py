@@ -2,13 +2,28 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import cast
+
+import pytest
+from sqlalchemy import Table, inspect
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.schema import CreateTable
 
 from cli_consumption.adapters.codex import CodexAdapter
-from cli_consumption.dashboard import _dashboard_payload, generate_dashboard
+from cli_consumption.dashboard import (
+    _dashboard_payload,
+    _round_epoch_day,
+    _round_timestamp,
+    _tool_category,
+    generate_dashboard,
+)
 from cli_consumption.exporting import export_csv
+from cli_consumption.models import Snapshot
 from cli_consumption.storage import (
+    TABLES,
     create_database_engine,
     ingest_snapshot,
+    initialize_database,
     normalize_database_url,
     read_table,
 )
@@ -37,7 +52,7 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     paths = export_csv(engine, output)
     dashboard = output / "dashboard.html"
     generate_dashboard(engine, dashboard)
-    assert len(paths) == 6
+    assert len(paths) == 10
     html = dashboard.read_text(encoding="utf-8")
     assert "CLI Consumption" in html
     assert "Turn performance" in html
@@ -58,6 +73,10 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
         "turns",
         "model_calls",
         "tool_calls",
+        "work_items",
+        "context_samples",
+        "turn_settings",
+        "compaction_events",
         "subagents",
         "ingestion_runs",
     ):
@@ -65,13 +84,19 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
 
     payload = _dashboard_payload(engine)
     assert set(payload) == {
+        "meta",
         "conversations",
         "turns",
         "modelCalls",
         "toolCalls",
+        "workItems",
+        "contextSamples",
+        "turnSettings",
+        "compactions",
         "subagents",
         "ingestionRuns",
     }
+    assert payload["meta"] == {"shareSafe": False}
     assert set(payload["conversations"][0]) == {
         "key",
         "provider",
@@ -102,8 +127,146 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
         "timestamp",
         "tool",
     }
+    assert set(payload["workItems"][0]) == {
+        "conversationKey",
+        "turnKey",
+        "kind",
+        "tool",
+        "startedAtMs",
+        "durationMs",
+        "status",
+    }
+    assert payload["contextSamples"][0]["contextWindowTokens"] == 1000
+    assert payload["turnSettings"][0]["effort"] == "high"
     with (output / "conversations.csv").open(encoding="utf-8") as handle:
         assert next(iter(csv.DictReader(handle)))["source_machine"] == "workstation"
+    engine.dispose()
+
+
+def test_share_safe_dashboard_pseudonymizes_labels_and_omits_exact_times(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+    ingest_snapshot(engine, CodexAdapter().collect([("private-machine", home)]))
+
+    output = tmp_path / "safe.html"
+    generate_dashboard(engine, output, share_safe=True)
+    html = output.read_text(encoding="utf-8")
+
+    assert "Share-safe dashboard" in html
+    assert "private-machine" not in html
+    assert "service" not in html
+    assert "gpt-5.6" not in html
+    assert '"tool":"exec_command"' not in html
+    assert "2026-08-25T10:00" not in html
+    assert "machine-1" in html
+    assert "project-1" in html
+    assert "model-1" in html
+    assert "Shell and processes" in html
+    assert _round_timestamp("privacy canary") is None
+    assert _round_timestamp(None) is None
+    assert _round_timestamp("2026-08-25T10:00:00Z") == ("2026-08-25T00:00:00+00:00")
+    assert _round_epoch_day(float("inf")) is None
+    assert _round_epoch_day(0) == 0
+    assert _round_epoch_day(10**30) is None
+    assert _tool_category("spawn_agent") == "Agent coordination"
+    assert _tool_category("exec_command") == "Shell and processes"
+    assert _tool_category("apply_patch") == "Files and workspace"
+    assert _tool_category("web__run") == "Web"
+    assert _tool_category("update_plan") == "Planning"
+    assert _tool_category("image_gen__imagegen") == "Media"
+    assert _tool_category("mcp__service__call") == "Integrations"
+    assert _tool_category("provider_specific") == "Other"
+    engine.dispose()
+
+
+def test_additive_analytics_tables_compile_for_postgresql() -> None:
+    for table_name in (
+        "work_items",
+        "context_samples",
+        "turn_settings",
+        "compaction_events",
+    ):
+        table = cast(Table, TABLES[table_name].__table__)
+        ddl = str(CreateTable(table).compile(dialect=postgresql.dialect()))
+        assert f"CREATE TABLE {table_name}" in ddl
+        assert "FOREIGN KEY(conversation_id)" in ddl
+
+
+def test_existing_database_gains_additive_analytics_tables(tmp_path: Path) -> None:
+    engine = create_database_engine(tmp_path / "existing.sqlite")
+    original_tables = (
+        "conversations",
+        "turns",
+        "model_calls",
+        "tool_calls",
+        "subagents",
+        "ingestion_runs",
+    )
+    for table_name in original_tables:
+        cast(Table, TABLES[table_name].__table__).create(engine)
+
+    assert "work_items" not in inspect(engine).get_table_names()
+    initialize_database(engine)
+
+    assert set(TABLES) == set(inspect(engine).get_table_names())
+    engine.dispose()
+
+
+def test_richer_replacement_is_atomic_and_older_copy_cannot_regress_it(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    original = CodexAdapter().collect([("desktop", home)])
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+    ingest_snapshot(engine, original)
+
+    rollout_factory(home, extra_event=True)
+    richer = CodexAdapter().collect([("desktop", home)])
+    result = ingest_snapshot(engine, richer)
+    assert (result.written, result.skipped) == (1, 0)
+    assert len(read_table(engine, "work_items")) == 1
+    assert len(read_table(engine, "compaction_events")) == 1
+
+    result = ingest_snapshot(engine, original)
+    assert (result.written, result.skipped) == (0, 1)
+    assert len(read_table(engine, "compaction_events")) == 1
+
+    invalid = Snapshot.from_dict(richer.to_dict())
+    invalid.work_items[0]["raw_item"] = "privacy canary"
+    with pytest.raises(ValueError, match="unexpected=\\['raw_item'\\]"):
+        ingest_snapshot(engine, invalid)
+    assert len(read_table(engine, "compaction_events")) == 1
+    assert "privacy canary" not in str(read_table(engine, "work_items"))
+    engine.dispose()
+
+
+def test_invalid_analytics_values_are_rejected_without_echoing_content(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home, extra_event=True)
+    original = CodexAdapter().collect([("desktop", home)])
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+
+    mutations = (
+        ("work_items", "status", "privacy_canary"),
+        ("context_samples", "timestamp", "privacy canary"),
+        ("context_samples", "input_tokens", -1),
+        ("turn_settings", "effort", "privacy canary"),
+        ("compaction_events", "timestamp", "privacy canary"),
+    )
+    for collection, field, value in mutations:
+        invalid = Snapshot.from_dict(original.to_dict())
+        getattr(invalid, collection)[0][field] = value
+        with pytest.raises(ValueError) as error:
+            ingest_snapshot(engine, invalid)
+        assert "privacy" not in str(error.value)
+
+    assert read_table(engine, "conversations") == []
     engine.dispose()
 
 

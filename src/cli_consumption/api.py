@@ -20,6 +20,10 @@ class SnapshotPayload(BaseModel):
     turns: list[dict[str, Any]] = Field(default_factory=list)
     model_calls: list[dict[str, Any]] = Field(default_factory=list)
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    work_items: list[dict[str, Any]] = Field(default_factory=list)
+    context_samples: list[dict[str, Any]] = Field(default_factory=list)
+    turn_settings: list[dict[str, Any]] = Field(default_factory=list)
+    compaction_events: list[dict[str, Any]] = Field(default_factory=list)
     subagents: list[dict[str, Any]] = Field(default_factory=list)
     malformed_records: int = 0
     duplicate_conversations: int = 0

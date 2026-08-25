@@ -8,6 +8,9 @@ CLI Consumption measures activity; it does not archive conversations.
 - Conversation and turn timestamps, status, and durations
 - Model identifiers and token counters emitted by the provider
 - Tool names and aggregate call counts
+- Whitelisted work-item categories, normalized technical status, and timing
+- Model input-to-context-window samples and bounded provider configuration labels
+- Timestamped compaction counts without replacement content or window identifiers
 - Metadata-only subagent relationships, roles, status, timing, and token counters
 - Content hashes and event counts used only for deduplication
 
@@ -18,12 +21,23 @@ CLI Consumption measures activity; it does not archive conversations.
 - Tool arguments, command lines, patches, and tool results
 - Environment variables, credentials, access tokens, and authentication files
 - Complete raw provider events or arbitrary metadata blobs
+- Commands, exit output, file-change details, MCP arguments/results, and item content
+- Raw rate-limit, credit, plan, or spend-control payloads
 - Original working directories and rollout paths in shared exports
 
 Adapters may inspect a working directory transiently to apply an explicit project
 mapping, but persistence records only the resulting project label and mapping source.
 Tool arguments may be inspected transiently to identify nested tool names, but the
 arguments themselves are discarded.
+
+Work-item records are reduced to a fixed category, optional constrained tool name,
+normalized technical status, relationship keys, and timestamps or durations. Error
+objects, exit output, commands, paths, patches, messages, and item-specific payloads are
+discarded. Context samples persist only the latest model-call input-token count and the
+reported context-window size; cumulative payloads and rate-limit metadata are ignored.
+Turn configuration labels accept only bounded identifier-like values. Snapshot
+validation rejects unknown work categories, arbitrary statuses, malformed timestamps,
+out-of-range counters, and unconstrained analytics labels before opening a transaction.
 
 ## Threat model
 
@@ -44,3 +58,12 @@ subagent nicknames, and ingestion-run IDs. Derived rates, percentiles, tool cate
 and period comparisons are computed inside the document. The remaining project names,
 machine labels, model names, tool names, roles, token counters, statuses, and activity
 timestamps are still private operational metadata.
+
+`export --share-safe` writes only the HTML dashboard and omits CSV tables. Within that
+document, machine, project, model, and subagent-role labels are replaced with local
+aliases; tools are reduced to broad categories; timestamps are rounded to UTC days;
+and the comparison table hides cohorts smaller than five closed turns. The underlying
+pseudonymized per-turn rows remain embedded so local filtering works. Provider names,
+daily activity, durations, counts, token counters, configuration labels, statuses, and
+aggregate work patterns remain disclosed. Share-safe is a minimization profile, not
+anonymization.

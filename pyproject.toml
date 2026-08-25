@@ -39,10 +39,10 @@ cli-consumption = "cli_consumption.cli:app"
 
 [dependency-groups]
 dev = [
-  "mypy>=1.15",
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "ruff>=0.11",
+  "ty>=0.0.74",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -69,8 +69,3 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/cli_consumption/dashboard.py" = ["E501"]
-
-[tool.mypy]
-python_version = "3.14"
-strict = true
-packages = ["cli_consumption"]

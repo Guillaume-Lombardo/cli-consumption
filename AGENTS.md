@@ -38,7 +38,7 @@ Run all of the following before requesting review:
 ```bash
 uv run ruff format --check .
 uv run ruff check .
-uv run mypy
+uv run ty check
 uv run pytest --cov --cov-report=term-missing
 uv build
 ```

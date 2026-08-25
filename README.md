@@ -129,7 +129,7 @@ Run `uv run cli-consumption COMMAND --help` for every option.
 uv sync --all-groups
 uv run ruff format --check .
 uv run ruff check .
-uv run mypy
+uv run ty check
 uv run pytest --cov --cov-report=term-missing
 uv build
 ```

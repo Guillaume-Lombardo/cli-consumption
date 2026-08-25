@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from cli_consumption.cli import app
@@ -96,4 +97,5 @@ def test_collect_and_export(tmp_path: Path, rollout_factory) -> None:
         ],
     )
     assert result.exit_code == 2
-    assert "requires --dashboard" in result.output
+    normalized_output = " ".join(strip_ansi(result.output).split())
+    assert "requires --dashboard" in normalized_output

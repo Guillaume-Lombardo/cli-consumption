@@ -4,7 +4,13 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from cli_consumption.adapters.codex import CodexAdapter, infer_project
+from cli_consumption.adapters.codex import (
+    MAX_BIGINT,
+    CodexAdapter,
+    _integer_or_none,
+    _work_item_status,
+    infer_project,
+)
 
 
 def test_collects_and_deduplicates_copied_rollouts(
@@ -157,3 +163,12 @@ def test_work_items_normalize_failures_and_reject_arbitrary_dimensions(
     assert snapshot.model_calls[-1]["total_tokens"] == 0
     assert len(snapshot.context_samples) == 1
     assert "privacy canary" not in str(snapshot.to_dict())
+
+
+def test_numeric_and_work_status_normalizers_are_bounded() -> None:
+    assert _integer_or_none(True) is None
+    assert _integer_or_none(float("inf")) is None
+    assert _integer_or_none(MAX_BIGINT + 1) is None
+    assert _work_item_status({"status": "running"}) == "in-progress"
+    assert _work_item_status({"status": "unexpected"}) == "unknown"
+    assert _work_item_status({"success": False}) == "failed"

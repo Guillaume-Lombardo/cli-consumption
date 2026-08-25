@@ -14,6 +14,7 @@ from cli_consumption.dashboard import (
     _dashboard_payload,
     _round_epoch_day,
     _round_timestamp,
+    _tool_category,
     generate_dashboard,
 )
 from cli_consumption.exporting import export_csv
@@ -165,7 +166,19 @@ def test_share_safe_dashboard_pseudonymizes_labels_and_omits_exact_times(
     assert "model-1" in html
     assert "Shell and processes" in html
     assert _round_timestamp("privacy canary") is None
+    assert _round_timestamp(None) is None
+    assert _round_timestamp("2026-08-25T10:00:00Z") == ("2026-08-25T00:00:00+00:00")
     assert _round_epoch_day(float("inf")) is None
+    assert _round_epoch_day(0) == 0
+    assert _round_epoch_day(10**30) is None
+    assert _tool_category("spawn_agent") == "Agent coordination"
+    assert _tool_category("exec_command") == "Shell and processes"
+    assert _tool_category("apply_patch") == "Files and workspace"
+    assert _tool_category("web__run") == "Web"
+    assert _tool_category("update_plan") == "Planning"
+    assert _tool_category("image_gen__imagegen") == "Media"
+    assert _tool_category("mcp__service__call") == "Integrations"
+    assert _tool_category("provider_specific") == "Other"
     engine.dispose()
 
 
@@ -228,6 +241,32 @@ def test_richer_replacement_is_atomic_and_older_copy_cannot_regress_it(
         ingest_snapshot(engine, invalid)
     assert len(read_table(engine, "compaction_events")) == 1
     assert "privacy canary" not in str(read_table(engine, "work_items"))
+    engine.dispose()
+
+
+def test_invalid_analytics_values_are_rejected_without_echoing_content(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home, extra_event=True)
+    original = CodexAdapter().collect([("desktop", home)])
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+
+    mutations = (
+        ("work_items", "status", "privacy_canary"),
+        ("context_samples", "timestamp", "privacy canary"),
+        ("context_samples", "input_tokens", -1),
+        ("turn_settings", "effort", "privacy canary"),
+        ("compaction_events", "timestamp", "privacy canary"),
+    )
+    for collection, field, value in mutations:
+        invalid = Snapshot.from_dict(original.to_dict())
+        getattr(invalid, collection)[0][field] = value
+        with pytest.raises(ValueError) as error:
+            ingest_snapshot(engine, invalid)
+        assert "privacy" not in str(error.value)
+
+    assert read_table(engine, "conversations") == []
     engine.dispose()
 
 

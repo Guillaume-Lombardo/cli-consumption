@@ -22,6 +22,7 @@ def test_provider_status_is_explicit() -> None:
     result = runner.invoke(app, ["providers"])
     assert result.exit_code == 0
     assert "all      auto-detect" in result.stdout
+    assert "aider    supported" in result.stdout
     assert "codex    supported" in result.stdout
     assert "gemini   supported" in result.stdout
     assert "claude   supported" in result.stdout
@@ -94,6 +95,34 @@ def test_collects_kilo_code(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion kilo" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_aider(tmp_path: Path) -> None:
+    home = tmp_path / "aider"
+    home.mkdir()
+    (home / "analytics.jsonl").write_text(
+        '{"event":"launched","properties":{},"user_id":"synthetic",'
+        '"time":1777300000}\n'
+        '{"event":"exit","properties":{},"user_id":"synthetic",'
+        '"time":1777300001}\n'
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "aider",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "aider.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion aider" in result.stdout
     assert "1 written" in result.stdout
 
 

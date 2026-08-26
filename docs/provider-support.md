@@ -2,6 +2,7 @@
 
 | Provider | Status | Initial source |
 | --- | --- | --- |
+| Aider | Supported (core) | Opt-in local analytics JSONL |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Claude Code | Supported (core) | Local project transcript JSONL |
 | Gemini CLI | Supported (core) | Local automatic chat history JSON and JSONL |
@@ -97,6 +98,22 @@ a subset of output rather than added twice. This adapter does not collect custom
 session directories automatically, context-window sizes, costs, branch relationships,
 or provider-reported durations. Pi's JSONL schema can change without notice, and its
 local token events are not billing data.
+
+Aider reads an explicitly configured local analytics log named `analytics.jsonl` (for
+example, `AIDER_ANALYTICS_LOG=~/.aider/analytics.jsonl`). It groups events from
+`launched` through `exit`, extracts message-send attempts, model identifiers, and
+prompt/completion/total token counters, and discards the analytics user UUID, costs,
+exception text, command events, edit formats, system properties, and arbitrary event
+properties. Conversation identifiers are stable hashes of the transient UUID and
+launch time; the UUID itself is never emitted.
+
+Aider analytics do not expose prompts or responses, but logging is not enabled at a
+fixed location by default. The adapter cannot attribute projects, tool calls, cached
+or reasoning tokens, compactions, context windows, or provider-reported durations.
+Turns represent Aider message-send attempts because the log has no durable user-turn
+identifier. Unknown custom model names may already be represented as
+`provider/REDACTED` by Aider. Its analytics event schema can change without notice,
+and local token events are not billing data.
 
 Provider formats can change without notice. Unknown fields are ignored; malformed
 provider records are counted and skipped. Compatibility fixes should add a fixture for

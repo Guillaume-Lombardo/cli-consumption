@@ -25,6 +25,7 @@ def test_provider_status_is_explicit() -> None:
     assert "codex    supported" in result.stdout
     assert "claude   supported" in result.stdout
     assert "opencode supported" in result.stdout
+    assert "pi       supported" in result.stdout
 
 
 def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
@@ -110,6 +111,35 @@ def test_collects_opencode(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion opencode" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_pi(tmp_path: Path) -> None:
+    home = tmp_path / "pi"
+    path = home / "sessions" / "--project--" / "session.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"type":"session","version":3,"id":"session-cli",'
+        '"timestamp":"2026-08-25T10:00:00Z","cwd":"/project"}\n'
+        '{"type":"message","id":"prompt","parentId":null,'
+        '"timestamp":"2026-08-25T10:00:01Z",'
+        '"message":{"role":"user","content":"synthetic"}}\n'
+    )
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "pi",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "pi.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion pi" in result.stdout
     assert "1 written" in result.stdout
 
 

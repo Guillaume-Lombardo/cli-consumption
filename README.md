@@ -5,8 +5,8 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Codex, Gemini CLI, Kilo Code, Pi, OpenCode, and the core Claude Code local transcript
-format are supported.
+Codex, Aider, Gemini CLI, Kilo Code, Pi, OpenCode, and the core Claude Code
+local transcript format are supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -98,6 +98,14 @@ Select Gemini CLI to read `~/.gemini/tmp/*/chats/` instead:
 uv run cli-consumption collect --provider gemini --database usage.sqlite
 ```
 
+Select Aider to read a local analytics log configured at
+`~/.aider/analytics.jsonl` instead:
+
+```bash
+export AIDER_ANALYTICS_LOG="$HOME/.aider/analytics.jsonl"
+uv run cli-consumption collect --provider aider --database usage.sqlite
+```
+
 Use `all` to detect and collect every supported provider present on the machine:
 
 ```bash
@@ -168,6 +176,14 @@ Copied Gemini CLI sources point to the configuration directory containing `tmp/`
 uv run cli-consumption collect --provider gemini \
   --source desktop=/data/gemini/desktop \
   --source laptop=/data/gemini/laptop
+```
+
+Copied Aider sources point to a directory containing `analytics.jsonl`:
+
+```bash
+uv run cli-consumption collect --provider aider \
+  --source desktop=/data/aider/desktop \
+  --source laptop=/data/aider/laptop
 ```
 
 ## SQLite and PostgreSQL

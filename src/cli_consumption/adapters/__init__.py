@@ -1,6 +1,7 @@
 from cli_consumption.adapters.aider import AiderAdapter
 from cli_consumption.adapters.claude import ClaudeAdapter
 from cli_consumption.adapters.codex import CodexAdapter
+from cli_consumption.adapters.crush import CrushAdapter
 from cli_consumption.adapters.gemini import GeminiAdapter
 from cli_consumption.adapters.goose import GooseAdapter
 from cli_consumption.adapters.kilo import KiloAdapter
@@ -12,6 +13,7 @@ __all__ = [
     "AiderAdapter",
     "ClaudeAdapter",
     "CodexAdapter",
+    "CrushAdapter",
     "GeminiAdapter",
     "GooseAdapter",
     "KiloAdapter",

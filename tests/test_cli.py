@@ -24,6 +24,7 @@ def test_provider_status_is_explicit() -> None:
     assert "all      auto-detect" in result.stdout
     assert "aider    supported" in result.stdout
     assert "codex    supported" in result.stdout
+    assert "crush    supported" in result.stdout
     assert "gemini   supported" in result.stdout
     assert "goose    supported" in result.stdout
     assert "claude   supported" in result.stdout
@@ -97,6 +98,47 @@ def test_collects_kilo_code(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion kilo" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_crush(tmp_path: Path) -> None:
+    home = tmp_path / "project"
+    data = home / ".crush"
+    data.mkdir(parents=True)
+    connection = sqlite3.connect(data / "crush.db")
+    connection.executescript(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY, parent_session_id TEXT,
+            prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE messages (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
+            parts TEXT NOT NULL, model TEXT,
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        );
+        INSERT INTO sessions VALUES ('crush-cli', NULL, 0, 0, 1000, 2000);
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "crush",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "crush.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion crush" in result.stdout
     assert "1 written" in result.stdout
 
 
@@ -339,6 +381,7 @@ def test_collects_qwen_code(tmp_path: Path) -> None:
 def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> None:
     codex_home = tmp_path / "codex"
     claude_home = tmp_path / "claude"
+    crush_home = tmp_path / "crush-project"
     kilo_home = tmp_path / "kilo"
     rollout_factory(codex_home)
     claude_path = claude_home / "projects" / "project" / "session.jsonl"
@@ -377,6 +420,26 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
     )
     connection.commit()
     connection.close()
+    crush_data = crush_home / ".crush"
+    crush_data.mkdir(parents=True)
+    connection = sqlite3.connect(crush_data / "crush.db")
+    connection.executescript(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY, parent_session_id TEXT,
+            prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE messages (
+            id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
+            parts TEXT NOT NULL, model TEXT,
+            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        );
+        INSERT INTO sessions VALUES ('crush-session', NULL, 0, 0, 1000, 2000);
+        """
+    )
+    connection.commit()
+    connection.close()
     database = tmp_path / "all.sqlite"
 
     result = runner.invoke(
@@ -390,6 +453,8 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
             "--source",
             f"desktop-claude={claude_home}",
             "--source",
+            f"desktop-crush={crush_home}",
+            "--source",
             f"desktop-kilo={kilo_home}",
             "--database",
             str(database),
@@ -399,12 +464,14 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
     assert result.exit_code == 0, result.output
     assert "Ingestion codex" in result.stdout
     assert "Ingestion claude" in result.stdout
+    assert "Ingestion crush" in result.stdout
     assert "Ingestion kilo" in result.stdout
     engine = create_database_engine(database)
     try:
         assert {row["provider"] for row in read_table(engine, "conversations")} == {
             "codex",
             "claude",
+            "crush",
             "kilo",
         }
     finally:

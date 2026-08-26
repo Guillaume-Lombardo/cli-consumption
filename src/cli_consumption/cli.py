@@ -12,6 +12,7 @@ from cli_consumption.adapters import (
     AiderAdapter,
     ClaudeAdapter,
     CodexAdapter,
+    CrushAdapter,
     GeminiAdapter,
     GooseAdapter,
     KiloAdapter,
@@ -59,6 +60,7 @@ def providers() -> None:
     typer.echo("all      auto-detect supported providers")
     typer.echo("aider    supported")
     typer.echo("codex    supported")
+    typer.echo("crush    supported")
     typer.echo("gemini   supported")
     typer.echo("goose    supported")
     typer.echo("claude   supported")
@@ -239,6 +241,11 @@ def _collect_snapshots(
     adapters = {
         "aider": (AiderAdapter, ".aider", "analytics.jsonl"),
         "codex": (CodexAdapter, ".codex", "sessions"),
+        "crush": (
+            CrushAdapter,
+            ".local/share/crush",
+            ("projects.json", "crush.db", ".crush/crush.db"),
+        ),
         "gemini": (GeminiAdapter, ".gemini", "tmp"),
         "goose": (GooseAdapter, ".local/share/goose/sessions", "sessions.db"),
         "claude": (ClaudeAdapter, ".claude", "projects"),
@@ -257,10 +264,10 @@ def _collect_snapshots(
         )
     mappings = _parse_project_mappings(project_values or [])
     if provider != "all":
-        adapter, home, directory = adapters[provider]
+        adapter, home, markers = adapters[provider]
         return [
             adapter().collect(
-                _parse_sources(source_values or [], home, directory), mappings
+                _parse_sources(source_values or [], home, markers), mappings
             )
         ]
 
@@ -268,8 +275,10 @@ def _collect_snapshots(
     if source_values:
         sources = _parse_source_values(source_values)
         matched_labels: set[str] = set()
-        for adapter, _, directory in adapters.values():
-            matched = [source for source in sources if (source[1] / directory).exists()]
+        for adapter, _, markers in adapters.values():
+            matched = [
+                source for source in sources if _has_provider_data(source[1], markers)
+            ]
             if matched:
                 matched_labels.update(label for label, _ in matched)
                 snapshots.append(adapter().collect(matched, mappings))
@@ -281,9 +290,9 @@ def _collect_snapshots(
             )
     else:
         machine = platform.node()
-        for adapter, home, directory in adapters.values():
+        for adapter, home, markers in adapters.values():
             path = (Path.home() / home).resolve()
-            if (path / directory).exists():
+            if _has_provider_data(path, markers):
                 snapshots.append(adapter().collect([(machine, path)], mappings))
     if not snapshots:
         raise typer.BadParameter("No supported provider data detected.")
@@ -291,17 +300,28 @@ def _collect_snapshots(
 
 
 def _parse_sources(
-    values: list[str], home: str = ".codex", directory: str = "sessions"
+    values: list[str],
+    home: str = ".codex",
+    markers: str | tuple[str, ...] = "sessions",
 ) -> list[tuple[str, Path]]:
     if not values:
         values = [f"{platform.node()}={Path.home() / home}"]
     result = _parse_source_values(values)
     for _, path in result:
-        if not (path / directory).exists():
+        if not _has_provider_data(path, markers):
+            expected = ", ".join(_markers(markers))
             raise typer.BadParameter(
-                f"Missing provider data {directory}: {path / directory}"
+                f"Missing provider data ({expected}) under: {path}"
             )
     return result
+
+
+def _markers(value: str | tuple[str, ...]) -> tuple[str, ...]:
+    return (value,) if isinstance(value, str) else value
+
+
+def _has_provider_data(path: Path, markers: str | tuple[str, ...]) -> bool:
+    return any((path / marker).exists() for marker in _markers(markers))
 
 
 def _parse_source_values(values: list[str]) -> list[tuple[str, Path]]:

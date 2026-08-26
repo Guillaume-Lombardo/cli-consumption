@@ -9,6 +9,7 @@
 - Core Gemini CLI local chat-history collector
 - Core Goose local SQLite collector
 - Core Qwen Code local transcript collector
+- Core Crush per-project SQLite collector
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API

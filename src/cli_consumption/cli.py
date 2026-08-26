@@ -18,6 +18,7 @@ from cli_consumption.adapters import (
     CursorAdapter,
     GeminiAdapter,
     GooseAdapter,
+    GrokAdapter,
     KiloAdapter,
     OpenCodeAdapter,
     PiAdapter,
@@ -69,6 +70,7 @@ def providers() -> None:
     typer.echo("cursor   supported")
     typer.echo("gemini   supported")
     typer.echo("goose    supported")
+    typer.echo("grok     supported")
     typer.echo("claude   supported")
     typer.echo("kilo     supported")
     typer.echo("opencode supported")
@@ -261,6 +263,7 @@ def _collect_snapshots(
         ),
         "gemini": (GeminiAdapter, ".gemini", "tmp"),
         "goose": (GooseAdapter, ".local/share/goose/sessions", "sessions.db"),
+        "grok": (GrokAdapter, ".grok", "sessions/*/*/summary.json"),
         "claude": (ClaudeAdapter, ".claude", "projects/*/*.jsonl"),
         "kilo": (KiloAdapter, ".local/share/kilo", "kilo.db"),
         "opencode": (

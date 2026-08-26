@@ -7,6 +7,7 @@ from cli_consumption.adapters.crush import CrushAdapter
 from cli_consumption.adapters.cursor import CursorAdapter
 from cli_consumption.adapters.gemini import GeminiAdapter
 from cli_consumption.adapters.goose import GooseAdapter
+from cli_consumption.adapters.grok import GrokAdapter
 from cli_consumption.adapters.kilo import KiloAdapter
 from cli_consumption.adapters.opencode import OpenCodeAdapter
 from cli_consumption.adapters.pi import PiAdapter
@@ -22,6 +23,7 @@ __all__ = [
     "CursorAdapter",
     "GeminiAdapter",
     "GooseAdapter",
+    "GrokAdapter",
     "KiloAdapter",
     "OpenCodeAdapter",
     "PiAdapter",

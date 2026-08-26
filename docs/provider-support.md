@@ -11,6 +11,7 @@
 | Gemini CLI | Supported (core) | Local automatic chat history JSON and JSONL |
 | GitHub Copilot CLI | Supported (core) | Local session event JSONL |
 | Goose | Supported (core) | Local SQLite session store v16 |
+| Grok Build | Supported (core) | Local session summary and update/event JSONL |
 | Kilo Code | Supported (core) | Local SQLite session store |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
 | Pi | Supported (core) | Local session JSONL v1-v3 |
@@ -113,6 +114,28 @@ This adapter does not read legacy pre-1.10 JSONL sessions or pre-v16 SQLite sche
 collect parent/subagent relationships, context-window sizes, reasoning tokens,
 provider-reported latency, or cost. Goose's internal schema can change without notice,
 and local token events are not billing data.
+
+Grok Build reads session directories under
+`~/.grok/sessions/<encoded-cwd>/<session-id>/`. It extracts stable session and
+prompt identifiers, timestamps, terminal turn status, model labels, per-turn
+and per-model token aggregates, reasoning effort, time to first token, tool
+names, and successful auto-compaction markers from `summary.json`,
+`updates.jsonl`, and `events.jsonl`. Working directories are inspected only for
+explicit project mappings. Titles, prompts, responses, agent results, tool
+arguments/results, errors, Git metadata, costs, billing data, arbitrary update
+metadata, summaries, compaction content, and raw events are discarded.
+
+Grok Build's `TurnCompleted.usage` is a per-prompt aggregate. A normalized
+model-call row therefore represents one model aggregate within a prompt, while
+the turn retains the provider-reported model-call count. Full input includes
+cache-read and cache-creation subsets; normalized uncached input subtracts both,
+and reasoning is retained as an output subset. Sessions written before durable
+turn completions may expose turn timing, models, and tools but no token usage.
+Rewinds, subagent relationships, costs, context-window samples, tool outcomes,
+and manual compactions without a successful auto-compaction update are not
+collected. The adapter was qualified against the open-source Grok Build session
+schema in August 2026. Local usage events are not billing records, and the
+internal format can change without notice.
 
 OpenCode reads `opencode.db` from its XDG data directory (normally
 `~/.local/share/opencode/`). It extracts v2 session messages, model references, token

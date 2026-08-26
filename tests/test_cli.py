@@ -30,6 +30,7 @@ def test_provider_status_is_explicit() -> None:
     assert "cursor   supported" in result.stdout
     assert "gemini   supported" in result.stdout
     assert "goose    supported" in result.stdout
+    assert "grok     supported" in result.stdout
     assert "claude   supported" in result.stdout
     assert "kilo     supported" in result.stdout
     assert "opencode supported" in result.stdout
@@ -89,6 +90,41 @@ def test_collects_github_copilot_cli(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion copilot" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_grok_build(tmp_path: Path) -> None:
+    home = tmp_path / "grok"
+    session_dir = home / "sessions" / "%2Fproject" / "grok-cli"
+    session_dir.mkdir(parents=True)
+    (session_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "info": {"id": "grok-cli", "cwd": "/project"},
+                "created_at": "2026-08-27T10:00:00Z",
+                "updated_at": "2026-08-27T10:00:01Z",
+                "num_messages": 0,
+                "current_model_id": "grok-4.6-build",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "grok",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "grok.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion grok" in result.stdout
     assert "1 written" in result.stdout
 
 

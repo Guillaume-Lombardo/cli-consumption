@@ -6,8 +6,8 @@ consolidate copied data from several machines, or send metadata-only snapshots t
 central collector.
 
 Amp, Codex, Cursor CLI, GitHub Copilot CLI, Crush, Aider, Gemini CLI, Goose,
-Kilo Code, Pi, Qwen Code, OpenCode, and the core Claude Code local transcript
-format are supported.
+Grok Build, Kilo Code, Pi, Qwen Code, OpenCode, and the core Claude Code local
+transcript format are supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -115,6 +115,12 @@ Select Goose to read `~/.local/share/goose/sessions/sessions.db` instead:
 
 ```bash
 uv run cli-consumption collect --provider goose --database usage.sqlite
+```
+
+Select Grok Build to read `~/.grok/sessions/` instead:
+
+```bash
+uv run cli-consumption collect --provider grok --database usage.sqlite
 ```
 
 Select Pi to read `~/.pi/agent/sessions/` instead:
@@ -240,6 +246,15 @@ Copied Goose sources point to the sessions directory containing `sessions.db`:
 uv run cli-consumption collect --provider goose \
   --source desktop=/data/goose/desktop \
   --source laptop=/data/goose/laptop
+```
+
+Copied Grok Build sources point to the `.grok` data directory containing
+`sessions/`:
+
+```bash
+uv run cli-consumption collect --provider grok \
+  --source desktop=/data/grok/desktop \
+  --source laptop=/data/grok/laptop
 ```
 
 Copied Pi sources point to the agent directory containing `sessions/`:

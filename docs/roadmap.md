@@ -12,6 +12,7 @@
 - Core Crush per-project SQLite collector
 - Core Amp local thread-mirror collector
 - Core GitHub Copilot CLI local session collector
+- Core Continue CLI local session collector
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API

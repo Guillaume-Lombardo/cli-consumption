@@ -5,8 +5,8 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Amp, Codex, GitHub Copilot CLI, Crush, Aider, Gemini CLI, Goose, Kilo Code, Pi,
-Qwen Code, OpenCode, and the core Claude Code local transcript format are
+Amp, Codex, Continue CLI, GitHub Copilot CLI, Crush, Aider, Gemini CLI, Goose,
+Kilo Code, Pi, Qwen Code, OpenCode, and the core Claude Code local transcript format are
 supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
@@ -97,6 +97,12 @@ Select GitHub Copilot CLI to read its local session event logs:
 
 ```bash
 uv run cli-consumption collect --provider copilot --database usage.sqlite
+```
+
+Select Continue CLI to read its local session JSON files:
+
+```bash
+uv run cli-consumption collect --provider continue --database usage.sqlite
 ```
 
 Select Kilo Code to read `~/.local/share/kilo/kilo.db` instead:
@@ -209,6 +215,14 @@ Copied GitHub Copilot CLI sources point to the configuration directory containin
 uv run cli-consumption collect --provider copilot \
   --source desktop=/data/copilot/desktop \
   --source laptop=/data/copilot/laptop
+```
+
+Copied Continue CLI sources point to the global directory containing `sessions/`:
+
+```bash
+uv run cli-consumption collect --provider continue \
+  --source desktop=/data/continue/desktop \
+  --source laptop=/data/continue/laptop
 ```
 
 Copied Kilo Code sources point to the data directory containing `kilo.db`:

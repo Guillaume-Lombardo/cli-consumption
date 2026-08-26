@@ -45,15 +45,14 @@ uv run cli-consumption export --output shared-report --share-safe
 Share-safe reports still disclose aggregate work patterns and must be treated as
 private operational data.
 
-After the package is published to PyPI, the same CLI can run without a permanent
-installation:
+From PyPI, the CLI can run without a permanent installation:
 
 ```bash
 uv tool run cli-consumption collect
 uv tool run cli-consumption export --output reports
 ```
 
-Until then, run the GitHub source directly:
+To run the latest unreleased GitHub source instead:
 
 ```bash
 uv tool run --from git+https://github.com/Guillaume-Lombardo/cli-consumption \

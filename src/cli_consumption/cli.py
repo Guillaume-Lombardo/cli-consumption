@@ -11,6 +11,7 @@ from cli_consumption import __version__
 from cli_consumption.adapters import (
     ClaudeAdapter,
     CodexAdapter,
+    KiloAdapter,
     OpenCodeAdapter,
     PiAdapter,
 )
@@ -54,10 +55,9 @@ def providers() -> None:
     typer.echo("all      auto-detect supported providers")
     typer.echo("codex    supported")
     typer.echo("claude   supported")
+    typer.echo("kilo     supported")
     typer.echo("opencode supported")
     typer.echo("pi       supported")
-    for provider in ("kilo",):
-        typer.echo(f"{provider:<8} planned")
 
 
 @app.command()
@@ -231,6 +231,7 @@ def _collect_snapshots(
     adapters = {
         "codex": (CodexAdapter, ".codex", "sessions"),
         "claude": (ClaudeAdapter, ".claude", "projects"),
+        "kilo": (KiloAdapter, ".local/share/kilo", "kilo.db"),
         "opencode": (
             OpenCodeAdapter,
             ".local/share/opencode",

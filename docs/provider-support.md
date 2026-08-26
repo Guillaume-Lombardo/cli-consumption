@@ -4,9 +4,9 @@
 | --- | --- | --- |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Claude Code | Supported (core) | Local project transcript JSONL |
+| Kilo Code | Supported (core) | Local SQLite session store |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
 | Pi | Supported (core) | Local session JSONL v1-v3 |
-| Kilo Code | Planned | To be verified before implementation |
 
 “Supported” means the adapter has synthetic fixtures, extracts conversations, turns,
 models, token usage, and tool names when available, and passes privacy regression tests.
@@ -48,6 +48,22 @@ components. The adapter does not currently read pre-v2 JSON storage, legacy
 `message`/`part` tables, child-session relationships, context-window sizes, or
 provider-reported cost. The SQLite schema is internal and may change without notice;
 local token events are not billing data.
+
+Kilo Code reads `kilo.db` from its data directory (normally
+`~/.local/share/kilo/`). The adapter was qualified against Kilo Code CLI v7.5.5 and
+the matching current `session`, `message`, and `part` schema. It extracts user turns,
+assistant model calls, model references, token usage, tool names, and compaction parts
+while discarding titles, prompts, responses, reasoning, tool inputs/results, commands,
+errors, paths, diffs, costs, snapshots, and arbitrary metadata.
+
+Kilo Code reports uncached input, cache reads, cache writes, visible output, and
+reasoning separately. Normalized input and output totals include their respective
+components. The adapter does not read the legacy IDE extension's task files, cloud-only
+sessions, `session_message` queue records, child-session relationships, context-window
+sizes, costs, snapshots, or provider-reported generation metrics. `KILO_DB` can select
+a non-default database, which must be passed explicitly with `--source`. Kilo Code's
+SQLite schema can change without notice, and its local token events are not billing
+data.
 
 Pi reads session JSONL files under `~/.pi/agent/sessions/` (or copied agent
 directories). It extracts user turns, assistant and compaction model calls, provider

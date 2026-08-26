@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cli-consumption"
-version = "0.0.5"
+version = "0.0.6"
 description = "Analyze and consolidate AI coding CLI consumption across machines."
 readme = "README.md"
 requires-python = ">=3.14"

@@ -24,6 +24,7 @@ def test_provider_status_is_explicit() -> None:
     assert "all      auto-detect" in result.stdout
     assert "codex    supported" in result.stdout
     assert "claude   supported" in result.stdout
+    assert "kilo     supported" in result.stdout
     assert "opencode supported" in result.stdout
     assert "pi       supported" in result.stdout
 
@@ -35,10 +36,64 @@ def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
 
     result = runner.invoke(
         app,
-        ["collect", "--provider", "kilo", "--database", str(tmp_path / "db")],
+        ["collect", "--provider", "unknown", "--database", str(tmp_path / "db")],
     )
     assert result.exit_code == 2
     assert "not implemented yet" in result.output
+
+
+def test_collects_kilo_code(tmp_path: Path) -> None:
+    home = tmp_path / "kilo"
+    home.mkdir()
+    connection = sqlite3.connect(home / "kilo.db")
+    connection.executescript(
+        """
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL
+        );
+        CREATE TABLE message (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        CREATE TABLE part (
+            id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        """
+    )
+    connection.execute("INSERT INTO session VALUES ('ses_cli', 1000, 2000)")
+    connection.execute(
+        "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
+        ("msg_cli", "ses_cli", 1000, 1000, json.dumps({"role": "user"})),
+    )
+    connection.commit()
+    connection.close()
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "kilo",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "kilo.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion kilo" in result.stdout
+    assert "1 written" in result.stdout
 
 
 def test_collects_claude_code(tmp_path: Path) -> None:
@@ -146,6 +201,7 @@ def test_collects_pi(tmp_path: Path) -> None:
 def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> None:
     codex_home = tmp_path / "codex"
     claude_home = tmp_path / "claude"
+    kilo_home = tmp_path / "kilo"
     rollout_factory(codex_home)
     claude_path = claude_home / "projects" / "project" / "session.jsonl"
     claude_path.parent.mkdir(parents=True)
@@ -154,6 +210,35 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
         '"timestamp":"2026-08-25T10:00:00Z",'
         '"message":{"role":"user","content":"synthetic"}}\n'
     )
+    kilo_home.mkdir()
+    connection = sqlite3.connect(kilo_home / "kilo.db")
+    connection.executescript(
+        """
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL
+        );
+        CREATE TABLE message (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        CREATE TABLE part (
+            id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        INSERT INTO session VALUES ('kilo-session', 1000, 2000);
+        """
+    )
+    connection.commit()
+    connection.close()
     database = tmp_path / "all.sqlite"
 
     result = runner.invoke(
@@ -166,6 +251,8 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
             f"desktop-codex={codex_home}",
             "--source",
             f"desktop-claude={claude_home}",
+            "--source",
+            f"desktop-kilo={kilo_home}",
             "--database",
             str(database),
         ],
@@ -174,11 +261,13 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
     assert result.exit_code == 0, result.output
     assert "Ingestion codex" in result.stdout
     assert "Ingestion claude" in result.stdout
+    assert "Ingestion kilo" in result.stdout
     engine = create_database_engine(database)
     try:
         assert {row["provider"] for row in read_table(engine, "conversations")} == {
             "codex",
             "claude",
+            "kilo",
         }
     finally:
         engine.dispose()

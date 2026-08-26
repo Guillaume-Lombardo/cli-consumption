@@ -6,7 +6,7 @@
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API
-- CSV exports, a self-contained dashboard, and a share-safe dashboard profile
+- Opt-in CSV exports, a self-contained dashboard, and a share-safe dashboard profile
 - Context-pressure, work-item reliability, configuration-cohort, and delegation views
 
 ## Next provider increments

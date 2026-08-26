@@ -7,7 +7,7 @@ and reporting. This lets users compare multiple AI coding CLIs without forcing t
 local formats into one parser.
 
 ```text
-provider files -> adapter -> metadata-only snapshot -> SQL storage -> CSV/dashboard
+provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/CSV
                                       |
                                       +-> HTTPS collector -> central SQL storage
 ```
@@ -21,7 +21,8 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> CSV/dashbo
 - `storage`: owns the normalized schema, idempotent replacement rules, SQLite, and
   PostgreSQL engine creation.
 - `api` and `sync`: offer an optional push workflow for recurring multi-machine use.
-- `exporting` and `dashboard`: provide portable CSV files and an offline HTML view.
+- `dashboard` and `exporting`: provide an offline HTML view by default and portable CSV
+  tables when explicitly requested.
 - `cli`: exposes the same capabilities through one executable.
 
 When Codex exposes its local thread graph, the adapter also records metadata-only

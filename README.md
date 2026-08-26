@@ -25,7 +25,7 @@ uv run cli-consumption export --output reports
 ```
 
 Open `reports/dashboard.html` locally. The generated dashboard is self-contained and
-makes no network requests.
+makes no network requests. Detailed normalized CSV tables are opt-in with `--csv`.
 
 The dashboard supports time, provider, machine, project, and model filters. It reports
 period-over-period activity, token composition, cache efficiency, turn latency and
@@ -34,7 +34,7 @@ duration and reliability, configuration cohorts, compactions, subagent delegatio
 ingestion quality. Token events are local usage metadata rather than billing records,
 and a technically completed turn is not a measure of task quality or productivity.
 
-For a dashboard that is safer to share, omit the detailed CSV exports, pseudonymize
+For a dashboard that is safer to share, pseudonymize
 machine, project, model, and role labels, group tool names, round timestamps to days,
 and hide small rows in the cohort-comparison view:
 
@@ -134,7 +134,7 @@ server. See [Architecture](docs/architecture.md) for trade-offs.
 cli-consumption collect    Collect local or copied provider data into SQL
 cli-consumption sync       Collect and send a snapshot to a central API
 cli-consumption serve      Run the central collection API
-cli-consumption export     Write CSV tables and the HTML dashboard
+cli-consumption export     Write the HTML dashboard and optional CSV tables
 cli-consumption providers  Show supported and planned providers
 ```
 

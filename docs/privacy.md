@@ -59,7 +59,8 @@ and period comparisons are computed inside the document. The remaining project n
 machine labels, model names, tool names, roles, token counters, statuses, and activity
 timestamps are still private operational metadata.
 
-`export --share-safe` writes only the HTML dashboard and omits CSV tables. Within that
+The normal `export` command writes only the HTML dashboard; detailed CSV tables require
+the explicit `--csv` option. `export --share-safe` rejects that option. Within its HTML
 document, machine, project, model, and subagent-role labels are replaced with local
 aliases; tools are reduced to broad categories; timestamps are rounded to UTC days;
 and the comparison table hides cohorts smaller than five closed turns. The underlying

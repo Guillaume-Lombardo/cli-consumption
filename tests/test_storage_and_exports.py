@@ -56,6 +56,13 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     html = dashboard.read_text(encoding="utf-8")
     assert "CLI Consumption" in html
     assert "Turn performance" in html
+    assert 'id="themeToggle"' in html
+    assert "localStorage.getItem('cli-consumption-theme')" in html
+    assert "radial-gradient" not in html
+    assert "linear-gradient" not in html
+    assert html.index("<h2>Models</h2>") < html.index("<h2>Turn performance</h2>")
+    assert "Median provider-reported total-token count" in html
+    assert html.count('class="info"') == 1
     assert "Data quality" in html
     assert "https://" not in html
     assert "secret value" not in html

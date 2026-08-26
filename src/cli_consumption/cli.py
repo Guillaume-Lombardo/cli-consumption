@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from cli_consumption import __version__
-from cli_consumption.adapters import ClaudeAdapter, CodexAdapter
+from cli_consumption.adapters import ClaudeAdapter, CodexAdapter, OpenCodeAdapter
 from cli_consumption.api import create_app
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
@@ -49,7 +49,8 @@ def providers() -> None:
     typer.echo("all      auto-detect supported providers")
     typer.echo("codex    supported")
     typer.echo("claude   supported")
-    for provider in ("opencode", "kilo", "pi"):
+    typer.echo("opencode supported")
+    for provider in ("kilo", "pi"):
         typer.echo(f"{provider:<8} planned")
 
 
@@ -224,6 +225,11 @@ def _collect_snapshots(
     adapters = {
         "codex": (CodexAdapter, ".codex", "sessions"),
         "claude": (ClaudeAdapter, ".claude", "projects"),
+        "opencode": (
+            OpenCodeAdapter,
+            ".local/share/opencode",
+            "opencode.db",
+        ),
     }
     if provider != "all" and provider not in adapters:
         raise typer.BadParameter(
@@ -243,7 +249,7 @@ def _collect_snapshots(
         sources = _parse_source_values(source_values)
         matched_labels: set[str] = set()
         for adapter, _, directory in adapters.values():
-            matched = [source for source in sources if (source[1] / directory).is_dir()]
+            matched = [source for source in sources if (source[1] / directory).exists()]
             if matched:
                 matched_labels.update(label for label, _ in matched)
                 snapshots.append(adapter().collect(matched, mappings))
@@ -257,7 +263,7 @@ def _collect_snapshots(
         machine = platform.node()
         for adapter, home, directory in adapters.values():
             path = (Path.home() / home).resolve()
-            if (path / directory).is_dir():
+            if (path / directory).exists():
                 snapshots.append(adapter().collect([(machine, path)], mappings))
     if not snapshots:
         raise typer.BadParameter("No supported provider data detected.")
@@ -271,9 +277,9 @@ def _parse_sources(
         values = [f"{platform.node()}={Path.home() / home}"]
     result = _parse_source_values(values)
     for _, path in result:
-        if not (path / directory).is_dir():
+        if not (path / directory).exists():
             raise typer.BadParameter(
-                f"Missing {directory} directory: {path / directory}"
+                f"Missing provider data {directory}: {path / directory}"
             )
     return result
 

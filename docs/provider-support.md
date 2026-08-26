@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Claude Code | Supported (core) | Local project transcript JSONL |
-| OpenCode | Planned | To be verified before implementation |
+| OpenCode | Supported (core) | Local SQLite v2 session store |
 | Kilo Code | Planned | To be verified before implementation |
 | Pi | Planned | To be verified before implementation |
 
@@ -36,6 +36,19 @@ is not billing data. This first increment does not collect subagent transcripts,
 context-window sizes, effort/service-tier settings, TTFT, provider-reported duration,
 or technical work-item intervals.
 
-Provider formats can change without notice. Unknown fields are ignored; malformed JSONL
-records are counted and skipped. Compatibility fixes should add a fixture for both the
-old and new format whenever possible.
+OpenCode reads `opencode.db` from its XDG data directory (normally
+`~/.local/share/opencode/`). It extracts v2 session messages, model references, token
+usage, tool names, and compaction timestamps while discarding message text, reasoning,
+tool inputs/results, shell commands/output, paths, titles, errors, costs, and arbitrary
+metadata. Model labels combine OpenCode's provider and model identifiers.
+
+OpenCode reports uncached input, cache reads, cache writes, visible output, and
+reasoning separately. Normalized input and output totals include their respective
+components. The adapter does not currently read pre-v2 JSON storage, legacy
+`message`/`part` tables, child-session relationships, context-window sizes, or
+provider-reported cost. The SQLite schema is internal and may change without notice;
+local token events are not billing data.
+
+Provider formats can change without notice. Unknown fields are ignored; malformed
+provider records are counted and skipped. Compatibility fixes should add a fixture for
+both the old and new format whenever possible.

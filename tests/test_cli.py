@@ -27,6 +27,7 @@ def test_provider_status_is_explicit() -> None:
     assert "codex    supported" in result.stdout
     assert "copilot  supported" in result.stdout
     assert "crush    supported" in result.stdout
+    assert "cursor   supported" in result.stdout
     assert "gemini   supported" in result.stdout
     assert "goose    supported" in result.stdout
     assert "claude   supported" in result.stdout
@@ -184,6 +185,58 @@ def test_collects_crush(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Ingestion crush" in result.stdout
     assert "1 written" in result.stdout
+
+
+def test_collects_cursor_cli(tmp_path: Path) -> None:
+    home = tmp_path / "cursor"
+    session_id = "11111111-2222-3333-4444-555555555555"
+    transcript = (
+        home
+        / "projects"
+        / "srv-work-project"
+        / "agent-transcripts"
+        / session_id
+        / f"{session_id}.jsonl"
+    )
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(
+        '{"role":"user","message":{"content":[{"type":"text",'
+        '"text":"<user_query>synthetic</user_query>"}]}}\n',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "cursor",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "cursor.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion cursor" in result.stdout
+    assert "1 written" in result.stdout
+
+    all_result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "all",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "all.sqlite"),
+        ],
+    )
+    assert all_result.exit_code == 0, all_result.output
+    assert all_result.stdout.count("Ingestion ") == 1
+    assert "Ingestion cursor" in all_result.stdout
 
 
 def test_collects_goose(tmp_path: Path) -> None:

@@ -5,9 +5,9 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Amp, Codex, GitHub Copilot CLI, Crush, Aider, Gemini CLI, Goose, Kilo Code, Pi,
-Qwen Code, OpenCode, and the core Claude Code local transcript format are
-supported.
+Amp, Codex, Cursor CLI, GitHub Copilot CLI, Crush, Aider, Gemini CLI, Goose,
+Kilo Code, Pi, Qwen Code, OpenCode, and the core Claude Code local transcript
+format are supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -85,6 +85,12 @@ Select Crush to read its global project registry and per-project SQLite stores:
 
 ```bash
 uv run cli-consumption collect --provider crush --database usage.sqlite
+```
+
+Select Cursor CLI to read its local Composer 2 transcripts and chat metadata:
+
+```bash
+uv run cli-consumption collect --provider cursor --database usage.sqlite
 ```
 
 Select Amp to read its local thread mirror:
@@ -192,6 +198,15 @@ Copied Crush sources can point directly to a project directory containing
 uv run cli-consumption collect --provider crush \
   --source desktop=/data/crush/desktop/project-a \
   --source laptop=/data/crush/laptop/project-b/.crush
+```
+
+Copied Cursor CLI sources point to a data directory containing `projects/`, `chats/`,
+or both:
+
+```bash
+uv run cli-consumption collect --provider cursor \
+  --source desktop=/data/cursor/desktop \
+  --source laptop=/data/cursor/laptop
 ```
 
 Copied Amp sources point to the data directory containing `threads/`:

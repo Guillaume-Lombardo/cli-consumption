@@ -5,8 +5,8 @@
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Claude Code | Supported (core) | Local project transcript JSONL |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
+| Pi | Supported (core) | Local session JSONL v1-v3 |
 | Kilo Code | Planned | To be verified before implementation |
-| Pi | Planned | To be verified before implementation |
 
 “Supported” means the adapter has synthetic fixtures, extracts conversations, turns,
 models, token usage, and tool names when available, and passes privacy regression tests.
@@ -47,6 +47,21 @@ reasoning separately. Normalized input and output totals include their respectiv
 components. The adapter does not currently read pre-v2 JSON storage, legacy
 `message`/`part` tables, child-session relationships, context-window sizes, or
 provider-reported cost. The SQLite schema is internal and may change without notice;
+local token events are not billing data.
+
+Pi reads session JSONL files under `~/.pi/agent/sessions/` (or copied agent
+directories). It extracts user turns, assistant and compaction model calls, provider
+and model identifiers, token usage, tool names, thinking-level changes, and compaction
+timestamps while discarding prompts, responses, thinking, tool arguments/results,
+commands/output, summaries, errors, costs, paths, extension data, and arbitrary
+metadata. All persisted branches are counted because Pi retains branch history in the
+same session file.
+
+Pi reports uncached input, cache reads, cache writes, output, and optional reasoning
+tokens. Normalized input includes all three input components; reasoning is retained as
+a subset of output rather than added twice. This adapter does not collect custom
+session directories automatically, context-window sizes, costs, branch relationships,
+or provider-reported durations. Pi's JSONL schema can change without notice, and its
 local token events are not billing data.
 
 Provider formats can change without notice. Unknown fields are ignored; malformed

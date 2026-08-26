@@ -4,6 +4,7 @@
 
 - Complete Codex local collector
 - Core Claude Code local transcript collector
+- Core Pi local session collector
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API
@@ -14,7 +15,7 @@
 
 1. Extend Claude Code support only where local metadata has reliable semantics.
 2. Add OpenCode with the same normalized contract.
-3. Add Kilo Code and Pi after format and licensing review.
+3. Add Kilo Code after format and licensing review.
 4. Add cross-provider comparison views once at least two adapters expose reliable model
    and token dimensions.
 

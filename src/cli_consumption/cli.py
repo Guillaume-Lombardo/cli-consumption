@@ -8,7 +8,12 @@ from typing import Annotated
 import typer
 
 from cli_consumption import __version__
-from cli_consumption.adapters import ClaudeAdapter, CodexAdapter, OpenCodeAdapter
+from cli_consumption.adapters import (
+    ClaudeAdapter,
+    CodexAdapter,
+    OpenCodeAdapter,
+    PiAdapter,
+)
 from cli_consumption.api import create_app
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
@@ -50,7 +55,8 @@ def providers() -> None:
     typer.echo("codex    supported")
     typer.echo("claude   supported")
     typer.echo("opencode supported")
-    for provider in ("kilo", "pi"):
+    typer.echo("pi       supported")
+    for provider in ("kilo",):
         typer.echo(f"{provider:<8} planned")
 
 
@@ -230,6 +236,7 @@ def _collect_snapshots(
             ".local/share/opencode",
             "opencode.db",
         ),
+        "pi": (PiAdapter, ".pi/agent", "sessions"),
     }
     if provider != "all" and provider not in adapters:
         raise typer.BadParameter(

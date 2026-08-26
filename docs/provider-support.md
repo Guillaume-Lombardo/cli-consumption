@@ -3,7 +3,9 @@
 | Provider | Status | Initial source |
 | --- | --- | --- |
 | Aider | Supported (core) | Opt-in local analytics JSONL |
+| Amazon Q Developer CLI | Supported (core) | Local persistent-conversation SQLite store |
 | Amp | Supported (core) | Local thread mirror JSON |
+| Cline CLI | Supported (core) | Local session SQLite index and message JSON |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Continue CLI | Supported (core) | Local session JSON |
 | Crush | Supported (core) | Per-project local SQLite store |
@@ -14,9 +16,11 @@
 | Goose | Supported (core) | Local SQLite session store v16 |
 | Grok Build | Supported (core) | Local session summary and update/event JSONL |
 | Kilo Code | Supported (core) | Local SQLite session store |
+| Kimi Code CLI | Supported (core) | Local Wire event JSONL |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
 | OpenHands CLI | Supported (core) | Local SDK conversation state and event JSON |
 | Pi | Supported (core) | Local session JSONL v1-v3 |
+| Plandex | Supported (core) | Copied self-hosted server conversation JSON |
 | Qwen Code | Supported (core) | Local append-only transcript JSONL |
 
 “Supported” means the adapter has synthetic fixtures, extracts conversations, turns,
@@ -292,6 +296,39 @@ samples are collected only when `maxInputTokens` is present. The adapter does no
 collect thread content, subthread relationships, compaction markers, reasoning-token
 splits, costs, credits, or provider-reported latency. Amp's local mirror format is
 internal and can change without notice, and local token events are not billing data.
+
+Cline CLI reads `~/.cline/data/sessions/sessions.db` and the referenced
+`*.messages.json` artifacts. It extracts session timestamps/status, configured model,
+visible user-turn boundaries, per-assistant token metrics, and tool names while
+discarding prompts, responses, file contents, tool arguments/results, titles, Git
+metadata, costs, credentials, and arbitrary metadata. Input totals include cache reads
+and writes; normalized uncached input is the non-negative remainder. Model and event
+timestamps come from each assistant artifact when present. The adapter was qualified
+against Cline CLI's current SDK session schema in August 2026.
+
+Kimi Code CLI reads `~/.kimi/sessions/*/*/wire.jsonl`. It extracts turn boundaries,
+step token usage, tool names, context-window samples, and completed compactions while
+discarding user input, model output, reasoning, tool arguments/results, approvals,
+notifications, subagent payloads, paths, and arbitrary events. The wire log does not
+persist the selected model label, so calls use `unknown`; hashed work-directory keys
+are not reversed. The adapter targets Wire v1 as qualified in August 2026.
+
+Amazon Q Developer CLI reads persistent conversations from
+`~/.local/share/amazon-q/data.sqlite3`. It extracts user-turn timestamps, model labels,
+tool names, and request timing while discarding prompts, responses, transcripts,
+environment context, tool inputs/results, paths except for explicit project matching,
+request identifiers, credentials, auth state, and arbitrary metadata. Persistent
+conversation state contains no token counters, so all normalized token values are zero.
+Non-persistent sessions are unavailable. The adapter targets the current conversations
+table and serialized state format as qualified in August 2026.
+
+Plandex reads an offline copy of a self-hosted server's `PLANDEX_BASE_DIR`, specifically
+`orgs/*/plans/*/conversation/*.json`. It extracts stable plan/message identifiers,
+timestamps, roles, stop status, and provider-reported per-message token totals while
+discarding messages, user IDs, subtasks, paths, code changes, flags, summaries,
+PostgreSQL data, credentials, and Git history. Plandex does not split stored message
+tokens by input/output or persist model/tool attribution in these files, so totals are
+unattributed and models are `unknown`. Hosted Plandex accounts are not accessed.
 
 Provider formats can change without notice. Unknown fields are ignored; malformed
 provider records are counted and skipped. Compatibility fixes should add a fixture for

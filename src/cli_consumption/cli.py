@@ -10,8 +10,10 @@ import typer
 from cli_consumption import __version__
 from cli_consumption.adapters import (
     AiderAdapter,
+    AmazonQAdapter,
     AmpAdapter,
     ClaudeAdapter,
+    ClineAdapter,
     CodexAdapter,
     ContinueAdapter,
     CopilotAdapter,
@@ -21,9 +23,11 @@ from cli_consumption.adapters import (
     GooseAdapter,
     GrokAdapter,
     KiloAdapter,
+    KimiAdapter,
     OpenCodeAdapter,
     OpenHandsAdapter,
     PiAdapter,
+    PlandexAdapter,
     QwenAdapter,
 )
 from cli_consumption.api import create_app
@@ -65,6 +69,7 @@ def providers() -> None:
     """Show implemented and planned CLI adapters."""
     typer.echo("all      auto-detect supported providers")
     typer.echo("aider    supported")
+    typer.echo("amazon-q supported")
     typer.echo("amp      supported")
     typer.echo("codex    supported")
     typer.echo("copilot  supported")
@@ -75,10 +80,13 @@ def providers() -> None:
     typer.echo("goose    supported")
     typer.echo("grok     supported")
     typer.echo("claude   supported")
+    typer.echo("cline    supported")
     typer.echo("kilo     supported")
+    typer.echo("kimi     supported")
     typer.echo("opencode supported")
     typer.echo("openhands supported")
     typer.echo("pi       supported")
+    typer.echo("plandex  supported")
     typer.echo("qwen     supported")
 
 
@@ -252,6 +260,7 @@ def _collect_snapshots(
     provider = "claude" if provider == "claude-code" else provider
     adapters = {
         "aider": (AiderAdapter, ".aider", "analytics.jsonl"),
+        "amazon-q": (AmazonQAdapter, ".local/share/amazon-q", "data.sqlite3"),
         "amp": (AmpAdapter, ".local/share/amp", "threads"),
         "codex": (CodexAdapter, ".codex", "sessions"),
         "copilot": (CopilotAdapter, ".copilot", "session-state"),
@@ -270,7 +279,9 @@ def _collect_snapshots(
         "goose": (GooseAdapter, ".local/share/goose/sessions", "sessions.db"),
         "grok": (GrokAdapter, ".grok", "sessions/*/*/summary.json"),
         "claude": (ClaudeAdapter, ".claude", "projects/*/*.jsonl"),
+        "cline": (ClineAdapter, ".cline/data", "sessions/sessions.db"),
         "kilo": (KiloAdapter, ".local/share/kilo", "kilo.db"),
+        "kimi": (KimiAdapter, ".kimi", "sessions/*/*/wire.jsonl"),
         "opencode": (
             OpenCodeAdapter,
             ".local/share/opencode",
@@ -282,6 +293,7 @@ def _collect_snapshots(
             "conversations/*/base_state.json",
         ),
         "pi": (PiAdapter, ".pi/agent", "sessions"),
+        "plandex": (PlandexAdapter, "/plandex-server", "orgs/*/plans/*/conversation"),
         "qwen": (QwenAdapter, ".qwen", "projects/*/chats"),
     }
     if provider != "all" and provider not in adapters:

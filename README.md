@@ -5,9 +5,10 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Amp, Codex, Continue CLI, Cursor CLI, GitHub Copilot CLI, Crush, Aider, Gemini
-CLI, Goose, Grok Build, Kilo Code, Pi, Qwen Code, OpenCode, and the core Claude
-Code and OpenHands CLI local transcript formats are supported.
+Amazon Q Developer CLI, Amp, Cline CLI, Codex, Continue CLI, Cursor CLI, GitHub
+Copilot CLI, Crush, Aider, Gemini CLI, Goose, Grok Build, Kilo Code, Kimi Code
+CLI, Pi, Plandex, Qwen Code, OpenCode, and the core Claude Code and OpenHands CLI
+local transcript formats are supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -115,6 +116,32 @@ Select Continue CLI to read its local session JSON files:
 
 ```bash
 uv run cli-consumption collect --provider continue --database usage.sqlite
+```
+
+Select Cline CLI to read `~/.cline/data/sessions/sessions.db` and its message
+artifacts:
+
+```bash
+uv run cli-consumption collect --provider cline --database usage.sqlite
+```
+
+Select Kimi Code CLI to read `~/.kimi/sessions/*/*/wire.jsonl`:
+
+```bash
+uv run cli-consumption collect --provider kimi --database usage.sqlite
+```
+
+Select Amazon Q Developer CLI to read its local `data.sqlite3`:
+
+```bash
+uv run cli-consumption collect --provider amazon-q --database usage.sqlite
+```
+
+Select a copied self-hosted Plandex server data directory explicitly:
+
+```bash
+uv run cli-consumption collect --provider plandex \
+  --source server=/srv/plandex-server --database usage.sqlite
 ```
 
 Select Kilo Code to read `~/.local/share/kilo/kilo.db` instead:
@@ -260,6 +287,12 @@ uv run cli-consumption collect --provider continue \
   --source desktop=/data/continue/desktop \
   --source laptop=/data/continue/laptop
 ```
+
+Copied Cline CLI sources point to the data directory containing
+`sessions/sessions.db`; copied Kimi sources contain `sessions/*/*/wire.jsonl`, and
+copied Amazon Q sources contain `data.sqlite3`. Plandex sources must be offline copies
+of `PLANDEX_BASE_DIR` from a self-hosted server and contain
+`orgs/*/plans/*/conversation/`.
 
 Copied Kilo Code sources point to the data directory containing `kilo.db`:
 

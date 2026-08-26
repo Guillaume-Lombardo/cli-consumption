@@ -5,8 +5,8 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Codex, Aider, Gemini CLI, Goose, Kilo Code, Pi, Qwen Code, OpenCode, and the core
-Claude Code local transcript format are supported.
+Codex, Crush, Aider, Gemini CLI, Goose, Kilo Code, Pi, Qwen Code, OpenCode, and
+the core Claude Code local transcript format are supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -78,6 +78,12 @@ Select OpenCode to read `~/.local/share/opencode/opencode.db` instead:
 
 ```bash
 uv run cli-consumption collect --provider opencode --database usage.sqlite
+```
+
+Select Crush to read its global project registry and per-project SQLite stores:
+
+```bash
+uv run cli-consumption collect --provider crush --database usage.sqlite
 ```
 
 Select Kilo Code to read `~/.local/share/kilo/kilo.db` instead:
@@ -164,6 +170,15 @@ Copied OpenCode sources point to the data directory containing `opencode.db`:
 uv run cli-consumption collect --provider opencode \
   --source desktop=/data/opencode/desktop \
   --source laptop=/data/opencode/laptop
+```
+
+Copied Crush sources can point directly to a project directory containing
+`.crush/crush.db`, or to the data directory containing `crush.db`:
+
+```bash
+uv run cli-consumption collect --provider crush \
+  --source desktop=/data/crush/desktop/project-a \
+  --source laptop=/data/crush/laptop/project-b/.crush
 ```
 
 Copied Kilo Code sources point to the data directory containing `kilo.db`:

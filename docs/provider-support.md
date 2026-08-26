@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | Aider | Supported (core) | Opt-in local analytics JSONL |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
+| Crush | Supported (core) | Per-project local SQLite store |
 | Claude Code | Supported (core) | Local project transcript JSONL |
 | Gemini CLI | Supported (core) | Local automatic chat history JSON and JSONL |
 | Goose | Supported (core) | Local SQLite session store v16 |
@@ -26,6 +27,22 @@ compactions, technical work-item categories and durations, and local thread-spaw
 relationships. Work-item content and rate-limit payloads are deliberately excluded.
 Subagent state can remain `open` after a child thread is technically closed; reporting
 therefore derives closure from collected child turns when they are available.
+
+Crush reads its global project registry at
+`~/.local/share/crush/projects.json` and each registered project's `crush.db`, or a
+direct copied project/data directory. The adapter was qualified against Crush v0.91.2
+and its current additive SQLite migrations. It extracts top-level sessions, user
+turns, assistant model/provider labels, tool names, finish status, summary compactions,
+and the session-level token snapshot while discarding titles, prompts, responses,
+reasoning, tool inputs/results, shell commands/output, paths, todos, costs, and
+arbitrary part data. Project paths are inspected only for explicit project mappings.
+
+Crush does not persist per-call token usage. Its session counters represent the latest
+context footprint rather than additive conversation usage, so the adapter attributes
+that single snapshot to the last assistant model call and does not claim it as billing
+data. Cache and reasoning splits are unavailable. Child agent sessions, costs,
+attachments, provider-reported latency, and context-window sizes are not collected.
+The SQLite schema is internal and can change without notice.
 
 Claude Code reads top-level sessions from
 `~/.claude/projects/<project>/<session-id>.jsonl` (or `CLAUDE_CONFIG_DIR`). It extracts

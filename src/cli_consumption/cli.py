@@ -11,6 +11,7 @@ from cli_consumption import __version__
 from cli_consumption.adapters import (
     ClaudeAdapter,
     CodexAdapter,
+    GeminiAdapter,
     KiloAdapter,
     OpenCodeAdapter,
     PiAdapter,
@@ -54,6 +55,7 @@ def providers() -> None:
     """Show implemented and planned CLI adapters."""
     typer.echo("all      auto-detect supported providers")
     typer.echo("codex    supported")
+    typer.echo("gemini   supported")
     typer.echo("claude   supported")
     typer.echo("kilo     supported")
     typer.echo("opencode supported")
@@ -230,6 +232,7 @@ def _collect_snapshots(
     provider = "claude" if provider == "claude-code" else provider
     adapters = {
         "codex": (CodexAdapter, ".codex", "sessions"),
+        "gemini": (GeminiAdapter, ".gemini", "tmp"),
         "claude": (ClaudeAdapter, ".claude", "projects"),
         "kilo": (KiloAdapter, ".local/share/kilo", "kilo.db"),
         "opencode": (

@@ -23,6 +23,7 @@ def test_provider_status_is_explicit() -> None:
     assert result.exit_code == 0
     assert "all      auto-detect" in result.stdout
     assert "codex    supported" in result.stdout
+    assert "gemini   supported" in result.stdout
     assert "claude   supported" in result.stdout
     assert "kilo     supported" in result.stdout
     assert "opencode supported" in result.stdout
@@ -195,6 +196,34 @@ def test_collects_pi(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion pi" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_gemini_cli(tmp_path: Path) -> None:
+    home = tmp_path / "gemini"
+    path = home / "tmp" / "project" / "chats" / "session-main.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"sessionId":"session","projectHash":"hash",'
+        '"startTime":"2026-08-25T10:00:00Z"}\n'
+        '{"id":"prompt","type":"user",'
+        '"timestamp":"2026-08-25T10:00:01Z","content":"synthetic"}\n'
+    )
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "gemini",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "gemini.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion gemini" in result.stdout
     assert "1 written" in result.stdout
 
 

@@ -5,8 +5,8 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Codex, Kilo Code, Pi, OpenCode, and the core Claude Code local transcript format are
-supported.
+Codex, Gemini CLI, Kilo Code, Pi, OpenCode, and the core Claude Code local transcript
+format are supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -92,6 +92,12 @@ Select Pi to read `~/.pi/agent/sessions/` instead:
 uv run cli-consumption collect --provider pi --database usage.sqlite
 ```
 
+Select Gemini CLI to read `~/.gemini/tmp/*/chats/` instead:
+
+```bash
+uv run cli-consumption collect --provider gemini --database usage.sqlite
+```
+
 Use `all` to detect and collect every supported provider present on the machine:
 
 ```bash
@@ -154,6 +160,14 @@ Copied Pi sources point to the agent directory containing `sessions/`:
 uv run cli-consumption collect --provider pi \
   --source desktop=/data/pi/desktop \
   --source laptop=/data/pi/laptop
+```
+
+Copied Gemini CLI sources point to the configuration directory containing `tmp/`:
+
+```bash
+uv run cli-consumption collect --provider gemini \
+  --source desktop=/data/gemini/desktop \
+  --source laptop=/data/gemini/laptop
 ```
 
 ## SQLite and PostgreSQL

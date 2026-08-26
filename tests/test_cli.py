@@ -35,6 +35,7 @@ def test_provider_status_is_explicit() -> None:
     assert "claude   supported" in result.stdout
     assert "kilo     supported" in result.stdout
     assert "opencode supported" in result.stdout
+    assert "openhands supported" in result.stdout
     assert "pi       supported" in result.stdout
     assert "qwen     supported" in result.stdout
 
@@ -164,6 +165,40 @@ def test_collects_continue_cli(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion continue" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_openhands_cli(tmp_path: Path) -> None:
+    home = tmp_path / "openhands"
+    conversation = home / "conversations" / "openhands-cli"
+    events = conversation / "events"
+    events.mkdir(parents=True)
+    (conversation / "base_state.json").write_text(
+        json.dumps(
+            {
+                "id": "openhands-cli",
+                "execution_status": "idle",
+                "stats": {"usage_to_metrics": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "openhands",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "openhands.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion openhands" in result.stdout
     assert "1 written" in result.stdout
 
 

@@ -7,7 +7,7 @@ central collector.
 
 Amp, Codex, Continue CLI, Cursor CLI, GitHub Copilot CLI, Crush, Aider, Gemini
 CLI, Goose, Grok Build, Kilo Code, Pi, Qwen Code, OpenCode, and the core Claude
-Code local transcript format are supported.
+Code and OpenHands CLI local transcript formats are supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -79,6 +79,12 @@ Select OpenCode to read `~/.local/share/opencode/opencode.db` instead:
 
 ```bash
 uv run cli-consumption collect --provider opencode --database usage.sqlite
+```
+
+Select OpenHands CLI to read `~/.openhands/conversations/` instead:
+
+```bash
+uv run cli-consumption collect --provider openhands --database usage.sqlite
 ```
 
 Select Crush to read its global project registry and per-project SQLite stores:
@@ -201,6 +207,15 @@ Copied OpenCode sources point to the data directory containing `opencode.db`:
 uv run cli-consumption collect --provider opencode \
   --source desktop=/data/opencode/desktop \
   --source laptop=/data/opencode/laptop
+```
+
+Copied OpenHands CLI sources point to the persistence directory containing
+`conversations/`:
+
+```bash
+uv run cli-consumption collect --provider openhands \
+  --source desktop=/data/openhands/desktop \
+  --source laptop=/data/openhands/laptop
 ```
 
 Copied Crush sources can point directly to a project directory containing

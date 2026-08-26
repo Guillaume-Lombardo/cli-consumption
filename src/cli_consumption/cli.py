@@ -22,6 +22,7 @@ from cli_consumption.adapters import (
     GrokAdapter,
     KiloAdapter,
     OpenCodeAdapter,
+    OpenHandsAdapter,
     PiAdapter,
     QwenAdapter,
 )
@@ -76,6 +77,7 @@ def providers() -> None:
     typer.echo("claude   supported")
     typer.echo("kilo     supported")
     typer.echo("opencode supported")
+    typer.echo("openhands supported")
     typer.echo("pi       supported")
     typer.echo("qwen     supported")
 
@@ -273,6 +275,11 @@ def _collect_snapshots(
             OpenCodeAdapter,
             ".local/share/opencode",
             "opencode.db",
+        ),
+        "openhands": (
+            OpenHandsAdapter,
+            ".openhands",
+            "conversations/*/base_state.json",
         ),
         "pi": (PiAdapter, ".pi/agent", "sessions"),
         "qwen": (QwenAdapter, ".qwen", "projects/*/chats"),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from pathlib import Path
 
 from click.utils import strip_ansi
@@ -22,6 +24,7 @@ def test_provider_status_is_explicit() -> None:
     assert "all      auto-detect" in result.stdout
     assert "codex    supported" in result.stdout
     assert "claude   supported" in result.stdout
+    assert "opencode supported" in result.stdout
 
 
 def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
@@ -31,7 +34,7 @@ def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
 
     result = runner.invoke(
         app,
-        ["collect", "--provider", "opencode", "--database", str(tmp_path / "db")],
+        ["collect", "--provider", "kilo", "--database", str(tmp_path / "db")],
     )
     assert result.exit_code == 2
     assert "not implemented yet" in result.output
@@ -59,6 +62,54 @@ def test_collects_claude_code(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code == 0, result.output
+    assert "1 written" in result.stdout
+
+
+def test_collects_opencode(tmp_path: Path) -> None:
+    home = tmp_path / "opencode"
+    home.mkdir()
+    connection = sqlite3.connect(home / "opencode.db")
+    connection.executescript(
+        """
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL
+        );
+        CREATE TABLE session_message (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        """
+    )
+    connection.execute("INSERT INTO session VALUES ('ses_cli', 1000, 2000)")
+    connection.execute(
+        "INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("msg_cli", "ses_cli", "user", 1, 1000, 1000, json.dumps({"text": "x"})),
+    )
+    connection.commit()
+    connection.close()
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "opencode",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "opencode.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion opencode" in result.stdout
     assert "1 written" in result.stdout
 
 

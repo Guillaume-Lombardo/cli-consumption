@@ -15,6 +15,7 @@ from cli_consumption.adapters import (
     CodexAdapter,
     CopilotAdapter,
     CrushAdapter,
+    CursorAdapter,
     GeminiAdapter,
     GooseAdapter,
     KiloAdapter,
@@ -65,6 +66,7 @@ def providers() -> None:
     typer.echo("codex    supported")
     typer.echo("copilot  supported")
     typer.echo("crush    supported")
+    typer.echo("cursor   supported")
     typer.echo("gemini   supported")
     typer.echo("goose    supported")
     typer.echo("claude   supported")
@@ -252,9 +254,14 @@ def _collect_snapshots(
             ".local/share/crush",
             ("projects.json", "crush.db", ".crush/crush.db"),
         ),
+        "cursor": (
+            CursorAdapter,
+            ".cursor",
+            ("chats", "projects/*/agent-transcripts"),
+        ),
         "gemini": (GeminiAdapter, ".gemini", "tmp"),
         "goose": (GooseAdapter, ".local/share/goose/sessions", "sessions.db"),
-        "claude": (ClaudeAdapter, ".claude", "projects"),
+        "claude": (ClaudeAdapter, ".claude", "projects/*/*.jsonl"),
         "kilo": (KiloAdapter, ".local/share/kilo", "kilo.db"),
         "opencode": (
             OpenCodeAdapter,
@@ -262,7 +269,7 @@ def _collect_snapshots(
             "opencode.db",
         ),
         "pi": (PiAdapter, ".pi/agent", "sessions"),
-        "qwen": (QwenAdapter, ".qwen", "projects"),
+        "qwen": (QwenAdapter, ".qwen", "projects/*/chats"),
     }
     if provider != "all" and provider not in adapters:
         raise typer.BadParameter(
@@ -327,7 +334,10 @@ def _markers(value: str | tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _has_provider_data(path: Path, markers: str | tuple[str, ...]) -> bool:
-    return any((path / marker).exists() for marker in _markers(markers))
+    return any(
+        any(path.glob(marker)) if "*" in marker else (path / marker).exists()
+        for marker in _markers(markers)
+    )
 
 
 def _parse_source_values(values: list[str]) -> list[tuple[str, Path]]:

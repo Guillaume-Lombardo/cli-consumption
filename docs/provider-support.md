@@ -6,6 +6,7 @@
 | Amp | Supported (core) | Local thread mirror JSON |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Crush | Supported (core) | Per-project local SQLite store |
+| Cursor CLI | Supported (core) | Local Composer 2 transcript JSONL and chat metadata SQLite |
 | Claude Code | Supported (core) | Local project transcript JSONL |
 | Gemini CLI | Supported (core) | Local automatic chat history JSON and JSONL |
 | GitHub Copilot CLI | Supported (core) | Local session event JSONL |
@@ -29,6 +30,26 @@ compactions, technical work-item categories and durations, and local thread-spaw
 relationships. Work-item content and rate-limit payloads are deliberately excluded.
 Subagent state can remain `open` after a child thread is technically closed; reporting
 therefore derives closure from collected child turns when they are available.
+
+Cursor CLI reads Composer 2 transcripts from
+`~/.cursor/projects/*/agent-transcripts/<session-id>/<session-id>.jsonl` and optional
+session metadata from `~/.cursor/chats/*/<session-id>/store.db`. It extracts visible
+user turns, assistant-response counts, bounded tool names, session creation time, and
+the latest selected model label while discarding prompts, responses, thinking, tool
+arguments/results, titles, modes, credentials, working directories, raw message blobs,
+and arbitrary metadata. Project paths are matched only against explicit mappings and
+are never reconstructed or persisted from Cursor's encoded directory names. The
+adapter was qualified against the current Cursor CLI Composer 2 format in August 2026.
+
+Cursor transcripts do not include per-message timestamps, token usage, or model
+identifiers. Assistant records are therefore represented as model calls with an
+`unknown` model and zero tokens; the session's `lastUsedModel` is retained only in the
+conversation model list and is not attributed historically to those calls. File
+modification time is used only as the approximate conversation end. Database-only
+sessions expose creation time and the latest model but no turns. Legacy text
+transcripts, Cursor IDE history, background/cloud agents, subagent transcripts,
+compactions, context windows, costs, and provider-reported durations are not collected.
+The internal formats can change without notice, and local events are not billing data.
 
 Crush reads its global project registry at
 `~/.local/share/crush/projects.json` and each registered project's `crush.db`, or a

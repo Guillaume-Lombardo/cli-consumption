@@ -16,9 +16,9 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
 
 - `adapters`: parse a CLI's local data into conversations, turns, model calls, tool
   calls, context-pressure samples, bounded turn settings, compactions, and content-free
-  work-item intervals. Codex exposes the complete analytics contract; Aider, Claude
-  Code, Crush, Gemini CLI, Goose, Kilo Code, OpenCode, Pi, and Qwen Code expose
-  the core dimensions available in their local stores.
+  work-item intervals. Codex exposes the complete analytics contract; Aider, Amp,
+  Claude Code, Crush, Gemini CLI, Goose, Kilo Code, OpenCode, Pi, and Qwen Code
+  expose the core dimensions available in their local stores.
 - `models`: define the transport boundary shared by offline and API ingestion.
 - `storage`: owns the normalized schema, idempotent replacement rules, SQLite, and
   PostgreSQL engine creation.

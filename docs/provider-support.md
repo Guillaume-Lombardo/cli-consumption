@@ -3,6 +3,7 @@
 | Provider | Status | Initial source |
 | --- | --- | --- |
 | Aider | Supported (core) | Opt-in local analytics JSONL |
+| Amp | Supported (core) | Local thread mirror JSON |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Crush | Supported (core) | Per-project local SQLite store |
 | Claude Code | Supported (core) | Local project transcript JSONL |
@@ -169,6 +170,23 @@ Turns represent Aider message-send attempts because the log has no durable user-
 identifier. Unknown custom model names may already be represented as
 `provider/REDACTED` by Aider. Its analytics event schema can change without notice,
 and local token events are not billing data.
+
+Amp reads thread JSON files under `~/.local/share/amp/threads/`. It extracts visible
+user turns, assistant model calls, per-inference token usage, tool names, and context
+window samples while discarding titles, prompts, responses, thinking, tool
+arguments/results, environment details, repository paths, traces, errors, credits,
+costs, and arbitrary metadata. Working directories are inspected only for explicit
+project mappings.
+
+Amp splits input across uncached, cache-read, and cache-creation counters. For
+`gpt-*` models, Amp uses the cache-creation counter for uncached prompt tokens, so the
+adapter folds that bucket into uncached input; other model families retain Amp's
+reported cache-creation split. Historical `usageLedger.events` take precedence over
+duplicated message usage, while current files use `messages[].usage`. Context-window
+samples are collected only when `maxInputTokens` is present. The adapter does not
+collect thread content, subthread relationships, compaction markers, reasoning-token
+splits, costs, credits, or provider-reported latency. Amp's local mirror format is
+internal and can change without notice, and local token events are not billing data.
 
 Provider formats can change without notice. Unknown fields are ignored; malformed
 provider records are counted and skipped. Compatibility fixes should add a fixture for

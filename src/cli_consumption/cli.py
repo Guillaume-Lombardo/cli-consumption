@@ -13,6 +13,7 @@ from cli_consumption.adapters import (
     AmpAdapter,
     ClaudeAdapter,
     CodexAdapter,
+    ContinueAdapter,
     CopilotAdapter,
     CrushAdapter,
     CursorAdapter,
@@ -66,6 +67,7 @@ def providers() -> None:
     typer.echo("amp      supported")
     typer.echo("codex    supported")
     typer.echo("copilot  supported")
+    typer.echo("continue supported")
     typer.echo("crush    supported")
     typer.echo("cursor   supported")
     typer.echo("gemini   supported")
@@ -251,6 +253,7 @@ def _collect_snapshots(
         "amp": (AmpAdapter, ".local/share/amp", "threads"),
         "codex": (CodexAdapter, ".codex", "sessions"),
         "copilot": (CopilotAdapter, ".copilot", "session-state"),
+        "continue": (ContinueAdapter, ".continue", "sessions"),
         "crush": (
             CrushAdapter,
             ".local/share/crush",

@@ -26,6 +26,7 @@ def test_provider_status_is_explicit() -> None:
     assert "amp      supported" in result.stdout
     assert "codex    supported" in result.stdout
     assert "copilot  supported" in result.stdout
+    assert "continue supported" in result.stdout
     assert "crush    supported" in result.stdout
     assert "cursor   supported" in result.stdout
     assert "gemini   supported" in result.stdout
@@ -125,6 +126,44 @@ def test_collects_grok_build(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion grok" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_continue_cli(tmp_path: Path) -> None:
+    home = tmp_path / "continue"
+    sessions = home / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "session-1.json").write_text(
+        json.dumps(
+            {
+                "sessionId": "session-1",
+                "workspaceDirectory": "/project",
+                "history": [
+                    {
+                        "message": {"role": "user", "content": "synthetic"},
+                        "contextItems": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "continue",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "continue.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion continue" in result.stdout
     assert "1 written" in result.stdout
 
 
@@ -541,6 +580,7 @@ def test_collects_qwen_code(tmp_path: Path) -> None:
 def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> None:
     codex_home = tmp_path / "codex"
     claude_home = tmp_path / "claude"
+    continue_home = tmp_path / "continue"
     crush_home = tmp_path / "crush-project"
     kilo_home = tmp_path / "kilo"
     rollout_factory(codex_home)
@@ -550,6 +590,17 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
         '{"type":"user","sessionId":"claude-session","uuid":"prompt",'
         '"timestamp":"2026-08-25T10:00:00Z",'
         '"message":{"role":"user","content":"synthetic"}}\n'
+    )
+    continue_path = continue_home / "sessions" / "session.json"
+    continue_path.parent.mkdir(parents=True)
+    continue_path.write_text(
+        json.dumps(
+            {
+                "sessionId": "continue-session",
+                "history": [{"message": {"role": "user", "content": "synthetic"}}],
+            }
+        ),
+        encoding="utf-8",
     )
     kilo_home.mkdir()
     connection = sqlite3.connect(kilo_home / "kilo.db")
@@ -613,6 +664,8 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
             "--source",
             f"desktop-claude={claude_home}",
             "--source",
+            f"desktop-continue={continue_home}",
+            "--source",
             f"desktop-crush={crush_home}",
             "--source",
             f"desktop-kilo={kilo_home}",
@@ -624,6 +677,7 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
     assert result.exit_code == 0, result.output
     assert "Ingestion codex" in result.stdout
     assert "Ingestion claude" in result.stdout
+    assert "Ingestion continue" in result.stdout
     assert "Ingestion crush" in result.stdout
     assert "Ingestion kilo" in result.stdout
     engine = create_database_engine(database)
@@ -631,6 +685,7 @@ def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> Non
         assert {row["provider"] for row in read_table(engine, "conversations")} == {
             "codex",
             "claude",
+            "continue",
             "crush",
             "kilo",
         }

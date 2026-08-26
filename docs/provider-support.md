@@ -5,6 +5,7 @@
 | Aider | Supported (core) | Opt-in local analytics JSONL |
 | Amp | Supported (core) | Local thread mirror JSON |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
+| Continue CLI | Supported (core) | Local session JSON |
 | Crush | Supported (core) | Per-project local SQLite store |
 | Cursor CLI | Supported (core) | Local Composer 2 transcript JSONL and chat metadata SQLite |
 | Claude Code | Supported (core) | Local project transcript JSONL |
@@ -51,6 +52,24 @@ sessions expose creation time and the latest model but no turns. Legacy text
 transcripts, Cursor IDE history, background/cloud agents, subagent transcripts,
 compactions, context windows, costs, and provider-reported durations are not collected.
 The internal formats can change without notice, and local events are not billing data.
+
+Continue CLI reads session JSON files from `~/.continue/sessions/` (or
+`CONTINUE_GLOBAL_DIR`). The adapter was qualified against the current session format
+used by Continue CLI in August 2026. It extracts visible user turns, assistant model
+labels, per-response token usage when present, the cumulative session token snapshot,
+and function-call names while discarding titles, prompts, responses, reasoning, tool
+arguments/results, context items, editor state, rules, arbitrary metadata, costs, and
+credentials. Working directories are inspected only for explicit project mappings.
+
+Continue reports prompt and completion totals with optional cache-read, cache-write,
+and reasoning subsets. The adapter prefers per-response usage and adds only the
+unattributed remainder of the cumulative session snapshot, preventing double counting.
+Session files do not persist reliable per-message timestamps, so model calls and turns
+have no timestamps or durations; the file modification time is retained only as the
+conversation's approximate end time. The adapter does not collect IDE-extension-only
+history stores, context-window sizes, compactions, provider-reported status, latency,
+or cost. Continue's internal session format can change without notice, and local token
+events are not billing data.
 
 Crush reads its global project registry at
 `~/.local/share/crush/projects.json` and each registered project's `crush.db`, or a

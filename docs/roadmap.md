@@ -8,6 +8,7 @@
 - Core Kilo Code local SQLite collector
 - Core Gemini CLI local chat-history collector
 - Core Goose local SQLite collector
+- Core Qwen Code local transcript collector
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API

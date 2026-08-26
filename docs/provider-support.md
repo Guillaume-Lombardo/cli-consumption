@@ -10,6 +10,7 @@
 | Kilo Code | Supported (core) | Local SQLite session store |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
 | Pi | Supported (core) | Local session JSONL v1-v3 |
+| Qwen Code | Supported (core) | Local append-only transcript JSONL |
 
 “Supported” means the adapter has synthetic fixtures, extracts conversations, turns,
 models, token usage, and tool names when available, and passes privacy regression tests.
@@ -116,6 +117,25 @@ a subset of output rather than added twice. This adapter does not collect custom
 session directories automatically, context-window sizes, costs, branch relationships,
 or provider-reported durations. Pi's JSONL schema can change without notice, and its
 local token events are not billing data.
+
+Qwen Code reads active session transcripts from
+`~/.qwen/projects/<project-id>/chats/<session-id>.jsonl` (or `QWEN_HOME`). It
+follows the latest `uuid`/`parentUuid` branch so turns abandoned by rewind are not
+counted, and extracts user turns, assistant model calls, token usage, context-window
+sizes, function-call names, and chat-compression timestamps. Prompts, responses,
+thoughts, tool arguments/results, working directories, branches, titles, errors,
+hooks, checkpoints, arbitrary system payloads, archived sessions, and sidechain agent
+records are discarded. Working directories are inspected only for explicit project
+mappings.
+
+Qwen Code persists prompt, cached-prompt, visible-candidate, thought, tool-prompt,
+and total token counters in Gemini-compatible usage metadata. Normalized input is the
+prompt total, cached input is its bounded subset, and normalized output combines
+candidate and thought tokens. Provider totals above the attributed input/output sum
+remain unattributed; tool-prompt tokens are treated as a prompt subset. Cache-creation
+input is unavailable in the serialized metadata. This adapter was qualified against
+Qwen Code v0.22.2. Its internal transcript schema can change without notice, and local
+token events are not billing data.
 
 Aider reads an explicitly configured local analytics log named `analytics.jsonl` (for
 example, `AIDER_ANALYTICS_LOG=~/.aider/analytics.jsonl`). It groups events from

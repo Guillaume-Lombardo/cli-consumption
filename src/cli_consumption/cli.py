@@ -17,6 +17,7 @@ from cli_consumption.adapters import (
     KiloAdapter,
     OpenCodeAdapter,
     PiAdapter,
+    QwenAdapter,
 )
 from cli_consumption.api import create_app
 from cli_consumption.dashboard import generate_dashboard
@@ -64,6 +65,7 @@ def providers() -> None:
     typer.echo("kilo     supported")
     typer.echo("opencode supported")
     typer.echo("pi       supported")
+    typer.echo("qwen     supported")
 
 
 @app.command()
@@ -247,6 +249,7 @@ def _collect_snapshots(
             "opencode.db",
         ),
         "pi": (PiAdapter, ".pi/agent", "sessions"),
+        "qwen": (QwenAdapter, ".qwen", "projects"),
     }
     if provider != "all" and provider not in adapters:
         raise typer.BadParameter(

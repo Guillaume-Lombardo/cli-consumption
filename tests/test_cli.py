@@ -30,6 +30,7 @@ def test_provider_status_is_explicit() -> None:
     assert "kilo     supported" in result.stdout
     assert "opencode supported" in result.stdout
     assert "pi       supported" in result.stdout
+    assert "qwen     supported" in result.stdout
 
 
 def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
@@ -304,6 +305,34 @@ def test_collects_gemini_cli(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion gemini" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_qwen_code(tmp_path: Path) -> None:
+    home = tmp_path / "qwen"
+    path = home / "projects" / "-project" / "chats" / "session.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"uuid":"prompt","parentUuid":null,"sessionId":"session",'
+        '"timestamp":"2026-08-26T10:00:00Z","type":"user",'
+        '"cwd":"/project","version":"0.22.2",'
+        '"message":{"role":"user","parts":[{"text":"synthetic"}]}}\n'
+    )
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "qwen",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "qwen.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion qwen" in result.stdout
     assert "1 written" in result.stdout
 
 

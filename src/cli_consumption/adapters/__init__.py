@@ -6,6 +6,7 @@ from cli_consumption.adapters.goose import GooseAdapter
 from cli_consumption.adapters.kilo import KiloAdapter
 from cli_consumption.adapters.opencode import OpenCodeAdapter
 from cli_consumption.adapters.pi import PiAdapter
+from cli_consumption.adapters.qwen import QwenAdapter
 
 __all__ = [
     "AiderAdapter",
@@ -16,4 +17,5 @@ __all__ = [
     "KiloAdapter",
     "OpenCodeAdapter",
     "PiAdapter",
+    "QwenAdapter",
 ]

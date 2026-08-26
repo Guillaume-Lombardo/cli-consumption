@@ -10,6 +10,7 @@
 - Core Goose local SQLite collector
 - Core Qwen Code local transcript collector
 - Core Crush per-project SQLite collector
+- Core Amp local thread-mirror collector
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API

@@ -1,4 +1,5 @@
 from cli_consumption.adapters.aider import AiderAdapter
+from cli_consumption.adapters.amp import AmpAdapter
 from cli_consumption.adapters.claude import ClaudeAdapter
 from cli_consumption.adapters.codex import CodexAdapter
 from cli_consumption.adapters.crush import CrushAdapter
@@ -11,6 +12,7 @@ from cli_consumption.adapters.qwen import QwenAdapter
 
 __all__ = [
     "AiderAdapter",
+    "AmpAdapter",
     "ClaudeAdapter",
     "CodexAdapter",
     "CrushAdapter",

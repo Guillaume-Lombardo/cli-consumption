@@ -23,6 +23,7 @@ def test_provider_status_is_explicit() -> None:
     assert result.exit_code == 0
     assert "all      auto-detect" in result.stdout
     assert "aider    supported" in result.stdout
+    assert "amp      supported" in result.stdout
     assert "codex    supported" in result.stdout
     assert "crush    supported" in result.stdout
     assert "gemini   supported" in result.stdout
@@ -217,6 +218,33 @@ def test_collects_aider(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion aider" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_amp(tmp_path: Path) -> None:
+    home = tmp_path / "amp"
+    path = home / "threads" / "T-cli.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"id":"T-cli","created":1787652000000,"messages":'
+        '[{"role":"user","content":"synthetic"}]}',
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "amp",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "amp.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion amp" in result.stdout
     assert "1 written" in result.stdout
 
 

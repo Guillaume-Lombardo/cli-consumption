@@ -10,6 +10,7 @@ import typer
 from cli_consumption import __version__
 from cli_consumption.adapters import (
     AiderAdapter,
+    AmpAdapter,
     ClaudeAdapter,
     CodexAdapter,
     CrushAdapter,
@@ -59,6 +60,7 @@ def providers() -> None:
     """Show implemented and planned CLI adapters."""
     typer.echo("all      auto-detect supported providers")
     typer.echo("aider    supported")
+    typer.echo("amp      supported")
     typer.echo("codex    supported")
     typer.echo("crush    supported")
     typer.echo("gemini   supported")
@@ -240,6 +242,7 @@ def _collect_snapshots(
     provider = "claude" if provider == "claude-code" else provider
     adapters = {
         "aider": (AiderAdapter, ".aider", "analytics.jsonl"),
+        "amp": (AmpAdapter, ".local/share/amp", "threads"),
         "codex": (CodexAdapter, ".codex", "sessions"),
         "crush": (
             CrushAdapter,

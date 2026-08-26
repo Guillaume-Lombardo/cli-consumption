@@ -2,6 +2,7 @@ from cli_consumption.adapters.aider import AiderAdapter
 from cli_consumption.adapters.amp import AmpAdapter
 from cli_consumption.adapters.claude import ClaudeAdapter
 from cli_consumption.adapters.codex import CodexAdapter
+from cli_consumption.adapters.continue_cli import ContinueAdapter
 from cli_consumption.adapters.copilot import CopilotAdapter
 from cli_consumption.adapters.crush import CrushAdapter
 from cli_consumption.adapters.cursor import CursorAdapter
@@ -18,6 +19,7 @@ __all__ = [
     "AmpAdapter",
     "ClaudeAdapter",
     "CodexAdapter",
+    "ContinueAdapter",
     "CopilotAdapter",
     "CrushAdapter",
     "CursorAdapter",

@@ -6,6 +6,7 @@ from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from cli_consumption.cli import app
+from cli_consumption.storage import create_database_engine, read_table
 
 runner = CliRunner()
 
@@ -18,8 +19,9 @@ def normalized_cli_output(output: str) -> str:
 def test_provider_status_is_explicit() -> None:
     result = runner.invoke(app, ["providers"])
     assert result.exit_code == 0
+    assert "all      auto-detect" in result.stdout
     assert "codex    supported" in result.stdout
-    assert "claude   planned" in result.stdout
+    assert "claude   supported" in result.stdout
 
 
 def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
@@ -29,10 +31,87 @@ def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
 
     result = runner.invoke(
         app,
-        ["collect", "--provider", "claude", "--database", str(tmp_path / "db")],
+        ["collect", "--provider", "opencode", "--database", str(tmp_path / "db")],
     )
     assert result.exit_code == 2
     assert "not implemented yet" in result.output
+
+
+def test_collects_claude_code(tmp_path: Path) -> None:
+    home = tmp_path / "claude"
+    path = home / "projects" / "project" / "session.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"type":"user","sessionId":"session","uuid":"prompt",'
+        '"timestamp":"2026-08-25T10:00:00Z",'
+        '"message":{"role":"user","content":"synthetic"}}\n'
+    )
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "claude-code",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "claude.sqlite"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "1 written" in result.stdout
+
+
+def test_collects_all_detected_providers(tmp_path: Path, rollout_factory) -> None:
+    codex_home = tmp_path / "codex"
+    claude_home = tmp_path / "claude"
+    rollout_factory(codex_home)
+    claude_path = claude_home / "projects" / "project" / "session.jsonl"
+    claude_path.parent.mkdir(parents=True)
+    claude_path.write_text(
+        '{"type":"user","sessionId":"claude-session","uuid":"prompt",'
+        '"timestamp":"2026-08-25T10:00:00Z",'
+        '"message":{"role":"user","content":"synthetic"}}\n'
+    )
+    database = tmp_path / "all.sqlite"
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "all",
+            "--source",
+            f"desktop-codex={codex_home}",
+            "--source",
+            f"desktop-claude={claude_home}",
+            "--database",
+            str(database),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion codex" in result.stdout
+    assert "Ingestion claude" in result.stdout
+    engine = create_database_engine(database)
+    try:
+        assert {row["provider"] for row in read_table(engine, "conversations")} == {
+            "codex",
+            "claude",
+        }
+    finally:
+        engine.dispose()
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = runner.invoke(
+        app,
+        ["collect", "--provider", "all", "--source", f"empty={empty}"],
+    )
+    assert result.exit_code == 2
+    assert (
+        "No supported provider data detected for source labels: empty" in result.output
+    )
 
 
 def test_collect_and_export(tmp_path: Path, rollout_factory) -> None:

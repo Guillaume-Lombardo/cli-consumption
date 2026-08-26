@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from cli_consumption import __version__
-from cli_consumption.adapters import CodexAdapter
+from cli_consumption.adapters import ClaudeAdapter, CodexAdapter
 from cli_consumption.api import create_app
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
@@ -46,8 +46,10 @@ def main(
 @app.command()
 def providers() -> None:
     """Show implemented and planned CLI adapters."""
+    typer.echo("all      auto-detect supported providers")
     typer.echo("codex    supported")
-    for provider in ("claude", "opencode", "kilo", "pi"):
+    typer.echo("claude   supported")
+    for provider in ("opencode", "kilo", "pi"):
         typer.echo(f"{provider:<8} planned")
 
 
@@ -58,7 +60,7 @@ def collect(
         typer.Option(
             "--source",
             "-s",
-            help="[LABEL=]CODEX_HOME. Repeat to consolidate copied machine data.",
+            help="[LABEL=]PROVIDER_HOME. Repeat to consolidate copied machine data.",
         ),
     ] = None,
     database: Annotated[
@@ -70,7 +72,9 @@ def collect(
             help="SQLite path or SQLAlchemy PostgreSQL URL.",
         ),
     ] = "cli-consumption.sqlite",
-    provider: Annotated[str, typer.Option(help="CLI provider to collect.")] = "codex",
+    provider: Annotated[
+        str, typer.Option(help="CLI provider to collect, or 'all' to auto-detect.")
+    ] = "codex",
     project: Annotated[
         list[str] | None,
         typer.Option(
@@ -80,16 +84,20 @@ def collect(
     ] = None,
 ) -> None:
     """Collect one or more local/copied CLI data directories into SQL storage."""
-    snapshot = _collect_snapshot(provider, source, project)
+    snapshots = _collect_snapshots(provider, source, project)
     engine = create_database_engine(database)
     try:
-        result = ingest_snapshot(engine, snapshot)
+        results = [
+            (snapshot, ingest_snapshot(engine, snapshot)) for snapshot in snapshots
+        ]
     finally:
         engine.dispose()
-    typer.echo(
-        f"Ingestion {result.run_id}: {result.written} written, "
-        f"{result.skipped} unchanged, {snapshot.malformed_records} malformed skipped."
-    )
+    for snapshot, result in results:
+        typer.echo(
+            f"Ingestion {snapshot.provider} {result.run_id}: "
+            f"{result.written} written, {result.skipped} unchanged, "
+            f"{snapshot.malformed_records} malformed skipped."
+        )
 
 
 @app.command()
@@ -102,9 +110,11 @@ def sync(
     ],
     source: Annotated[
         list[str] | None,
-        typer.Option("--source", "-s", help="[LABEL=]CODEX_HOME. Repeat as needed."),
+        typer.Option("--source", "-s", help="[LABEL=]PROVIDER_HOME. Repeat as needed."),
     ] = None,
-    provider: Annotated[str, typer.Option(help="CLI provider to collect.")] = "codex",
+    provider: Annotated[
+        str, typer.Option(help="CLI provider to collect, or 'all' to auto-detect.")
+    ] = "codex",
     project: Annotated[
         list[str] | None,
         typer.Option("--project", help="NAME=PATH_PREFIX project mapping."),
@@ -115,13 +125,14 @@ def sync(
     ] = "CLI_CONSUMPTION_API_TOKEN",
 ) -> None:
     """Collect locally and send metadata-only records to a central collector."""
-    snapshot = _collect_snapshot(provider, source, project)
+    snapshots = _collect_snapshots(provider, source, project)
     token = os.environ.get(token_env)
-    result = send_snapshot(snapshot, endpoint, token)
-    typer.echo(
-        f"Remote ingestion {result['run_id']}: {result['written']} written, "
-        f"{result['skipped']} unchanged."
-    )
+    for snapshot in snapshots:
+        result = send_snapshot(snapshot, endpoint, token)
+        typer.echo(
+            f"Remote ingestion {snapshot.provider} {result['run_id']}: "
+            f"{result['written']} written, {result['skipped']} unchanged."
+        )
 
 
 @app.command("export")
@@ -204,24 +215,70 @@ def serve(
     uvicorn.run(create_app(engine, token), host=host, port=port)
 
 
-def _collect_snapshot(
+def _collect_snapshots(
     provider: str,
     source_values: list[str] | None,
     project_values: list[str] | None,
-) -> Snapshot:
-    if provider != "codex":
+) -> list[Snapshot]:
+    provider = "claude" if provider == "claude-code" else provider
+    adapters = {
+        "codex": (CodexAdapter, ".codex", "sessions"),
+        "claude": (ClaudeAdapter, ".claude", "projects"),
+    }
+    if provider != "all" and provider not in adapters:
         raise typer.BadParameter(
             f"Provider {provider!r} is not implemented yet. Run `providers` for status."
         )
-    return CodexAdapter().collect(
-        _parse_sources(source_values or []),
-        _parse_project_mappings(project_values or []),
-    )
+    mappings = _parse_project_mappings(project_values or [])
+    if provider != "all":
+        adapter, home, directory = adapters[provider]
+        return [
+            adapter().collect(
+                _parse_sources(source_values or [], home, directory), mappings
+            )
+        ]
+
+    snapshots: list[Snapshot] = []
+    if source_values:
+        sources = _parse_source_values(source_values)
+        matched_labels: set[str] = set()
+        for adapter, _, directory in adapters.values():
+            matched = [source for source in sources if (source[1] / directory).is_dir()]
+            if matched:
+                matched_labels.update(label for label, _ in matched)
+                snapshots.append(adapter().collect(matched, mappings))
+        unmatched = [label for label, _ in sources if label not in matched_labels]
+        if unmatched:
+            raise typer.BadParameter(
+                "No supported provider data detected for source labels: "
+                + ", ".join(unmatched)
+            )
+    else:
+        machine = platform.node()
+        for adapter, home, directory in adapters.values():
+            path = (Path.home() / home).resolve()
+            if (path / directory).is_dir():
+                snapshots.append(adapter().collect([(machine, path)], mappings))
+    if not snapshots:
+        raise typer.BadParameter("No supported provider data detected.")
+    return snapshots
 
 
-def _parse_sources(values: list[str]) -> list[tuple[str, Path]]:
+def _parse_sources(
+    values: list[str], home: str = ".codex", directory: str = "sessions"
+) -> list[tuple[str, Path]]:
     if not values:
-        values = [f"{platform.node()}={Path.home() / '.codex'}"]
+        values = [f"{platform.node()}={Path.home() / home}"]
+    result = _parse_source_values(values)
+    for _, path in result:
+        if not (path / directory).is_dir():
+            raise typer.BadParameter(
+                f"Missing {directory} directory: {path / directory}"
+            )
+    return result
+
+
+def _parse_source_values(values: list[str]) -> list[tuple[str, Path]]:
     result: list[tuple[str, Path]] = []
     labels: set[str] = set()
     for index, value in enumerate(values, 1):
@@ -235,8 +292,6 @@ def _parse_sources(values: list[str]) -> list[tuple[str, Path]]:
             raise typer.BadParameter(
                 f"Source labels must be non-empty and unique: {label!r}"
             )
-        if not (path / "sessions").is_dir():
-            raise typer.BadParameter(f"Missing sessions directory: {path / 'sessions'}")
         labels.add(label)
         result.append((label, path))
     return result

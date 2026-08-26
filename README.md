@@ -5,8 +5,8 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Codex is fully supported. Claude Code, OpenCode, Kilo Code, and Pi are planned behind
-the same provider-neutral adapter contract.
+Codex and the core Claude Code local transcript format are supported. OpenCode, Kilo
+Code, and Pi are planned behind the same provider-neutral adapter contract.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -68,6 +68,22 @@ hostname:
 uv run cli-consumption collect --database usage.sqlite
 ```
 
+Select Claude Code to read `~/.claude/projects/` instead:
+
+```bash
+uv run cli-consumption collect --provider claude --database usage.sqlite
+```
+
+Use `all` to detect and collect every supported provider present on the machine:
+
+```bash
+uv run cli-consumption collect --provider all --database usage.sqlite
+```
+
+With explicit copied sources, each path is inspected for the provider-specific
+`sessions/` or `projects/` directory. Sources that contain no supported provider data
+are rejected instead of silently skipped.
+
 For an offline multi-machine workflow, copy only each machine's Codex `sessions/`
 directory into a trusted analysis location. Do not copy `auth.json` or other
 credentials. Then repeat `--source`:
@@ -88,6 +104,14 @@ working-directory prefix:
 uv run cli-consumption collect \
   --source desktop=/data/codex/desktop \
   --project cli-consumption=/home/me/dev/cli-consumption
+```
+
+Copied Claude Code sources point to the configuration directory containing `projects/`:
+
+```bash
+uv run cli-consumption collect --provider claude \
+  --source desktop=/data/claude/desktop \
+  --source laptop=/data/claude/laptop
 ```
 
 ## SQLite and PostgreSQL

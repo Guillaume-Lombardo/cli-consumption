@@ -5,7 +5,7 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Codex, Aider, Gemini CLI, Kilo Code, Pi, OpenCode, and the core Claude Code
+Codex, Aider, Gemini CLI, Goose, Kilo Code, Pi, OpenCode, and the core Claude Code
 local transcript format are supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
@@ -86,6 +86,12 @@ Select Kilo Code to read `~/.local/share/kilo/kilo.db` instead:
 uv run cli-consumption collect --provider kilo --database usage.sqlite
 ```
 
+Select Goose to read `~/.local/share/goose/sessions/sessions.db` instead:
+
+```bash
+uv run cli-consumption collect --provider goose --database usage.sqlite
+```
+
 Select Pi to read `~/.pi/agent/sessions/` instead:
 
 ```bash
@@ -160,6 +166,14 @@ Copied Kilo Code sources point to the data directory containing `kilo.db`:
 uv run cli-consumption collect --provider kilo \
   --source desktop=/data/kilo/desktop \
   --source laptop=/data/kilo/laptop
+```
+
+Copied Goose sources point to the sessions directory containing `sessions.db`:
+
+```bash
+uv run cli-consumption collect --provider goose \
+  --source desktop=/data/goose/desktop \
+  --source laptop=/data/goose/laptop
 ```
 
 Copied Pi sources point to the agent directory containing `sessions/`:

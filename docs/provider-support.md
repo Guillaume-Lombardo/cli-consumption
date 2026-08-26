@@ -6,6 +6,7 @@
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Claude Code | Supported (core) | Local project transcript JSONL |
 | Gemini CLI | Supported (core) | Local automatic chat history JSON and JSONL |
+| Goose | Supported (core) | Local SQLite session store v16 |
 | Kilo Code | Supported (core) | Local SQLite session store |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
 | Pi | Supported (core) | Local session JSONL v1-v3 |
@@ -54,6 +55,23 @@ Gemini's one-way project hash, collect nested subagent sessions, compaction time
 context-window sizes, configuration labels, tool outcomes, or provider-reported
 durations. Gemini CLI's internal history schema can change without notice, and local
 token events are not billing data.
+
+Goose reads `sessions.db` from its sessions directory (normally
+`~/.local/share/goose/sessions/`). The adapter was qualified against Goose v1.47.0
+and schema v16. It extracts visible user turns, per-request model and token usage,
+tool names, and compaction markers while discarding session names, prompts, responses,
+thinking, tool arguments/results, paths, recipes, arbitrary metadata, errors, costs,
+and cost-source labels. Working directories are inspected only for explicit project
+mappings.
+
+Goose reports input tokens with cache reads and writes as subsets. Normalized uncached
+input subtracts both cache subsets, and model labels combine the session provider with
+the usage-ledger model. Usage-ledger timestamps have one-second resolution, so model
+calls are attributed to the latest visible user turn at or before the ledger event.
+This adapter does not read legacy pre-1.10 JSONL sessions or pre-v16 SQLite schemas,
+collect parent/subagent relationships, context-window sizes, reasoning tokens,
+provider-reported latency, or cost. Goose's internal schema can change without notice,
+and local token events are not billing data.
 
 OpenCode reads `opencode.db` from its XDG data directory (normally
 `~/.local/share/opencode/`). It extracts v2 session messages, model references, token

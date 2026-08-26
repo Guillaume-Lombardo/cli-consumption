@@ -13,6 +13,7 @@ from cli_consumption.adapters import (
     ClaudeAdapter,
     CodexAdapter,
     GeminiAdapter,
+    GooseAdapter,
     KiloAdapter,
     OpenCodeAdapter,
     PiAdapter,
@@ -58,6 +59,7 @@ def providers() -> None:
     typer.echo("aider    supported")
     typer.echo("codex    supported")
     typer.echo("gemini   supported")
+    typer.echo("goose    supported")
     typer.echo("claude   supported")
     typer.echo("kilo     supported")
     typer.echo("opencode supported")
@@ -236,6 +238,7 @@ def _collect_snapshots(
         "aider": (AiderAdapter, ".aider", "analytics.jsonl"),
         "codex": (CodexAdapter, ".codex", "sessions"),
         "gemini": (GeminiAdapter, ".gemini", "tmp"),
+        "goose": (GooseAdapter, ".local/share/goose/sessions", "sessions.db"),
         "claude": (ClaudeAdapter, ".claude", "projects"),
         "kilo": (KiloAdapter, ".local/share/kilo", "kilo.db"),
         "opencode": (

@@ -25,6 +25,7 @@ def test_provider_status_is_explicit() -> None:
     assert "aider    supported" in result.stdout
     assert "codex    supported" in result.stdout
     assert "gemini   supported" in result.stdout
+    assert "goose    supported" in result.stdout
     assert "claude   supported" in result.stdout
     assert "kilo     supported" in result.stdout
     assert "opencode supported" in result.stdout
@@ -95,6 +96,56 @@ def test_collects_kilo_code(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion kilo" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_goose(tmp_path: Path) -> None:
+    home = tmp_path / "goose"
+    home.mkdir()
+    connection = sqlite3.connect(home / "sessions.db")
+    connection.executescript(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY, working_dir TEXT NOT NULL,
+            created_at TIMESTAMP, updated_at TIMESTAMP,
+            provider_name TEXT, model_config_json TEXT
+        );
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY, message_id TEXT, session_id TEXT NOT NULL,
+            role TEXT NOT NULL, content_json TEXT NOT NULL,
+            created_timestamp INTEGER NOT NULL, metadata_json TEXT
+        );
+        CREATE TABLE usage_ledger (
+            id INTEGER PRIMARY KEY, session_id TEXT NOT NULL,
+            created_timestamp INTEGER NOT NULL, model TEXT,
+            input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER,
+            cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+            is_compaction INTEGER DEFAULT 0
+        );
+        INSERT INTO sessions VALUES (
+            'goose-cli', '/project', '2026-08-25T10:00:00Z',
+            '2026-08-25T10:00:01Z', 'openai', '{"model_name":"gpt-5"}'
+        );
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "goose",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "goose.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion goose" in result.stdout
     assert "1 written" in result.stdout
 
 

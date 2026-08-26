@@ -5,8 +5,8 @@ models, tokens, tools, conversations, and turns. It can analyze one workstation,
 consolidate copied data from several machines, or send metadata-only snapshots to a
 central collector.
 
-Codex, Pi, OpenCode, and the core Claude Code local transcript format are supported.
-Kilo Code is planned behind the same provider-neutral adapter contract.
+Codex, Kilo Code, Pi, OpenCode, and the core Claude Code local transcript format are
+supported.
 
 The collector deliberately excludes prompts, responses, tool arguments, and
 credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
@@ -80,6 +80,12 @@ Select OpenCode to read `~/.local/share/opencode/opencode.db` instead:
 uv run cli-consumption collect --provider opencode --database usage.sqlite
 ```
 
+Select Kilo Code to read `~/.local/share/kilo/kilo.db` instead:
+
+```bash
+uv run cli-consumption collect --provider kilo --database usage.sqlite
+```
+
 Select Pi to read `~/.pi/agent/sessions/` instead:
 
 ```bash
@@ -132,6 +138,14 @@ Copied OpenCode sources point to the data directory containing `opencode.db`:
 uv run cli-consumption collect --provider opencode \
   --source desktop=/data/opencode/desktop \
   --source laptop=/data/opencode/laptop
+```
+
+Copied Kilo Code sources point to the data directory containing `kilo.db`:
+
+```bash
+uv run cli-consumption collect --provider kilo \
+  --source desktop=/data/kilo/desktop \
+  --source laptop=/data/kilo/laptop
 ```
 
 Copied Pi sources point to the agent directory containing `sessions/`:

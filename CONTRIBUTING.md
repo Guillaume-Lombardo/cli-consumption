@@ -28,3 +28,11 @@ Run the quality gates documented in `AGENTS.md`, inspect the complete diff, then
 pull request. The pull request must explain the behavior, privacy impact, storage
 compatibility, tests, and any remaining limitation. Merge by squash after required
 checks pass and review is complete.
+
+## Release
+
+Update the project version with `uv version <version>` and include the resulting
+`pyproject.toml` and `uv.lock` changes in a pull request. When that version change is
+squash-merged into `main`, the release workflow reruns the quality gates, builds the
+distributions, tags the merge commit as `v<version>`, and publishes to PyPI through
+Trusted Publishing. Do not create the release tag manually.

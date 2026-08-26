@@ -25,6 +25,7 @@ def test_provider_status_is_explicit() -> None:
     assert "aider    supported" in result.stdout
     assert "amp      supported" in result.stdout
     assert "codex    supported" in result.stdout
+    assert "copilot  supported" in result.stdout
     assert "crush    supported" in result.stdout
     assert "gemini   supported" in result.stdout
     assert "goose    supported" in result.stdout
@@ -46,6 +47,48 @@ def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "not implemented yet" in result.output
+
+
+def test_collects_github_copilot_cli(tmp_path: Path) -> None:
+    home = tmp_path / "copilot"
+    events = home / "session-state" / "session-1" / "events.jsonl"
+    events.parent.mkdir(parents=True)
+    events.write_text(
+        json.dumps(
+            {
+                "id": "start-1",
+                "timestamp": "2026-08-27T10:00:00Z",
+                "parentId": None,
+                "type": "session.start",
+                "data": {
+                    "sessionId": "session-1",
+                    "version": 1,
+                    "producer": "copilot-agent",
+                    "copilotVersion": "1.0.80",
+                    "startTime": "2026-08-27T10:00:00Z",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "copilot",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "copilot.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion copilot" in result.stdout
+    assert "1 written" in result.stdout
 
 
 def test_collects_kilo_code(tmp_path: Path) -> None:

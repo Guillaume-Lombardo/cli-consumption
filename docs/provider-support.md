@@ -8,6 +8,7 @@
 | Crush | Supported (core) | Per-project local SQLite store |
 | Claude Code | Supported (core) | Local project transcript JSONL |
 | Gemini CLI | Supported (core) | Local automatic chat history JSON and JSONL |
+| GitHub Copilot CLI | Supported (core) | Local session event JSONL |
 | Goose | Supported (core) | Local SQLite session store v16 |
 | Kilo Code | Supported (core) | Local SQLite session store |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
@@ -135,6 +136,27 @@ a subset of output rather than added twice. This adapter does not collect custom
 session directories automatically, context-window sizes, costs, branch relationships,
 or provider-reported durations. Pi's JSONL schema can change without notice, and its
 local token events are not billing data.
+
+GitHub Copilot CLI reads session event logs from
+`~/.copilot/session-state/<session-id>/events.jsonl`. The adapter was qualified
+against GitHub Copilot CLI v1.0.80 and session event schema v1. It extracts root
+user turns, assistant model labels, tool names, successful compaction timestamps,
+and the latest per-model token aggregates written at session shutdown. Prompts,
+responses, reasoning, tool arguments/results, errors, paths, repository metadata,
+request identifiers, costs, quotas, code-change metrics, subagent events, and
+arbitrary event data are discarded. Working directories are inspected only for
+explicit project mappings.
+
+Per-call `assistant.usage` events are ephemeral and are not written to the local
+event log. Consequently, each latest shutdown aggregate is represented as one
+unattributed model snapshot per model; token usage and model-call counts cannot be
+assigned to individual turns. `inputTokens` includes cache reads and writes, which
+are retained as subsets and subtracted to derive uncached input. In-progress sessions
+without a shutdown event expose turns, models, and tools but no token totals. The
+adapter does not read legacy `history-session-state`, workspace artifacts, synced
+cloud sessions, subagent relationships, context-window samples, cost, or billing
+data. The local session schema can change without notice, and local token aggregates
+are not billing records.
 
 Qwen Code reads active session transcripts from
 `~/.qwen/projects/<project-id>/chats/<session-id>.jsonl` (or `QWEN_HOME`). It

@@ -36,3 +36,7 @@ Update the project version with `uv version <version>` and include the resulting
 squash-merged into `main`, the release workflow reruns the quality gates, builds the
 distributions, tags the merge commit as `v<version>`, and publishes to PyPI through
 Trusted Publishing. Do not create the release tag manually.
+
+If a release fails before publication, rerun it for the original version commit with
+`gh workflow run release.yaml --ref main -f release_sha=<merge-commit>`. The workflow
+rejects commits outside `main` and conflicting existing tags.

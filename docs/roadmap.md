@@ -15,6 +15,10 @@
 - Core Cursor CLI local Composer 2 transcript and chat-metadata collector
 - Core Continue CLI local session collector
 - Core OpenHands CLI local SDK-persistence collector
+- Core Cline CLI local SQLite and message-artifact collector
+- Core Kimi Code CLI local wire-event collector
+- Core Amazon Q Developer CLI persistent-conversation collector
+- Core self-hosted Plandex server conversation collector
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API

@@ -23,6 +23,7 @@ def test_provider_status_is_explicit() -> None:
     assert result.exit_code == 0
     assert "all      auto-detect" in result.stdout
     assert "aider    supported" in result.stdout
+    assert "amazon-q supported" in result.stdout
     assert "amp      supported" in result.stdout
     assert "codex    supported" in result.stdout
     assert "copilot  supported" in result.stdout
@@ -33,10 +34,13 @@ def test_provider_status_is_explicit() -> None:
     assert "goose    supported" in result.stdout
     assert "grok     supported" in result.stdout
     assert "claude   supported" in result.stdout
+    assert "cline    supported" in result.stdout
     assert "kilo     supported" in result.stdout
+    assert "kimi     supported" in result.stdout
     assert "opencode supported" in result.stdout
     assert "openhands supported" in result.stdout
     assert "pi       supported" in result.stdout
+    assert "plandex  supported" in result.stdout
     assert "qwen     supported" in result.stdout
 
 

@@ -6,6 +6,7 @@
 - Core Claude Code local transcript collector
 - Core Pi local session collector
 - Core Kilo Code local SQLite collector
+- Core Gemini CLI local chat-history collector
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API

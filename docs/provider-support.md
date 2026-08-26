@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
 | Claude Code | Supported (core) | Local project transcript JSONL |
+| Gemini CLI | Supported (core) | Local automatic chat history JSON and JSONL |
 | Kilo Code | Supported (core) | Local SQLite session store |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
 | Pi | Supported (core) | Local session JSONL v1-v3 |
@@ -35,6 +36,23 @@ The internal transcript schema can change between Claude Code releases and local
 is not billing data. This first increment does not collect subagent transcripts,
 context-window sizes, effort/service-tier settings, TTFT, provider-reported duration,
 or technical work-item intervals.
+
+Gemini CLI reads automatic session history from
+`~/.gemini/tmp/<project-hash>/chats/session-*.jsonl` and the legacy `.json` form. It
+replays append-only message updates, metadata checkpoints, and rewinds before extracting
+user turns, Gemini model calls, token usage, and tool names. Prompts, responses, thoughts,
+summaries, memory scratchpads, tool arguments/results/status details, directories, and
+project hashes are discarded.
+
+Gemini reports prompt, cached prompt, visible candidate, thought, tool-prompt, and total
+token counters. Normalized input is the prompt count, cached input is its bounded subset,
+and normalized output combines candidate and thought tokens. Provider totals above the
+attributed input/output sum remain unattributed; tool-prompt tokens are treated as a
+prompt subset rather than added twice. This adapter does not derive a project name from
+Gemini's one-way project hash, collect nested subagent sessions, compaction timestamps,
+context-window sizes, configuration labels, tool outcomes, or provider-reported
+durations. Gemini CLI's internal history schema can change without notice, and local
+token events are not billing data.
 
 OpenCode reads `opencode.db` from its XDG data directory (normally
 `~/.local/share/opencode/`). It extracts v2 session messages, model references, token

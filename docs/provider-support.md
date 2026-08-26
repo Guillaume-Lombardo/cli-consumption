@@ -15,6 +15,7 @@
 | Grok Build | Supported (core) | Local session summary and update/event JSONL |
 | Kilo Code | Supported (core) | Local SQLite session store |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
+| OpenHands CLI | Supported (core) | Local SDK conversation state and event JSON |
 | Pi | Supported (core) | Local session JSONL v1-v3 |
 | Qwen Code | Supported (core) | Local append-only transcript JSONL |
 
@@ -168,6 +169,25 @@ components. The adapter does not currently read pre-v2 JSON storage, legacy
 `message`/`part` tables, child-session relationships, context-window sizes, or
 provider-reported cost. The SQLite schema is internal and may change without notice;
 local token events are not billing data.
+
+OpenHands CLI reads SDK conversation persistence from
+`~/.openhands/conversations/<conversation-id>/`, including `base_state.json` and
+individual event JSON files. The adapter was qualified against OpenHands CLI v1.16.0
+and the compatible current SDK persistence format in August 2026. It extracts user
+turns, per-request model and token usage, tool names, context-window sizes, bounded
+reasoning-effort labels, and condensation timestamps. Working directories are
+inspected only for explicit project mappings. Prompts, responses, thoughts, tool
+arguments/results, commands/output, errors, summaries, agent settings, hooks, tags,
+credentials, costs, paths, arbitrary state, and raw events are discarded.
+
+OpenHands normally reports cache reads and writes as subsets of prompt tokens; when
+their sum exceeds the prompt counter, the adapter follows the SDK's compatibility
+semantics and treats those cache counters as separate input buckets. All persisted
+event branches are counted because they represent model consumption already incurred.
+Older aggregate-only metrics are retained as unattributed model snapshots. The
+adapter does not collect cloud-only conversations, delegate relationships, cost,
+critic data, tool outcomes, or provider-reported response latency. OpenHands SDK
+persistence can change without notice, and local token events are not billing data.
 
 Kilo Code reads `kilo.db` from its data directory (normally
 `~/.local/share/kilo/`). The adapter was qualified against Kilo Code CLI v7.5.5 and

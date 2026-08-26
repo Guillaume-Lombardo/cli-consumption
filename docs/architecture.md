@@ -19,7 +19,8 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
   work-item intervals. Codex exposes the complete analytics contract; Aider, Amp,
   Claude Code, Continue CLI, Crush, Cursor CLI, Gemini CLI, GitHub Copilot CLI,
   Goose, Kilo Code, OpenCode, Pi, and Qwen Code expose the core dimensions available
-  in their local stores.
+  in their local stores. OpenHands CLI exposes the same core dimensions plus context
+  windows and condensation timestamps from its SDK persistence.
 - `models`: define the transport boundary shared by offline and API ingestion.
 - `storage`: owns the normalized schema, idempotent replacement rules, SQLite, and
   PostgreSQL engine creation.

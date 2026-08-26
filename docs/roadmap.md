@@ -14,6 +14,7 @@
 - Core GitHub Copilot CLI local session collector
 - Core Cursor CLI local Composer 2 transcript and chat-metadata collector
 - Core Continue CLI local session collector
+- Core OpenHands CLI local SDK-persistence collector
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API

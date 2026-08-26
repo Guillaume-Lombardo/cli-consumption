@@ -10,6 +10,11 @@ from cli_consumption.cli import app
 runner = CliRunner()
 
 
+def normalized_cli_output(output: str) -> str:
+    """Remove terminal formatting and wrapping from CLI output assertions."""
+    return " ".join(strip_ansi(output).split())
+
+
 def test_provider_status_is_explicit() -> None:
     result = runner.invoke(app, ["providers"])
     assert result.exit_code == 0
@@ -115,19 +120,18 @@ def test_collect_and_export(tmp_path: Path, rollout_factory) -> None:
         ],
     )
     assert result.exit_code == 2
-    normalized_output = " ".join(strip_ansi(result.output).split())
-    assert "requires --dashboard" in normalized_output
+    assert "requires --dashboard" in normalized_cli_output(result.output)
 
     result = runner.invoke(
         app,
         ["export", "--database", str(database), "--share-safe", "--csv"],
     )
     assert result.exit_code == 2
-    assert "cannot be combined" in result.output
+    assert "cannot be combined" in normalized_cli_output(result.output)
 
     result = runner.invoke(
         app,
         ["export", "--database", str(database), "--no-dashboard"],
     )
     assert result.exit_code == 2
-    assert "enable --dashboard or --csv" in result.output
+    assert "enable --dashboard or --csv" in normalized_cli_output(result.output)

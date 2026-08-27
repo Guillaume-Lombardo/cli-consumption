@@ -16,12 +16,12 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
 
 - `adapters`: parse a CLI's local data into conversations, turns, model calls, tool
   calls, context-pressure samples, bounded turn settings, compactions, and content-free
-  work-item intervals. Codex exposes the complete analytics contract; Aider, Amazon Q
+  work-item intervals. Codex exposes the complete analytics contract. Aider, Amazon Q
   Developer CLI, Amp, Cline CLI, Claude Code, Continue CLI, Crush, Cursor CLI, Gemini
-  CLI, GitHub Copilot CLI, Goose, Kilo Code, Kimi Code CLI, OpenCode, Pi, Plandex, and
-  Qwen Code expose the core dimensions available in their stores. OpenHands CLI
-  exposes the same core dimensions plus context windows and condensation timestamps
-  from its SDK persistence.
+  CLI, GitHub Copilot CLI, Goose, Grok Build, Kilo Code, Kimi Code CLI, OpenCode,
+  OpenHands CLI, Pi, Plandex, and Qwen Code expose the reliable subset available in
+  each local store. The exact differences are maintained in
+  [Provider support](provider-support.md).
 - `models`: define the transport boundary shared by offline and API ingestion.
 - `storage`: owns the normalized schema, idempotent replacement rules, SQLite, and
   PostgreSQL engine creation.
@@ -73,7 +73,7 @@ to an older strict API is rejected before ingestion, so central deployments must
 upgrade the server first. Downgrading a writer after rich metadata has been ingested is
 not supported because old writers do not know how to replace the new child rows.
 
-## Adapter roadmap
+## Adapter qualification
 
 Adapters are introduced one at a time because local data formats are undocumented or
 can evolve independently. Each adapter must have synthetic fixtures, format detection,

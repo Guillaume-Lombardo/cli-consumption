@@ -2,23 +2,9 @@
 
 ## Current foundation
 
-- Complete Codex local collector
-- Core Claude Code local transcript collector
-- Core Pi local session collector
-- Core Kilo Code local SQLite collector
-- Core Gemini CLI local chat-history collector
-- Core Goose local SQLite collector
-- Core Qwen Code local transcript collector
-- Core Crush per-project SQLite collector
-- Core Amp local thread-mirror collector
-- Core GitHub Copilot CLI local session collector
-- Core Cursor CLI local Composer 2 transcript and chat-metadata collector
-- Core Continue CLI local session collector
-- Core OpenHands CLI local SDK-persistence collector
-- Core Cline CLI local SQLite and message-artifact collector
-- Core Kimi Code CLI local wire-event collector
-- Core Amazon Q Developer CLI persistent-conversation collector
-- Core self-hosted Plandex server conversation collector
+- Metadata-only adapters for all providers listed in
+  [Provider support](provider-support.md), including local stores and offline copies of
+  self-hosted Plandex data
 - Offline multi-machine deduplication
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API
@@ -27,10 +13,9 @@
 
 ## Next provider increments
 
-1. Extend Claude Code support only where local metadata has reliable semantics.
-2. Add OpenCode with the same normalized contract.
-3. Add cross-provider comparison views once at least two adapters expose reliable model
-   and token dimensions.
+1. Extend existing adapters only where local metadata has reliable, testable semantics.
+2. Add provider-format health checks and compatibility reporting.
+3. Expand cross-provider comparisons without treating unavailable dimensions as zero.
 
 ## Later operational work
 
@@ -38,4 +23,3 @@
 - Signed/compressed offline snapshot files
 - Server deployment examples and read-only reporting API
 - Cost estimates driven by explicit, versioned pricing inputs
-- Provider format health checks and compatibility reporting

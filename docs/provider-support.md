@@ -31,12 +31,16 @@ It does not mean that token counters are equivalent to invoices.
 ingests each metadata-only snapshot independently. With no explicit source it checks
 the local default homes; repeated `--source` paths are filtered by detected format.
 
+## Codex
+
 Codex additionally exposes provider-reported turn duration and TTFT, model context
 window samples, bounded reasoning/collaboration/service-tier labels, timestamped
 compactions, technical work-item categories and durations, and local thread-spawn
 relationships. Work-item content and rate-limit payloads are deliberately excluded.
 Subagent state can remain `open` after a child thread is technically closed; reporting
 therefore derives closure from collected child turns when they are available.
+
+## Cursor CLI
 
 Cursor CLI reads Composer 2 transcripts from
 `~/.cursor/projects/*/agent-transcripts/<session-id>/<session-id>.jsonl` and optional
@@ -58,13 +62,16 @@ transcripts, Cursor IDE history, background/cloud agents, subagent transcripts,
 compactions, context windows, costs, and provider-reported durations are not collected.
 The internal formats can change without notice, and local events are not billing data.
 
-Continue CLI reads session JSON files from `~/.continue/sessions/` (or
-`CONTINUE_GLOBAL_DIR`). The adapter was qualified against the current session format
-used by Continue CLI in August 2026. It extracts visible user turns, assistant model
-labels, per-response token usage when present, the cumulative session token snapshot,
-and function-call names while discarding titles, prompts, responses, reasoning, tool
-arguments/results, context items, editor state, rules, arbitrary metadata, costs, and
-credentials. Working directories are inspected only for explicit project mappings.
+## Continue CLI
+
+Continue CLI reads session JSON files from `~/.continue/sessions/`. A custom
+`CONTINUE_GLOBAL_DIR` must be passed with `--source`. The adapter was qualified against
+the current session format used by Continue CLI in August 2026. It extracts visible
+user turns, assistant model labels, per-response token usage when present, the
+cumulative session token snapshot, and function-call names while discarding titles,
+prompts, responses, reasoning, tool arguments/results, context items, editor state,
+rules, arbitrary metadata, costs, and credentials. Working directories are inspected
+only for explicit project mappings.
 
 Continue reports prompt and completion totals with optional cache-read, cache-write,
 and reasoning subsets. The adapter prefers per-response usage and adds only the
@@ -75,6 +82,8 @@ conversation's approximate end time. The adapter does not collect IDE-extension-
 history stores, context-window sizes, compactions, provider-reported status, latency,
 or cost. Continue's internal session format can change without notice, and local token
 events are not billing data.
+
+## Crush
 
 Crush reads its global project registry at
 `~/.local/share/crush/projects.json` and each registered project's `crush.db`, or a
@@ -92,8 +101,11 @@ data. Cache and reasoning splits are unavailable. Child agent sessions, costs,
 attachments, provider-reported latency, and context-window sizes are not collected.
 The SQLite schema is internal and can change without notice.
 
+## Claude Code
+
 Claude Code reads top-level sessions from
-`~/.claude/projects/<project>/<session-id>.jsonl` (or `CLAUDE_CONFIG_DIR`). It extracts
+`~/.claude/projects/<project>/<session-id>.jsonl`. A custom `CLAUDE_CONFIG_DIR` must
+be passed with `--source`. It extracts
 main-session turns, models, token usage, tool names, and compaction timestamps while
 discarding prompts, responses, tool inputs/results, paths, branches, and arbitrary
 metadata. Streaming fragments are deduplicated by request or message identifier.
@@ -104,6 +116,8 @@ The internal transcript schema can change between Claude Code releases and local
 is not billing data. This first increment does not collect subagent transcripts,
 context-window sizes, effort/service-tier settings, TTFT, provider-reported duration,
 or technical work-item intervals.
+
+## Gemini CLI
 
 Gemini CLI reads automatic session history from
 `~/.gemini/tmp/<project-hash>/chats/session-*.jsonl` and the legacy `.json` form. It
@@ -122,6 +136,8 @@ context-window sizes, configuration labels, tool outcomes, or provider-reported
 durations. Gemini CLI's internal history schema can change without notice, and local
 token events are not billing data.
 
+## Goose
+
 Goose reads `sessions.db` from its sessions directory (normally
 `~/.local/share/goose/sessions/`). The adapter was qualified against Goose v1.47.0
 and schema v16. It extracts visible user turns, per-request model and token usage,
@@ -138,6 +154,8 @@ This adapter does not read legacy pre-1.10 JSONL sessions or pre-v16 SQLite sche
 collect parent/subagent relationships, context-window sizes, reasoning tokens,
 provider-reported latency, or cost. Goose's internal schema can change without notice,
 and local token events are not billing data.
+
+## Grok Build
 
 Grok Build reads session directories under
 `~/.grok/sessions/<encoded-cwd>/<session-id>/`. It extracts stable session and
@@ -161,6 +179,8 @@ collected. The adapter was qualified against the open-source Grok Build session
 schema in August 2026. Local usage events are not billing records, and the
 internal format can change without notice.
 
+## OpenCode
+
 OpenCode reads `opencode.db` from its XDG data directory (normally
 `~/.local/share/opencode/`). It extracts v2 session messages, model references, token
 usage, tool names, and compaction timestamps while discarding message text, reasoning,
@@ -173,6 +193,8 @@ components. The adapter does not currently read pre-v2 JSON storage, legacy
 `message`/`part` tables, child-session relationships, context-window sizes, or
 provider-reported cost. The SQLite schema is internal and may change without notice;
 local token events are not billing data.
+
+## OpenHands CLI
 
 OpenHands CLI reads SDK conversation persistence from
 `~/.openhands/conversations/<conversation-id>/`, including `base_state.json` and
@@ -193,6 +215,8 @@ adapter does not collect cloud-only conversations, delegate relationships, cost,
 critic data, tool outcomes, or provider-reported response latency. OpenHands SDK
 persistence can change without notice, and local token events are not billing data.
 
+## Kilo Code
+
 Kilo Code reads `kilo.db` from its data directory (normally
 `~/.local/share/kilo/`). The adapter was qualified against Kilo Code CLI v7.5.5 and
 the matching current `session`, `message`, and `part` schema. It extracts user turns,
@@ -209,6 +233,8 @@ a non-default database, which must be passed explicitly with `--source`. Kilo Co
 SQLite schema can change without notice, and its local token events are not billing
 data.
 
+## Pi
+
 Pi reads session JSONL files under `~/.pi/agent/sessions/` (or copied agent
 directories). It extracts user turns, assistant and compaction model calls, provider
 and model identifiers, token usage, tool names, thinking-level changes, and compaction
@@ -223,6 +249,8 @@ a subset of output rather than added twice. This adapter does not collect custom
 session directories automatically, context-window sizes, costs, branch relationships,
 or provider-reported durations. Pi's JSONL schema can change without notice, and its
 local token events are not billing data.
+
+## GitHub Copilot CLI
 
 GitHub Copilot CLI reads session event logs from
 `~/.copilot/session-state/<session-id>/events.jsonl`. The adapter was qualified
@@ -245,8 +273,11 @@ cloud sessions, subagent relationships, context-window samples, cost, or billing
 data. The local session schema can change without notice, and local token aggregates
 are not billing records.
 
+## Qwen Code
+
 Qwen Code reads active session transcripts from
-`~/.qwen/projects/<project-id>/chats/<session-id>.jsonl` (or `QWEN_HOME`). It
+`~/.qwen/projects/<project-id>/chats/<session-id>.jsonl`. A custom `QWEN_HOME` must
+be passed with `--source`. It
 follows the latest `uuid`/`parentUuid` branch so turns abandoned by rewind are not
 counted, and extracts user turns, assistant model calls, token usage, context-window
 sizes, function-call names, and chat-compression timestamps. Prompts, responses,
@@ -264,6 +295,8 @@ input is unavailable in the serialized metadata. This adapter was qualified agai
 Qwen Code v0.22.2. Its internal transcript schema can change without notice, and local
 token events are not billing data.
 
+## Aider
+
 Aider reads an explicitly configured local analytics log named `analytics.jsonl` (for
 example, `AIDER_ANALYTICS_LOG=~/.aider/analytics.jsonl`). It groups events from
 `launched` through `exit`, extracts message-send attempts, model identifiers, and
@@ -279,6 +312,8 @@ Turns represent Aider message-send attempts because the log has no durable user-
 identifier. Unknown custom model names may already be represented as
 `provider/REDACTED` by Aider. Its analytics event schema can change without notice,
 and local token events are not billing data.
+
+## Amp
 
 Amp reads thread JSON files under `~/.local/share/amp/threads/`. It extracts visible
 user turns, assistant model calls, per-inference token usage, tool names, and context
@@ -297,6 +332,8 @@ collect thread content, subthread relationships, compaction markers, reasoning-t
 splits, costs, credits, or provider-reported latency. Amp's local mirror format is
 internal and can change without notice, and local token events are not billing data.
 
+## Cline CLI
+
 Cline CLI reads `~/.cline/data/sessions/sessions.db` and the referenced
 `*.messages.json` artifacts. It extracts session timestamps/status, configured model,
 visible user-turn boundaries, per-assistant token metrics, and tool names while
@@ -306,12 +343,16 @@ and writes; normalized uncached input is the non-negative remainder. Model and e
 timestamps come from each assistant artifact when present. The adapter was qualified
 against Cline CLI's current SDK session schema in August 2026.
 
+## Kimi Code CLI
+
 Kimi Code CLI reads `~/.kimi/sessions/*/*/wire.jsonl`. It extracts turn boundaries,
 step token usage, tool names, context-window samples, and completed compactions while
 discarding user input, model output, reasoning, tool arguments/results, approvals,
 notifications, subagent payloads, paths, and arbitrary events. The wire log does not
 persist the selected model label, so calls use `unknown`; hashed work-directory keys
 are not reversed. The adapter targets Wire v1 as qualified in August 2026.
+
+## Amazon Q Developer CLI
 
 Amazon Q Developer CLI reads persistent conversations from
 `~/.local/share/amazon-q/data.sqlite3`. It extracts user-turn timestamps, model labels,
@@ -321,6 +362,8 @@ request identifiers, credentials, auth state, and arbitrary metadata. Persistent
 conversation state contains no token counters, so all normalized token values are zero.
 Non-persistent sessions are unavailable. The adapter targets the current conversations
 table and serialized state format as qualified in August 2026.
+
+## Plandex
 
 Plandex reads an offline copy of a self-hosted server's `PLANDEX_BASE_DIR`, specifically
 `orgs/*/plans/*/conversation/*.json`. It extracts stable plan/message identifiers,

@@ -1,375 +1,155 @@
 # CLI Consumption
 
-CLI Consumption is a local-first Python package for measuring how AI coding CLIs use
-models, tokens, tools, conversations, and turns. It can analyze one workstation,
-consolidate copied data from several machines, or send metadata-only snapshots to a
-central collector.
+CLI Consumption measures how AI coding CLIs use models, tokens, tools,
+conversations, and turns. It runs locally, can consolidate copied data from several
+machines, and can send metadata-only snapshots to a central collector.
 
-Amazon Q Developer CLI, Amp, Cline CLI, Codex, Continue CLI, Cursor CLI, GitHub
-Copilot CLI, Crush, Aider, Gemini CLI, Goose, Grok Build, Kilo Code, Kimi Code
-CLI, Pi, Plandex, Qwen Code, OpenCode, and the core Claude Code and OpenHands CLI
-local transcript formats are supported.
-
-The collector deliberately excludes prompts, responses, tool arguments, and
-credentials. See [Privacy](docs/privacy.md) before sharing a database or export.
+It never stores prompts, responses, tool arguments, credentials, or raw provider
+events. Local token counters are usage metadata, not billing records. Read the
+[privacy boundary](docs/privacy.md) before sharing a database or report.
 
 ## Quick start
 
-The project requires Python 3.14 or newer and uses
-[`uv`](https://docs.astral.sh/uv/) for every development and execution workflow.
+CLI Consumption requires Python 3.14 or newer and uses
+[`uv`](https://docs.astral.sh/uv/).
 
-From a checkout:
+From a checkout, collect every supported CLI detected on the machine and generate a
+self-contained dashboard:
 
 ```bash
 uv sync
-uv run cli-consumption collect
+uv run cli-consumption collect --provider all
 uv run cli-consumption export --output reports
 ```
 
-Open `reports/dashboard.html` locally. The generated dashboard is self-contained and
-makes no network requests. Detailed normalized CSV tables are opt-in with `--csv`.
+Open `reports/dashboard.html` locally. It makes no network requests. Detailed
+normalized CSV tables are generated only when `--csv` is passed.
 
-The dashboard supports time, provider, machine, project, and model filters. It reports
-period-over-period activity, token composition, cache efficiency, turn latency and
-duration distributions, technical throughput, context pressure, content-free work-item
-duration and reliability, configuration cohorts, compactions, subagent delegation, and
-ingestion quality. Token events are local usage metadata rather than billing records,
-and a technically completed turn is not a measure of task quality or productivity.
-
-For a dashboard that is safer to share, pseudonymize
-machine, project, model, and role labels, group tool names, round timestamps to days,
-and hide small rows in the cohort-comparison view:
+To collect a single CLI, use its provider name. For example, with Codex:
 
 ```bash
-uv run cli-consumption export --output shared-report --share-safe
+uv run cli-consumption collect --provider codex --database usage.sqlite
 ```
 
-Share-safe reports still disclose aggregate work patterns and must be treated as
-private operational data.
-
-From PyPI, the CLI can run without a permanent installation:
+From PyPI, no permanent installation is required:
 
 ```bash
-uv tool run cli-consumption collect
+uv tool run cli-consumption collect --provider all
 uv tool run cli-consumption export --output reports
 ```
 
-To run the latest unreleased GitHub source instead:
+To run the latest unreleased GitHub source:
 
 ```bash
 uv tool run --from git+https://github.com/Guillaume-Lombardo/cli-consumption \
   cli-consumption providers
 ```
 
-## Collect from one or more machines
+## Supported CLIs
 
-With no source option, `collect` reads `~/.codex` and labels it with the local
-hostname:
+`--provider all` detects the supported data stores found in their default locations.
+Use the provider name below with `--provider` to select one CLI explicitly.
 
-```bash
-uv run cli-consumption collect --database usage.sqlite
-```
+| CLI | Provider name | Default local source | Particularities and limits |
+| --- | --- | --- | --- |
+| Aider | `aider` | `~/.aider/analytics.jsonl` | Requires opt-in analytics logging; no projects, tools, cache/reasoning split, or provider-reported durations. |
+| Amazon Q Developer CLI | `amazon-q` | `~/.local/share/amazon-q/data.sqlite3` | Persistent conversations only; request timing is available, but token counters are not. |
+| Amp | `amp` | `~/.local/share/amp/threads/` | Per-inference tokens and context windows; no subthreads, compactions, reasoning split, or latency. |
+| Claude Code | `claude` | `~/.claude/projects/` | Main sessions, tokens, tools, and compactions; no subagents, context windows, or provider-reported durations. `claude-code` is accepted as an alias. |
+| Cline CLI | `cline` | `~/.cline/data/sessions/sessions.db` | Uses the session index and message artifacts; no costs or arbitrary task metadata. |
+| Codex | `codex` | `~/.codex/sessions/` | Richest support: timing, context pressure, settings, compactions, work items, and subagent relationships. |
+| Continue CLI | `continue` | `~/.continue/sessions/` | Token usage when present; session files lack reliable per-message timing and duration. |
+| Crush | `crush` | `~/.local/share/crush/` | Reads registered per-project SQLite stores; token counters are a latest-context snapshot, not additive usage. |
+| Cursor CLI | `cursor` | `~/.cursor/` | Composer 2 transcripts and chat metadata; no per-message time or tokens, and model attribution is incomplete. |
+| Gemini CLI | `gemini` | `~/.gemini/tmp/` | Replays active history and rewinds; hashed projects are not reversed and nested agents are excluded. |
+| GitHub Copilot CLI | `copilot` | `~/.copilot/session-state/` | Tokens are latest shutdown aggregates and cannot be assigned to individual turns. |
+| Goose | `goose` | `~/.local/share/goose/sessions/sessions.db` | Supports SQLite schema v16; no legacy JSONL, subagents, reasoning tokens, or latency. |
+| Grok Build | `grok` | `~/.grok/sessions/` | Per-prompt aggregates, reasoning effort, TTFT, and auto-compactions; no costs or subagent relationships. |
+| Kilo Code | `kilo` | `~/.local/share/kilo/kilo.db` | CLI SQLite store only; excludes legacy IDE tasks, cloud sessions, subagents, context windows, and costs. |
+| Kimi Code CLI | `kimi` | `~/.kimi/sessions/` | Wire v1 events, context windows, and compactions; selected model is not persisted and is reported as `unknown`. |
+| OpenCode | `opencode` | `~/.local/share/opencode/opencode.db` | SQLite v2 only; no legacy storage, child sessions, context windows, or costs. |
+| OpenHands CLI | `openhands` | `~/.openhands/conversations/` | SDK persistence with context windows, reasoning effort, and condensations; excludes cloud-only conversations and delegates. |
+| Pi | `pi` | `~/.pi/agent/sessions/` | Counts all persisted branches; no branch relationships, custom-directory auto-detection, context windows, or provider-reported durations. |
+| Plandex | `plandex` | `/plandex-server` | Requires an offline copy of a self-hosted `PLANDEX_BASE_DIR`; hosted accounts are not accessed, and models/tools are unavailable. |
+| Qwen Code | `qwen` | `~/.qwen/projects/` | Follows the active branch and records context windows and compactions; excludes archived and sidechain sessions. |
 
-Select Claude Code to read `~/.claude/projects/` instead:
+Provider formats are internal and can change without notice. The detailed extraction
+rules and qualification versions are documented in
+[Provider support](docs/provider-support.md).
 
-```bash
-uv run cli-consumption collect --provider claude --database usage.sqlite
-```
+## Collect copied data
 
-Select OpenCode to read `~/.local/share/opencode/opencode.db` instead:
+`--source [LABEL=]PATH` points to a provider home directory and can be repeated. With
+`--provider all`, each path is inspected and unmatched sources are rejected. With one
+provider selected, each path must contain that provider's expected store.
 
-```bash
-uv run cli-consumption collect --provider opencode --database usage.sqlite
-```
-
-Select OpenHands CLI to read `~/.openhands/conversations/` instead:
-
-```bash
-uv run cli-consumption collect --provider openhands --database usage.sqlite
-```
-
-Select Crush to read its global project registry and per-project SQLite stores:
-
-```bash
-uv run cli-consumption collect --provider crush --database usage.sqlite
-```
-
-Select Cursor CLI to read its local Composer 2 transcripts and chat metadata:
-
-```bash
-uv run cli-consumption collect --provider cursor --database usage.sqlite
-```
-
-Select Amp to read its local thread mirror:
-
-```bash
-uv run cli-consumption collect --provider amp --database usage.sqlite
-```
-
-Select GitHub Copilot CLI to read its local session event logs:
+For example, consolidate trusted copies of Codex data from several machines:
 
 ```bash
-uv run cli-consumption collect --provider copilot --database usage.sqlite
-```
-
-Select Continue CLI to read its local session JSON files:
-
-```bash
-uv run cli-consumption collect --provider continue --database usage.sqlite
-```
-
-Select Cline CLI to read `~/.cline/data/sessions/sessions.db` and its message
-artifacts:
-
-```bash
-uv run cli-consumption collect --provider cline --database usage.sqlite
-```
-
-Select Kimi Code CLI to read `~/.kimi/sessions/*/*/wire.jsonl`:
-
-```bash
-uv run cli-consumption collect --provider kimi --database usage.sqlite
-```
-
-Select Amazon Q Developer CLI to read its local `data.sqlite3`:
-
-```bash
-uv run cli-consumption collect --provider amazon-q --database usage.sqlite
-```
-
-Select a copied self-hosted Plandex server data directory explicitly:
-
-```bash
-uv run cli-consumption collect --provider plandex \
-  --source server=/srv/plandex-server --database usage.sqlite
-```
-
-Select Kilo Code to read `~/.local/share/kilo/kilo.db` instead:
-
-```bash
-uv run cli-consumption collect --provider kilo --database usage.sqlite
-```
-
-Select Goose to read `~/.local/share/goose/sessions/sessions.db` instead:
-
-```bash
-uv run cli-consumption collect --provider goose --database usage.sqlite
-```
-
-Select Grok Build to read `~/.grok/sessions/` instead:
-
-```bash
-uv run cli-consumption collect --provider grok --database usage.sqlite
-```
-
-Select Pi to read `~/.pi/agent/sessions/` instead:
-
-```bash
-uv run cli-consumption collect --provider pi --database usage.sqlite
-```
-
-Select Gemini CLI to read `~/.gemini/tmp/*/chats/` instead:
-
-```bash
-uv run cli-consumption collect --provider gemini --database usage.sqlite
-```
-
-Select Qwen Code to read `~/.qwen/projects/*/chats/` instead:
-
-```bash
-uv run cli-consumption collect --provider qwen --database usage.sqlite
-```
-
-Select Aider to read a local analytics log configured at
-`~/.aider/analytics.jsonl` instead:
-
-```bash
-export AIDER_ANALYTICS_LOG="$HOME/.aider/analytics.jsonl"
-uv run cli-consumption collect --provider aider --database usage.sqlite
-```
-
-Use `all` to detect and collect every supported provider present on the machine:
-
-```bash
-uv run cli-consumption collect --provider all --database usage.sqlite
-```
-
-With explicit copied sources, each path is inspected for the provider-specific
-`sessions/` or `projects/` directory. Sources that contain no supported provider data
-are rejected instead of silently skipped.
-
-For an offline multi-machine workflow, copy only each machine's Codex `sessions/`
-directory into a trusted analysis location. Do not copy `auth.json` or other
-credentials. Then repeat `--source`:
-
-```bash
-uv run cli-consumption collect \
+uv run cli-consumption collect --provider codex \
   --source desktop=/data/codex/desktop \
   --source laptop=/data/codex/laptop \
   --source server=/data/codex/server \
   --database usage.sqlite
 ```
 
-Globally identical conversation IDs are deduplicated. If copies differ, the most
-complete rollout wins. Explicit project mappings use the longest matching original
-working-directory prefix:
+Copy only the required provider data. For Codex, copy the `sessions/` directory but
+never `auth.json` or other credentials. Globally identical conversation IDs are
+deduplicated, and the most complete copy wins.
+
+Map original working-directory prefixes to stable project labels with repeated
+`--project NAME=PATH_PREFIX` options. The longest matching prefix wins:
 
 ```bash
-uv run cli-consumption collect \
+uv run cli-consumption collect --provider codex \
   --source desktop=/data/codex/desktop \
   --project cli-consumption=/home/me/dev/cli-consumption
 ```
 
-Copied Claude Code sources point to the configuration directory containing `projects/`:
+Plandex auto-detection checks `/plandex-server`. For any other trusted offline copy of
+a self-hosted server data directory, pass the path explicitly:
 
 ```bash
-uv run cli-consumption collect --provider claude \
-  --source desktop=/data/claude/desktop \
-  --source laptop=/data/claude/laptop
+uv run cli-consumption collect --provider plandex \
+  --source server=/srv/plandex-server --database usage.sqlite
 ```
 
-Copied OpenCode sources point to the data directory containing `opencode.db`:
+## Explore and share reports
+
+The dashboard can filter by time, provider, machine, project, and model. It reports
+activity, token composition, cache efficiency, latency and duration distributions,
+technical throughput, context pressure, work-item reliability, configuration cohorts,
+compactions, subagent delegation, and ingestion quality. Availability varies by
+provider, as summarized in the table above.
+
+Generate a more shareable dashboard by pseudonymizing labels, grouping tool names,
+rounding timestamps to days, and hiding small cohort rows:
 
 ```bash
-uv run cli-consumption collect --provider opencode \
-  --source desktop=/data/opencode/desktop \
-  --source laptop=/data/opencode/laptop
+uv run cli-consumption export --output shared-report --share-safe
 ```
 
-Copied OpenHands CLI sources point to the persistence directory containing
-`conversations/`:
-
-```bash
-uv run cli-consumption collect --provider openhands \
-  --source desktop=/data/openhands/desktop \
-  --source laptop=/data/openhands/laptop
-```
-
-Copied Crush sources can point directly to a project directory containing
-`.crush/crush.db`, or to the data directory containing `crush.db`:
-
-```bash
-uv run cli-consumption collect --provider crush \
-  --source desktop=/data/crush/desktop/project-a \
-  --source laptop=/data/crush/laptop/project-b/.crush
-```
-
-Copied Cursor CLI sources point to a data directory containing `projects/`, `chats/`,
-or both:
-
-```bash
-uv run cli-consumption collect --provider cursor \
-  --source desktop=/data/cursor/desktop \
-  --source laptop=/data/cursor/laptop
-```
-
-Copied Amp sources point to the data directory containing `threads/`:
-
-```bash
-uv run cli-consumption collect --provider amp \
-  --source desktop=/data/amp/desktop \
-  --source laptop=/data/amp/laptop
-```
-
-Copied GitHub Copilot CLI sources point to the configuration directory containing
-`session-state/`:
-
-```bash
-uv run cli-consumption collect --provider copilot \
-  --source desktop=/data/copilot/desktop \
-  --source laptop=/data/copilot/laptop
-```
-
-Copied Continue CLI sources point to the global directory containing `sessions/`:
-
-```bash
-uv run cli-consumption collect --provider continue \
-  --source desktop=/data/continue/desktop \
-  --source laptop=/data/continue/laptop
-```
-
-Copied Cline CLI sources point to the data directory containing
-`sessions/sessions.db`; copied Kimi sources contain `sessions/*/*/wire.jsonl`, and
-copied Amazon Q sources contain `data.sqlite3`. Plandex sources must be offline copies
-of `PLANDEX_BASE_DIR` from a self-hosted server and contain
-`orgs/*/plans/*/conversation/`.
-
-Copied Kilo Code sources point to the data directory containing `kilo.db`:
-
-```bash
-uv run cli-consumption collect --provider kilo \
-  --source desktop=/data/kilo/desktop \
-  --source laptop=/data/kilo/laptop
-```
-
-Copied Goose sources point to the sessions directory containing `sessions.db`:
-
-```bash
-uv run cli-consumption collect --provider goose \
-  --source desktop=/data/goose/desktop \
-  --source laptop=/data/goose/laptop
-```
-
-Copied Grok Build sources point to the `.grok` data directory containing
-`sessions/`:
-
-```bash
-uv run cli-consumption collect --provider grok \
-  --source desktop=/data/grok/desktop \
-  --source laptop=/data/grok/laptop
-```
-
-Copied Pi sources point to the agent directory containing `sessions/`:
-
-```bash
-uv run cli-consumption collect --provider pi \
-  --source desktop=/data/pi/desktop \
-  --source laptop=/data/pi/laptop
-```
-
-Copied Gemini CLI sources point to the configuration directory containing `tmp/`:
-
-```bash
-uv run cli-consumption collect --provider gemini \
-  --source desktop=/data/gemini/desktop \
-  --source laptop=/data/gemini/laptop
-```
-
-Copied Qwen Code sources point to the runtime directory containing `projects/`:
-
-```bash
-uv run cli-consumption collect --provider qwen \
-  --source desktop=/data/qwen/desktop \
-  --source laptop=/data/qwen/laptop
-```
-
-Copied Aider sources point to a directory containing `analytics.jsonl`:
-
-```bash
-uv run cli-consumption collect --provider aider \
-  --source desktop=/data/aider/desktop \
-  --source laptop=/data/aider/laptop
-```
+Share-safe reports still disclose aggregate work patterns and remain private
+operational data. A technically completed turn is not a measure of task quality or
+productivity.
 
 ## SQLite and PostgreSQL
 
 A file path selects SQLite. A SQLAlchemy URL selects PostgreSQL:
 
 ```bash
-uv run cli-consumption collect --database usage.sqlite
-uv run cli-consumption collect \
+uv run cli-consumption collect --provider all --database usage.sqlite
+uv run cli-consumption collect --provider all \
   --database postgresql+psycopg://usage@localhost/cli_consumption
 ```
 
 Pass credentials through environment variables or a secret manager rather than shell
-history. `CLI_CONSUMPTION_DATABASE` can supply the database setting.
+history. `CLI_CONSUMPTION_DATABASE` can provide the database setting.
 
 ## Central collector API
 
-Offline imports are the simplest choice for personal use and air-gapped machines. A
-central API is useful for recurring collection across machines.
-
-Start the collector locally:
+Copied files are simplest for personal or air-gapped use. For recurring collection
+across machines, start the metadata-only API:
 
 ```bash
 export CLI_CONSUMPTION_API_TOKEN="$(your-secret-provider)"
@@ -378,28 +158,29 @@ uv run cli-consumption serve \
   --host 0.0.0.0
 ```
 
-Send a snapshot from another machine:
+Then send all locally detected snapshots from another machine:
 
 ```bash
 export CLI_CONSUMPTION_API_TOKEN="$(your-secret-provider)"
-uv run cli-consumption sync --endpoint https://usage.example.test
+uv run cli-consumption sync --provider all \
+  --endpoint https://usage.example.test
 ```
 
 The application refuses to bind beyond localhost without a token. Production
-deployments must also place TLS and normal operational controls in front of the ASGI
-server. See [Architecture](docs/architecture.md) for trade-offs.
+deployments also need TLS and standard operational controls. See
+[Architecture](docs/architecture.md) for the trade-offs.
 
 ## Commands
 
-```text
-cli-consumption collect    Collect local or copied provider data into SQL
-cli-consumption sync       Collect and send a snapshot to a central API
-cli-consumption serve      Run the central collection API
-cli-consumption export     Write the HTML dashboard and optional CSV tables
-cli-consumption providers  Show supported and planned providers
-```
+| Command | Purpose |
+| --- | --- |
+| `collect` | Collect local or copied provider data into SQL. |
+| `sync` | Collect and send metadata-only snapshots to a central API. |
+| `serve` | Run the central collection API. |
+| `export` | Write the HTML dashboard and optional CSV tables. |
+| `providers` | List provider names and support status. |
 
-Run `uv run cli-consumption COMMAND --help` for every option.
+Run `uv run cli-consumption COMMAND --help` for all options.
 
 ## Development
 
@@ -414,12 +195,10 @@ uv run pytest --cov --cov-report=term-missing
 uv build
 ```
 
-Development follows short-lived branches and squash-merged pull requests into a
-protected `main`. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md)
-before changing the project.
+Development uses short-lived branches and squash-merged pull requests into protected
+`main`. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before
+changing the project.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE). It provides permissive reuse plus an
-explicit patent grant and contribution protections appropriate for an extensible
-developer tool.
+Licensed under the [Apache License 2.0](LICENSE).

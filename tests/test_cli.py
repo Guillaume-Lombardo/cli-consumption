@@ -37,6 +37,7 @@ def test_provider_status_is_explicit() -> None:
     assert "cline    supported" in result.stdout
     assert "kilo     supported" in result.stdout
     assert "kimi     supported" in result.stdout
+    assert "mistral-vibe supported" in result.stdout
     assert "opencode supported" in result.stdout
     assert "openhands supported" in result.stdout
     assert "pi       supported" in result.stdout
@@ -169,6 +170,43 @@ def test_collects_continue_cli(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Ingestion continue" in result.stdout
+    assert "1 written" in result.stdout
+
+
+def test_collects_mistral_vibe_cli(tmp_path: Path) -> None:
+    home = tmp_path / "vibe"
+    session_dir = home / "logs" / "session" / "session_cli"
+    session_dir.mkdir(parents=True)
+    (session_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "session_id": "vibe-cli",
+                "start_time": "2026-08-27T10:00:00Z",
+                "stats": {"steps": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (session_dir / "messages.jsonl").write_text(
+        json.dumps({"role": "user", "message_id": "message-cli"}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--provider",
+            "mistral-vibe",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(tmp_path / "mistral-vibe.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ingestion mistral-vibe" in result.stdout
     assert "1 written" in result.stdout
 
 

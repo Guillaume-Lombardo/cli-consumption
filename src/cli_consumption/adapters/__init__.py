@@ -13,6 +13,7 @@ from cli_consumption.adapters.goose import GooseAdapter
 from cli_consumption.adapters.grok import GrokAdapter
 from cli_consumption.adapters.kilo import KiloAdapter
 from cli_consumption.adapters.kimi import KimiAdapter
+from cli_consumption.adapters.mistral_vibe import MistralVibeAdapter
 from cli_consumption.adapters.opencode import OpenCodeAdapter
 from cli_consumption.adapters.openhands import OpenHandsAdapter
 from cli_consumption.adapters.pi import PiAdapter
@@ -35,6 +36,7 @@ __all__ = [
     "GrokAdapter",
     "KiloAdapter",
     "KimiAdapter",
+    "MistralVibeAdapter",
     "OpenCodeAdapter",
     "OpenHandsAdapter",
     "PiAdapter",

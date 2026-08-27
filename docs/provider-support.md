@@ -17,6 +17,7 @@
 | Grok Build | Supported (core) | Local session summary and update/event JSONL |
 | Kilo Code | Supported (core) | Local SQLite session store |
 | Kimi Code CLI | Supported (core) | Local Wire event JSONL |
+| Mistral Vibe CLI | Supported (core) | Local session metadata JSON and message JSONL |
 | OpenCode | Supported (core) | Local SQLite v2 session store |
 | OpenHands CLI | Supported (core) | Local SDK conversation state and event JSON |
 | Pi | Supported (core) | Local session JSONL v1-v3 |
@@ -30,6 +31,29 @@ It does not mean that token counters are equivalent to invoices.
 `--provider all` detects every supported provider from its expected data directory and
 ingests each metadata-only snapshot independently. With no explicit source it checks
 the local default homes; repeated `--source` paths are filtered by detected format.
+
+## Mistral Vibe CLI
+
+Mistral Vibe CLI reads top-level session directories under
+`~/.vibe/logs/session/`, when interaction logging is enabled. The adapter was
+qualified against Mistral Vibe 2.24.5 and its current `meta.json` plus
+`messages.jsonl` format in August 2026. It extracts stable session and user-message
+identifiers, session timestamps, the latest active model alias, cumulative token
+usage, function names from assistant tool calls, and compaction markers. Working
+directories are inspected only for explicit project mappings. Titles, prompts,
+responses, reasoning, tool arguments/results, system instructions, usernames, Git
+metadata, environment values other than the mapped working directory, prices,
+arbitrary configuration, and raw messages are discarded.
+
+Vibe persists prompt, cached-prompt, and completion counters only as cumulative
+session statistics. The adapter therefore emits one unattributed aggregate model
+call, subtracts cached prompt tokens from uncached input, and does not assign token
+usage to individual turns. The persisted active model is the latest selection and is
+not attributed historically to turns. Message records have no timestamps, so turns,
+tools, and compactions do not expose event times or durations. Child-agent sessions,
+model changes, cache writes, reasoning tokens, context-window samples, costs, tool
+outcomes, and provider-reported latency are not collected. Vibe's internal session
+format can change without notice, and local token events are not billing data.
 
 ## Codex
 

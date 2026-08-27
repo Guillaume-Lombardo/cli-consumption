@@ -24,6 +24,7 @@ from cli_consumption.adapters import (
     GrokAdapter,
     KiloAdapter,
     KimiAdapter,
+    MistralVibeAdapter,
     OpenCodeAdapter,
     OpenHandsAdapter,
     PiAdapter,
@@ -83,6 +84,7 @@ def providers() -> None:
     typer.echo("cline    supported")
     typer.echo("kilo     supported")
     typer.echo("kimi     supported")
+    typer.echo("mistral-vibe supported")
     typer.echo("opencode supported")
     typer.echo("openhands supported")
     typer.echo("pi       supported")
@@ -282,6 +284,11 @@ def _collect_snapshots(
         "cline": (ClineAdapter, ".cline/data", "sessions/sessions.db"),
         "kilo": (KiloAdapter, ".local/share/kilo", "kilo.db"),
         "kimi": (KimiAdapter, ".kimi", "sessions/*/*/wire.jsonl"),
+        "mistral-vibe": (
+            MistralVibeAdapter,
+            ".vibe",
+            "logs/session/*/meta.json",
+        ),
         "opencode": (
             OpenCodeAdapter,
             ".local/share/opencode",

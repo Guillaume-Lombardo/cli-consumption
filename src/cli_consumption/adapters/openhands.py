@@ -296,7 +296,8 @@ def _read_conversation(
         return None, 0
     digest = hashlib.sha256()
     try:
-        raw_base = read_bounded_bytes(base_path)
+        budget.candidate(base_path)
+        raw_base = read_bounded_bytes(base_path, budget)
         digest.update(raw_base)
         root = json.loads(raw_base)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
@@ -313,7 +314,7 @@ def _read_conversation(
     if events_dir.is_dir():
         for event_path in budget.sorted_paths(events_dir.glob("event-*.json")):
             try:
-                raw_event = read_bounded_bytes(event_path)
+                raw_event = read_bounded_bytes(event_path, budget)
                 digest.update(event_path.name.encode())
                 digest.update(raw_event)
                 event = json.loads(raw_event)

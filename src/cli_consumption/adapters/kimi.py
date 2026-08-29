@@ -41,7 +41,7 @@ class KimiAdapter:
                     f"Missing Kimi Code CLI sessions under: {home / 'sessions'}"
                 )
             for path in files:
-                records, invalid = _read_wire(path)
+                records, invalid = _read_wire(path, budget)
                 malformed += invalid
                 external_id = path.parent.name
                 if not label(external_id):
@@ -64,11 +64,13 @@ class KimiAdapter:
         return snapshot
 
 
-def _read_wire(path: Path) -> tuple[list[dict[str, Any]], int]:
+def _read_wire(
+    path: Path, budget: ProviderInputBudget
+) -> tuple[list[dict[str, Any]], int]:
     records: list[dict[str, Any]] = []
     malformed = 0
     try:
-        for raw in iter_bounded_jsonl_bytes(path):
+        for raw in iter_bounded_jsonl_bytes(path, budget):
             if not raw.strip():
                 continue
             try:

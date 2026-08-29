@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.cline import ClineAdapter
 
 CANARY = "SECRET_CANARY_cline_do_not_export"
@@ -100,3 +101,20 @@ def test_cline_deduplicates_and_rejects_missing_source(tmp_path: Path) -> None:
     assert len(snapshot.conversations) == 1
     with pytest.raises(ValueError, match="Missing Cline"):
         ClineAdapter().collect([("x", tmp_path / "missing")])
+
+
+def test_cline_shares_artifact_bytes_across_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    _fixture(first)
+    _fixture(second)
+    artifact = first / "sessions" / "cline-1" / "cline-1.messages.json"
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES",
+        artifact.stat().st_size + 1,
+    )
+    with pytest.raises(ProviderDataLimitError) as error:
+        ClineAdapter().collect([("a", first), ("b", second)])
+    assert str(error.value) == "provider_read_limit_exceeded"
+    assert CANARY not in str(error.value)

@@ -75,7 +75,7 @@ def _read_messages(
     malformed = 0
     for path in budget.sorted_paths(directory.glob("*.json")):
         try:
-            value = read_json(path)
+            value = read_json(path, budget)
         except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             malformed += 1
             continue

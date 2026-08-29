@@ -43,7 +43,7 @@ class AmpAdapter:
             if not threads.is_dir():
                 raise ValueError(f"Missing Amp threads directory: {threads}")
             for path in budget.sorted_paths(threads.glob("T-*.json")):
-                candidate, invalid = _read_thread(path, machine)
+                candidate, invalid = _read_thread(path, machine, budget)
                 malformed += invalid
                 if candidate is None:
                     continue
@@ -279,8 +279,10 @@ class AmpAdapter:
         )
 
 
-def _read_thread(path: Path, machine: str) -> tuple[_Thread | None, int]:
-    raw = read_bounded_bytes(path)
+def _read_thread(
+    path: Path, machine: str, budget: ProviderInputBudget
+) -> tuple[_Thread | None, int]:
+    raw = read_bounded_bytes(path, budget)
     digest = hashlib.sha256(raw).hexdigest()
     try:
         root = json.loads(raw)

@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderDataLimitError,
     ProviderInputBudget,
-    check_provider_sqlite_file,
+    open_provider_sqlite,
 )
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
@@ -65,13 +66,14 @@ class GooseAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Conversation] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            database = home / "sessions.db"
+            database = budget.candidate(home / "sessions.db")
             if not database.is_file():
                 raise ValueError(f"Missing Goose database: {database}")
-            conversations, invalid = _read_database(database, machine)
+            conversations, invalid = _read_database(database, machine, budget)
             malformed += invalid
             for candidate in conversations:
                 previous = selected.get(candidate.external_id)
@@ -267,14 +269,13 @@ class GooseAdapter:
         )
 
 
-def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
+def _read_database(
+    path: Path, machine: str, budget: ProviderInputBudget
+) -> tuple[list[_Conversation], int]:
     try:
-        check_provider_sqlite_file(path)
-        budget = ProviderInputBudget()
-        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        manager = open_provider_sqlite(path, budget)
+        connection = manager.__enter__()
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute("PRAGMA query_only=ON")
         session_columns = _columns(connection, "sessions")
         message_columns = _columns(connection, "messages")
         usage_columns = _columns(connection, "usage_ledger")
@@ -397,11 +398,13 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
                 )
             )
         return conversations, malformed
+    except sqlite3.DataError:
+        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except sqlite3.DatabaseError:
         raise ValueError(f"Could not read Goose database: {path}") from None
     finally:
         if "connection" in locals():
-            connection.close()
+            manager.__exit__(None, None, None)
 
 
 def _message(row: sqlite3.Row) -> tuple[_Message | None, int]:

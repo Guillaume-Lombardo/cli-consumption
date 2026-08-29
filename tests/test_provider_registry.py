@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
+from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.adapters.registry import (
     ADAPTER_SPECS,
@@ -58,6 +60,17 @@ class _UnsupportedAdapter:
         raise UnsupportedProviderFormat("synthetic schema is unsupported")
 
 
+class _LimitedAdapter:
+    name = "limited"
+
+    def collect(
+        self,
+        sources: list[tuple[str, Path]],
+        project_mappings: list[tuple[str, str]],
+    ) -> Snapshot:
+        raise ProviderDataLimitError("provider_file_too_large")
+
+
 def test_registry_is_complete_unique_and_consistent() -> None:
     expected = [
         "aider",
@@ -87,6 +100,10 @@ def test_registry_is_complete_unique_and_consistent() -> None:
     assert all(spec.adapter_type().name == spec.name for spec in ADAPTER_SPECS)
     assert all(spec.markers for spec in ADAPTER_SPECS)
     assert all(spec.support == "supported" for spec in ADAPTER_SPECS)
+    assert all(
+        inspect.getsource(spec.adapter_type.collect).count("ProviderInputBudget()") == 1
+        for spec in ADAPTER_SPECS
+    )
     assert {spec.name: spec.token_semantics for spec in ADAPTER_SPECS} == {
         "aider": "additive",
         "amazon-q": "unavailable",
@@ -177,6 +194,7 @@ def test_provider_diagnostics_cover_every_bounded_status(tmp_path: Path) -> None
         AdapterSpec("compatible", _CompatibleAdapter, ".compatible", ("marker",)),
         AdapterSpec("degraded", _DegradedAdapter, ".degraded", ("marker",)),
         AdapterSpec("unsupported", _UnsupportedAdapter, ".unsupported", ("marker",)),
+        AdapterSpec("limited", _LimitedAdapter, ".limited", ("marker",)),
     )
     for spec in specs:
         (tmp_path / spec.name).mkdir()
@@ -188,4 +206,7 @@ def test_provider_diagnostics_cover_every_bounded_status(tmp_path: Path) -> None
         "compatible",
         "degraded",
         "unsupported-schema",
+        "degraded",
     ]
+    diagnostic = diagnose_provider(specs[-1], tmp_path / "limited").to_dict()
+    assert "provider_file_too_large" not in str(diagnostic)

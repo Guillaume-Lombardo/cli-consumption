@@ -48,7 +48,7 @@ class PiAdapter:
             if not sessions.is_dir():
                 raise ValueError(f"Missing Pi sessions directory: {sessions}")
             for path in budget.sorted_paths(sessions.rglob("*.jsonl")):
-                candidate, invalid = _read_session(path, machine)
+                candidate, invalid = _read_session(path, machine, budget)
                 malformed += invalid
                 if candidate is None:
                     continue
@@ -267,11 +267,13 @@ class PiAdapter:
         )
 
 
-def _read_session(path: Path, machine: str) -> tuple[_Session | None, int]:
+def _read_session(
+    path: Path, machine: str, budget: ProviderInputBudget
+) -> tuple[_Session | None, int]:
     digest = hashlib.sha256()
     entries: list[dict[str, Any]] = []
     malformed = 0
-    for line in iter_bounded_jsonl_bytes(path):
+    for line in iter_bounded_jsonl_bytes(path, budget):
         digest.update(line)
         try:
             entry = json.loads(line)

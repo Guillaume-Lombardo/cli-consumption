@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderDataLimitError,
     ProviderInputBudget,
-    check_provider_sqlite_file,
     digest_records,
     finish_turn,
     iso,
     label,
     mapping,
     new_turn,
+    open_provider_sqlite,
     project,
     timestamp,
 )
@@ -31,13 +32,14 @@ class AmazonQAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, tuple[str, str, dict[str, Any]]] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            database = home / "data.sqlite3"
+            database = budget.candidate(home / "data.sqlite3")
             if not database.is_file():
                 raise ValueError(f"Missing Amazon Q Developer CLI database: {database}")
-            rows, invalid = _read_database(database)
+            rows, invalid = _read_database(database, budget)
             malformed += invalid
             for directory, state in rows:
                 external_id = label(state.get("conversation_id"))
@@ -60,17 +62,16 @@ class AmazonQAdapter:
         return snapshot
 
 
-def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
+def _read_database(
+    path: Path, budget: ProviderInputBudget
+) -> tuple[list[tuple[str, dict[str, Any]]], int]:
     connection: sqlite3.Connection | None = None
     malformed = 0
     result: list[tuple[str, dict[str, Any]]] = []
     try:
-        check_provider_sqlite_file(path)
-        budget = ProviderInputBudget()
-        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        manager = open_provider_sqlite(path, budget)
+        connection = manager.__enter__()
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute("PRAGMA query_only=ON")
         columns = {
             str(row["name"])
             for row in connection.execute('PRAGMA table_info("conversations")')
@@ -92,13 +93,15 @@ def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
                 continue
             result.append((row["key"], value))
         return result, malformed
+    except sqlite3.DataError:
+        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except sqlite3.DatabaseError:
         raise ValueError(
             f"Could not read Amazon Q Developer CLI database: {path}"
         ) from None
     finally:
         if connection is not None:
-            connection.close()
+            manager.__exit__(None, None, None)
 
 
 def _history(state: dict[str, Any]) -> list[dict[str, Any]]:

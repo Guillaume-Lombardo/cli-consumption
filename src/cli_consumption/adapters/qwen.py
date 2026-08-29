@@ -48,7 +48,7 @@ class QwenAdapter:
             if not projects.is_dir():
                 raise ValueError(f"Missing Qwen Code projects directory: {projects}")
             for path in budget.sorted_paths(projects.glob("*/chats/*.jsonl")):
-                records, invalid, digest = _read_records(path)
+                records, invalid, digest = _read_records(path, budget)
                 malformed += invalid
                 session_id = _session_id(records)
                 if session_id is None:
@@ -75,7 +75,7 @@ class QwenAdapter:
             malformed_records=malformed,
         )
         for candidate in sorted(selected.values(), key=lambda item: item.external_id):
-            records, _, _ = _read_records(candidate.path)
+            records, _, _ = _read_records(candidate.path, budget)
             active, invalid = _active_branch(records, candidate.external_id)
             snapshot.malformed_records += invalid
             self._normalize(snapshot, candidate, active, project_mappings or [])
@@ -283,11 +283,13 @@ class QwenAdapter:
         )
 
 
-def _read_records(path: Path) -> tuple[list[dict[str, Any]], int, str]:
+def _read_records(
+    path: Path, budget: ProviderInputBudget
+) -> tuple[list[dict[str, Any]], int, str]:
     digest = hashlib.sha256()
     records: list[dict[str, Any]] = []
     malformed = 0
-    for line in iter_bounded_jsonl_bytes(path):
+    for line in iter_bounded_jsonl_bytes(path, budget):
         digest.update(line)
         if not line.strip():
             continue

@@ -46,7 +46,7 @@ class ContinueAdapter:
             for path in budget.sorted_paths(sessions.glob("*.json")):
                 if path.name == "sessions.json":
                     continue
-                candidate, invalid = _read_session(path, machine)
+                candidate, invalid = _read_session(path, machine, budget)
                 malformed += invalid
                 if candidate is None:
                     continue
@@ -218,8 +218,10 @@ class ContinueAdapter:
         )
 
 
-def _read_session(path: Path, machine: str) -> tuple[_Session | None, int]:
-    raw = read_bounded_bytes(path)
+def _read_session(
+    path: Path, machine: str, budget: ProviderInputBudget
+) -> tuple[_Session | None, int]:
+    raw = read_bounded_bytes(path, budget)
     digest = hashlib.sha256(raw).hexdigest()
     try:
         root = json.loads(raw)

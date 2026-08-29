@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    iter_bounded_jsonl_bytes,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -35,13 +38,14 @@ class AiderAdapter:
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
         del project_mappings  # Aider analytics do not record a project path.
+        budget = ProviderInputBudget()
         selected: dict[str, _Candidate] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            path = home / "analytics.jsonl"
+            path = budget.candidate(home / "analytics.jsonl")
             if not path.is_file():
                 raise ValueError(f"Missing Aider analytics log: {path}")
-            sessions, invalid = _read_sessions(path)
+            sessions, invalid = _read_sessions(path, budget)
             malformed += invalid
             for external_id, events, digest in sessions:
                 candidate = _Candidate(machine, external_id, events, digest)
@@ -181,12 +185,13 @@ class AiderAdapter:
 
 def _read_sessions(
     path: Path,
+    budget: ProviderInputBudget,
 ) -> tuple[list[tuple[str, list[dict[str, Any]], str]], int]:
     sessions: list[tuple[str, list[dict[str, Any]], str]] = []
     active: list[dict[str, Any]] | None = None
     malformed = 0
     ordinals: dict[tuple[str, int], int] = {}
-    for line in iter_bounded_jsonl_bytes(path):
+    for line in iter_bounded_jsonl_bytes(path, budget):
         if not line.strip():
             continue
         try:

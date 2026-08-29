@@ -53,7 +53,7 @@ class MistralVibeAdapter:
                     f"Missing Mistral Vibe session log directory: {sessions}"
                 )
             for metadata_path in budget.sorted_paths(sessions.glob("*/meta.json")):
-                candidate, invalid = _read_candidate(machine, metadata_path)
+                candidate, invalid = _read_candidate(machine, metadata_path, budget)
                 malformed += invalid
                 if candidate is None:
                     continue
@@ -205,10 +205,12 @@ class MistralVibeAdapter:
         )
 
 
-def _read_candidate(machine: str, metadata_path: Path) -> tuple[_Candidate | None, int]:
+def _read_candidate(
+    machine: str, metadata_path: Path, budget: ProviderInputBudget
+) -> tuple[_Candidate | None, int]:
     digest = hashlib.sha256()
     try:
-        metadata_bytes = read_bounded_bytes(metadata_path)
+        metadata_bytes = read_bounded_bytes(metadata_path, budget)
         digest.update(metadata_bytes)
         metadata = json.loads(metadata_bytes)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
@@ -223,7 +225,8 @@ def _read_candidate(machine: str, metadata_path: Path) -> tuple[_Candidate | Non
     malformed = 0
     messages_path = metadata_path.parent / "messages.jsonl"
     try:
-        for line in iter_bounded_jsonl_bytes(messages_path):
+        budget.candidate(messages_path)
+        for line in iter_bounded_jsonl_bytes(messages_path, budget):
             digest.update(line)
             if not line.strip():
                 continue

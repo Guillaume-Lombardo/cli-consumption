@@ -28,7 +28,8 @@ class ClaudeAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
-        selected, duplicates, malformed = self._discover(sources)
+        budget = ProviderInputBudget()
+        selected, duplicates, malformed = self._discover(sources, budget)
         snapshot = Snapshot(
             provider=self.name,
             duplicate_conversations=duplicates,
@@ -43,13 +44,13 @@ class ClaudeAdapter:
                 digest,
                 session_id,
                 project_mappings or [],
+                budget,
             )
         return snapshot
 
     def _discover(
-        self, sources: list[tuple[str, Path]]
+        self, sources: list[tuple[str, Path]], budget: ProviderInputBudget
     ) -> tuple[list[tuple[str, Path, int, str, str]], int, int]:
-        budget = ProviderInputBudget()
         selected: dict[str, tuple[str, Path, int, str, str]] = {}
         duplicates = malformed = 0
         for machine, home in sources:
@@ -60,7 +61,7 @@ class ClaudeAdapter:
                 digest = hashlib.sha256()
                 count = 0
                 session_id: str | None = None
-                for line in iter_bounded_jsonl_bytes(path):
+                for line in iter_bounded_jsonl_bytes(path, budget):
                     digest.update(line)
                     try:
                         event = json.loads(line)
@@ -97,9 +98,10 @@ class ClaudeAdapter:
         digest: str,
         session_id: str,
         mappings: list[tuple[str, str]],
+        budget: ProviderInputBudget,
     ) -> None:
         events: list[dict[str, Any]] = []
-        for line in iter_bounded_jsonl_bytes(path):
+        for line in iter_bounded_jsonl_bytes(path, budget):
             try:
                 event = json.loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError):

@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderDataLimitError,
     ProviderInputBudget,
-    check_provider_sqlite_file,
+    open_provider_sqlite,
     read_json,
 )
 from cli_consumption.adapters.base import UnsupportedProviderFormat
@@ -60,15 +61,18 @@ class CrushAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Conversation] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            databases, invalid = _discover_databases(home)
+            databases, invalid = _discover_databases(home, budget)
             malformed += invalid
             if not databases:
                 raise ValueError(f"No readable Crush databases found from: {home}")
             for database, directory in databases:
-                conversations, invalid = _read_database(database, machine, directory)
+                conversations, invalid = _read_database(
+                    database, machine, directory, budget
+                )
                 malformed += invalid
                 for candidate in conversations:
                     previous = selected.get(candidate.external_id)
@@ -260,21 +264,23 @@ class CrushAdapter:
         )
 
 
-def _discover_databases(home: Path) -> tuple[list[tuple[Path, str | None]], int]:
-    direct = home / "crush.db"
+def _discover_databases(
+    home: Path, budget: ProviderInputBudget
+) -> tuple[list[tuple[Path, str | None]], int]:
+    direct = budget.candidate(home / "crush.db")
     if direct.is_file():
         directory = str(home.parent) if home.name == ".crush" else None
         return [(direct, directory)], 0
 
-    nested = home / ".crush" / "crush.db"
+    nested = budget.candidate(home / ".crush" / "crush.db")
     if nested.is_file():
         return [(nested, str(home))], 0
 
-    registry = home / "projects.json"
+    registry = budget.candidate(home / "projects.json")
     if not registry.is_file():
         return [], 0
     try:
-        value = read_json(registry)
+        value = read_json(registry, budget)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         raise ValueError(f"Could not read Crush project registry: {registry}") from None
 
@@ -282,6 +288,7 @@ def _discover_databases(home: Path) -> tuple[list[tuple[Path, str | None]], int]
     discovered: dict[Path, str | None] = {}
     malformed = 0
     for entry in entries:
+        budget.item()
         if not isinstance(entry, dict):
             malformed += 1
             continue
@@ -294,7 +301,7 @@ def _discover_databases(home: Path) -> tuple[list[tuple[Path, str | None]], int]
         data = Path(data_dir).expanduser()
         if not data.is_absolute():
             data = base / data
-        database = (data / "crush.db").resolve()
+        database = budget.candidate(data / "crush.db").resolve()
         if database in discovered:
             if discovered[database] != project:
                 discovered[database] = None
@@ -320,15 +327,15 @@ def _registry_entries(value: object) -> list[object]:
 
 
 def _read_database(
-    path: Path, machine: str, directory: str | None
+    path: Path,
+    machine: str,
+    directory: str | None,
+    budget: ProviderInputBudget,
 ) -> tuple[list[_Conversation], int]:
     try:
-        check_provider_sqlite_file(path)
-        budget = ProviderInputBudget()
-        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        manager = open_provider_sqlite(path, budget)
+        connection = manager.__enter__()
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute("PRAGMA query_only=ON")
         session_columns = _columns(connection, "sessions")
         message_columns = _columns(connection, "messages")
         required_session = {
@@ -407,11 +414,13 @@ def _read_database(
                 )
             )
         return conversations, malformed
+    except sqlite3.DataError:
+        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except sqlite3.DatabaseError:
         raise ValueError(f"Could not read Crush database: {path}") from None
     finally:
         if "connection" in locals():
-            connection.close()
+            manager.__exit__(None, None, None)
 
 
 def _parse_message(row: sqlite3.Row) -> tuple[_Message | None, int]:

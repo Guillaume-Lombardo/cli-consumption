@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderDataLimitError,
     ProviderInputBudget,
-    check_provider_sqlite_file,
     iter_bounded_jsonl_bytes,
+    open_provider_sqlite,
 )
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -76,7 +77,7 @@ class CursorAdapter:
             if projects.is_dir():
                 pattern = "*/agent-transcripts/*/*.jsonl"
                 for path in budget.sorted_paths(projects.glob(pattern)):
-                    candidate, invalid = _read_transcript(path, machine, metas)
+                    candidate, invalid = _read_transcript(path, machine, metas, budget)
                     malformed += invalid
                     if candidate is None:
                         continue
@@ -236,6 +237,7 @@ def _read_transcript(
     path: Path,
     machine: str,
     metas: dict[str, _Meta],
+    budget: ProviderInputBudget,
 ) -> tuple[_Conversation | None, int]:
     external_id = _label(path.stem, 512)
     if external_id is None or path.parent.name != path.stem:
@@ -244,7 +246,7 @@ def _read_transcript(
     digest = hashlib.sha256()
     records: list[_Record] = []
     malformed = 0
-    for line_number, raw_line in enumerate(iter_bounded_jsonl_bytes(path), 1):
+    for line_number, raw_line in enumerate(iter_bounded_jsonl_bytes(path, budget), 1):
         digest.update(raw_line)
         if not raw_line.strip():
             continue
@@ -338,10 +340,8 @@ def _read_metas(
 
 def _read_meta(path: Path, budget: ProviderInputBudget) -> _Meta | None:
     try:
-        check_provider_sqlite_file(path)
-        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute("PRAGMA query_only=ON")
+        manager = open_provider_sqlite(path, budget)
+        connection = manager.__enter__()
         try:
             columns = {
                 str(row[1]) for row in connection.execute("PRAGMA table_info(meta)")
@@ -352,7 +352,9 @@ def _read_meta(path: Path, budget: ProviderInputBudget) -> _Meta | None:
                 "SELECT value FROM meta WHERE key = ? LIMIT 1", ("0",)
             ).fetchone()
         finally:
-            connection.close()
+            manager.__exit__(None, None, None)
+    except sqlite3.DataError:
+        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except (OSError, sqlite3.DatabaseError):
         return None
     if row is None or not isinstance(row[0], str):

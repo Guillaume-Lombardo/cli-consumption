@@ -50,7 +50,7 @@ class GrokAdapter:
             if not sessions.is_dir():
                 raise ValueError(f"Missing Grok Build sessions directory: {sessions}")
             for path in budget.sorted_paths(sessions.glob("*/*/summary.json")):
-                summary = _read_object(path)
+                summary = _read_object(path, budget)
                 if summary is None:
                     malformed += 1
                     continue
@@ -62,10 +62,10 @@ class GrokAdapter:
                     malformed += 1
                     continue
                 updates, invalid_updates, update_digest = _read_jsonl(
-                    path.parent / "updates.jsonl"
+                    path.parent / "updates.jsonl", budget
                 )
                 events, invalid_events, event_digest = _read_jsonl(
-                    path.parent / "events.jsonl"
+                    path.parent / "events.jsonl", budget
                 )
                 malformed += invalid_updates + invalid_events
                 digest = hashlib.sha256()
@@ -94,8 +94,8 @@ class GrokAdapter:
             malformed_records=malformed,
         )
         for candidate in sorted(selected.values(), key=lambda item: item.external_id):
-            updates, _, _ = _read_jsonl(candidate.directory / "updates.jsonl")
-            events, _, _ = _read_jsonl(candidate.directory / "events.jsonl")
+            updates, _, _ = _read_jsonl(candidate.directory / "updates.jsonl", budget)
+            events, _, _ = _read_jsonl(candidate.directory / "events.jsonl", budget)
             self._normalize(
                 snapshot, candidate, updates, events, project_mappings or []
             )
@@ -458,20 +458,23 @@ def _finish_turn(turn: dict[str, Any], timestamp: datetime | None) -> None:
         turn["duration_ms"] = int((ended - started).total_seconds() * 1000)
 
 
-def _read_object(path: Path) -> dict[str, Any] | None:
+def _read_object(path: Path, budget: ProviderInputBudget) -> dict[str, Any] | None:
     try:
-        value = read_json(path)
+        value = read_json(path, budget)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
     return value if isinstance(value, dict) else None
 
 
-def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int, str]:
+def _read_jsonl(
+    path: Path, budget: ProviderInputBudget
+) -> tuple[list[dict[str, Any]], int, str]:
     digest = hashlib.sha256()
     records: list[dict[str, Any]] = []
     malformed = 0
     try:
-        for line in iter_bounded_jsonl_bytes(path):
+        budget.candidate(path)
+        for line in iter_bounded_jsonl_bytes(path, budget):
             digest.update(line)
             if not line.strip():
                 continue

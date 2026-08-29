@@ -10,6 +10,7 @@ from sqlalchemy import create_mock_engine
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
+from storage_helpers import read_table
 
 from cli_consumption.dashboard import _dashboard_payload
 from cli_consumption.exporting import export_csv
@@ -25,7 +26,6 @@ from cli_consumption.storage import (
     Turn,
     create_database_engine,
     initialize_database,
-    read_table,
 )
 from cli_consumption.timestamps import canonical_timestamp
 

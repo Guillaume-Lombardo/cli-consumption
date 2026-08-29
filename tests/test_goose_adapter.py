@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from storage_helpers import read_table
 
 from cli_consumption.adapters.goose import GooseAdapter
 from cli_consumption.dashboard import generate_dashboard
@@ -13,7 +14,6 @@ from cli_consumption.storage import (
     TABLES,
     create_database_engine,
     ingest_snapshot,
-    read_table,
 )
 
 CANARY = "GOOSE_CANARY_SECRET_DO_NOT_PERSIST"

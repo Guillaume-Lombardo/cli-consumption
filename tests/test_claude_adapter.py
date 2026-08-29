@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from storage_helpers import read_table
 
 from cli_consumption.adapters.claude import ClaudeAdapter
 from cli_consumption.dashboard import generate_dashboard
@@ -13,7 +14,6 @@ from cli_consumption.storage import (
     TABLES,
     create_database_engine,
     ingest_snapshot,
-    read_table,
 )
 
 

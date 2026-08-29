@@ -13,6 +13,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 from sqlalchemy.schema import CreateTable
+from storage_helpers import read_table
 
 from cli_consumption.adapters.codex import CodexAdapter
 from cli_consumption.dashboard import (
@@ -32,7 +33,6 @@ from cli_consumption.storage import (
     ingest_snapshot,
     initialize_database,
     normalize_database_url,
-    read_table,
 )
 
 

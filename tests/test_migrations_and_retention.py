@@ -26,6 +26,7 @@ from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateSchema, DropSchema
+from storage_helpers import read_table
 
 from cli_consumption import schema as schema_module
 from cli_consumption.migrations.versions import (
@@ -53,7 +54,6 @@ from cli_consumption.storage import (
     create_database_engine,
     ingest_snapshot,
     initialize_database,
-    read_table,
 )
 from cli_consumption.timestamps import canonical_timestamp
 

@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from storage_helpers import read_table
+
 from cli_consumption.adapters.grok import GrokAdapter
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
@@ -11,7 +13,6 @@ from cli_consumption.storage import (
     TABLES,
     create_database_engine,
     ingest_snapshot,
-    read_table,
 )
 
 CANARY = "grok privacy canary secret"

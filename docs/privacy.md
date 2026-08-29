@@ -91,6 +91,21 @@ daily activity, durations, counts, token counters, configuration labels, statuse
 aggregate work patterns remain disclosed. Share-safe is a minimization profile, not
 anonymization.
 
+Dashboard generation first evaluates only aggregate row counts and scalar byte
+lengths for the selected report. These internal estimates are not exported or logged.
+The command refuses selections above 250,000 rows or 128 MiB of selected scalar values,
+bounds its required local-key and alias indexes, and charges every JSON/HTML chunk
+before writing up to 128 MiB. It never materializes the full report or document in the
+production path. The index budget charges persistent Python object allocations before
+insertion and avoids set-and-sort duplication for project, machine, and role aliases;
+it reveals no labels because only its private byte counter is retained. Its public
+limit error is generic and recommends a bounded time
+window without echoing project or machine labels, identifiers, paths, or other database
+values. `--json` returns only a deterministic error code and generic hint. Atomic
+replacement prevents a failed generation from truncating a previous dashboard. With
+`--csv`, CSV files remain separate detailed exports and may have been written before a
+later dashboard failure.
+
 Time filters select complete conversations that overlap the requested window. They do
 not redact child records whose individual timestamps fall outside it; related subagent
 edges can also reveal activity around the boundary. Ingestion-run rows are selected by

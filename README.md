@@ -169,6 +169,19 @@ to the window. CSV rows are streamed in stable primary-key order. Spreadsheet fo
 prefixes in text cells are neutralized with a leading apostrophe; CSV remains a
 detailed operational-data export, not a share-safe format.
 
+Dashboard generation preflights the selected report before streaming its tables. The
+selection is limited to 250,000 rows and 128 MiB of selected scalar values, and the
+final self-contained HTML is limited to 128 MiB of bytes actually encoded. If an
+accumulated database exceeds these limits, narrow it with `--since` and/or `--until`.
+A dashboard is streamed through a temporary file in its destination directory,
+synchronized, and atomically replaces an older dashboard only after generation
+succeeds.
+
+When `--csv` and the dashboard are requested together, each CSV is still streamed
+before dashboard generation. The dashboard file is atomic, but the output directory
+as a whole is not: a dashboard limit or write failure can leave newly written CSV
+files alongside the preserved older dashboard.
+
 ## SQLite and PostgreSQL
 
 A file path selects SQLite. A SQLAlchemy URL selects PostgreSQL:

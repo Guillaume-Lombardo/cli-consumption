@@ -6,7 +6,18 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import (
+    LargeBinary,
+    Text,
+    and_,
+    cast,
+    exists,
+    func,
+    literal,
+    or_,
+    select,
+    union_all,
+)
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql import Select
 
@@ -24,6 +35,18 @@ CONVERSATION_CHILDREN = frozenset(
         "turn_settings",
         "compaction_events",
     }
+)
+REPORT_TABLES = (
+    "conversations",
+    "turns",
+    "model_calls",
+    "tool_calls",
+    "work_items",
+    "context_samples",
+    "turn_settings",
+    "compaction_events",
+    "subagents",
+    "ingestion_runs",
 )
 
 
@@ -60,6 +83,12 @@ class ExportWindow:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ReportEstimate:
+    records: int
+    scalar_bytes: int
+
+
 def parse_export_window(
     since: str | None = None, until: str | None = None
 ) -> ExportWindow:
@@ -82,6 +111,52 @@ def iter_report_rows(
     ).execute(statement)
     for row in result.mappings().yield_per(batch_size):
         yield dict(row)
+
+
+def estimate_report(
+    connection: Connection,
+    window: ExportWindow | None = None,
+) -> ReportEstimate:
+    """Estimate a complete report selection without materializing its rows."""
+    result = connection.execute(report_estimate_statement(connection, window))
+    records = 0
+    scalar_bytes = 0
+    for row in result.mappings():
+        records += int(row["records"])
+        scalar_bytes += int(row["scalar_bytes"])
+    return ReportEstimate(records=records, scalar_bytes=scalar_bytes)
+
+
+def report_estimate_statement(
+    connection: Connection,
+    window: ExportWindow | None = None,
+) -> Any:
+    """Build one statement so all table estimates share one database snapshot."""
+    active_window = window or ExportWindow()
+    estimates = []
+    for table_name in REPORT_TABLES:
+        selected = report_statement(connection, table_name, active_window).order_by(
+            None
+        )
+        rows = selected.subquery(f"selected_{table_name}")
+        byte_lengths = [_byte_length(column, connection) for column in rows.c]
+        row_bytes = sum(byte_lengths[1:], byte_lengths[0])
+        estimates.append(
+            select(
+                literal(table_name).label("table_name"),
+                func.count().label("records"),
+                func.coalesce(func.sum(row_bytes), 0).label("scalar_bytes"),
+            ).select_from(rows)
+        )
+    return union_all(*estimates)
+
+
+def _byte_length(column: Any, connection: Connection) -> Any:
+    if connection.dialect.name == "sqlite":
+        return func.coalesce(func.length(cast(column, LargeBinary)), 0)
+    if connection.dialect.name == "postgresql":
+        return func.coalesce(func.octet_length(cast(column, Text)), 0)
+    return func.coalesce(func.length(cast(column, Text)), 0)
 
 
 def report_statement(

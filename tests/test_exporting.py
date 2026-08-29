@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from sqlalchemy import insert
 
-from cli_consumption.exporting import _serialize, export_csv
+from cli_consumption.exporting import _serialize_cell, export_csv
 from cli_consumption.storage import (
     TABLES,
     create_database_engine,
@@ -36,7 +36,7 @@ from cli_consumption.storage import (
 def test_serialize_neutralizes_spreadsheet_formula_prefixes(
     value: str, expected: str
 ) -> None:
-    assert _serialize([{"value": value}]) == [{"value": expected}]
+    assert _serialize_cell(value) == expected
 
 
 @pytest.mark.parametrize(
@@ -44,11 +44,11 @@ def test_serialize_neutralizes_spreadsheet_formula_prefixes(
     ["", "safe", "  safe", "'=already-text", -1, 1, 1.5, False],
 )
 def test_serialize_preserves_safe_and_non_string_values(value: Any) -> None:
-    assert _serialize([{"value": value}]) == [{"value": value}]
+    assert _serialize_cell(value) == value
 
 
 def test_serialize_preserves_none_as_an_empty_csv_cell() -> None:
-    assert _serialize([{"value": None}]) == [{"value": ""}]
+    assert _serialize_cell(None) == ""
 
 
 def test_export_csv_neutralizes_values_already_present_in_a_database(

@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from storage_helpers import read_table
 
 from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.crush import CrushAdapter
@@ -14,7 +15,6 @@ from cli_consumption.storage import (
     TABLES,
     create_database_engine,
     ingest_snapshot,
-    read_table,
 )
 
 CANARY = "privacy canary secret"

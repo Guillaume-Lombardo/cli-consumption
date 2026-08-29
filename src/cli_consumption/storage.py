@@ -18,7 +18,6 @@ from sqlalchemy import (
     create_engine,
     delete,
     event,
-    select,
     update,
 )
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -30,8 +29,6 @@ from sqlalchemy.pool import NullPool
 from cli_consumption.models import Snapshot, SnapshotPayload, SnapshotValidationError
 from cli_consumption.schema import upgrade_database
 from cli_consumption.timestamps import canonical_timestamp
-
-DEFAULT_DATABASE = "sqlite:///cli-consumption.sqlite"
 
 
 class MissingOptionalDependencyError(RuntimeError):
@@ -473,26 +470,6 @@ def _lock_subagent_scope(session: Session, provider: str, source_machine: str) -
         .values(lock_version=SubagentScope.lock_version + 1)
     )
     return created is not None
-
-
-def read_table(engine: Engine, table_name: str) -> list[dict[str, Any]]:
-    initialize_database(engine)
-    model = TABLES.get(table_name)
-    if model is None:
-        raise ValueError(f"Unknown table: {table_name}")
-    with Session(engine) as session:
-        rows = (
-            session.execute(select(model).order_by(*model.__table__.primary_key))
-            .scalars()
-            .all()
-        )
-        return [
-            {
-                column.name: getattr(row, column.name)
-                for column in model.__table__.columns
-            }
-            for row in rows
-        ]
 
 
 def validate_snapshot(snapshot: Snapshot) -> Snapshot:

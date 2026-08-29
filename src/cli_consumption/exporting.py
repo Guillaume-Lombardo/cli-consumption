@@ -37,10 +37,6 @@ def export_csv(
     return written
 
 
-def _serialize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [{key: _serialize_cell(value) for key, value in row.items()} for row in rows]
-
-
 def _serialize_cell(value: Any) -> Any:
     if value is None:
         return ""

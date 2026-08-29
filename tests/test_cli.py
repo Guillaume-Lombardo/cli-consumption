@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from click.utils import strip_ansi
+from storage_helpers import read_table
 from typer.testing import CliRunner
 
 import cli_consumption.cli as cli_module
@@ -15,7 +16,6 @@ from cli_consumption.models import Snapshot
 from cli_consumption.storage import (
     create_database_engine,
     initialize_database,
-    read_table,
 )
 
 runner = CliRunner()

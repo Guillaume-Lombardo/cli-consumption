@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from starlette.types import Message, Scope
+from storage_helpers import read_table
 
 from cli_consumption.adapters.codex import CodexAdapter
 from cli_consumption.api import (
@@ -26,7 +27,7 @@ from cli_consumption.api import (
     SafeExceptionBoundary,
     create_app,
 )
-from cli_consumption.storage import create_database_engine, read_table
+from cli_consumption.storage import create_database_engine
 
 
 @pytest.mark.anyio

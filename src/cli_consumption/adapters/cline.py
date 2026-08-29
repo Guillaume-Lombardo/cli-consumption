@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     add_tokens,
+    check_provider_sqlite_file,
     digest_records,
     finish_turn,
     iso,
@@ -14,7 +16,6 @@ from cli_consumption.adapters._shared import (
     new_turn,
     project,
     read_json,
-    reject_provider_file_symlink,
     timestamp,
     tokens,
 )
@@ -67,7 +68,8 @@ def _read_database(
     connection: sqlite3.Connection | None = None
     malformed = 0
     try:
-        reject_provider_file_symlink(path)
+        check_provider_sqlite_file(path)
+        budget = ProviderInputBudget()
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")
@@ -94,14 +96,18 @@ def _read_database(
             for name in ("ended_at", "updated_at", "workspace_root", "messages_path")
             if name in columns
         ]
-        rows = connection.execute(
-            "SELECT "
-            + ", ".join(sorted(required | set(optional)))
-            + " FROM sessions ORDER BY session_id"
-        ).fetchall()
+        rows = budget.rows(
+            connection.execute(
+                "SELECT "
+                + ", ".join(sorted(required | set(optional)))
+                + " FROM sessions ORDER BY session_id"
+            )
+        )
         result: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
         for raw in rows:
             row = dict(raw)
+            if "metadata_json" in row:
+                budget.json_field(row["metadata_json"])
             if not label(row.get("session_id")):
                 malformed += 1
                 continue

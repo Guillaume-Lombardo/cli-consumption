@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,11 +15,57 @@ MAX_BIGINT = 9_223_372_036_854_775_807
 MAX_PROVIDER_JSON_BYTES = 64 * 1024 * 1024
 MAX_PROVIDER_JSONL_BYTES = 256 * 1024 * 1024
 MAX_PROVIDER_JSONL_LINE_BYTES = 8 * 1024 * 1024
+MAX_PROVIDER_CANDIDATES = 10_000
+MAX_PROVIDER_SQLITE_BYTES = 512 * 1024 * 1024
+MAX_PROVIDER_SQLITE_ROWS = 250_000
+MAX_PROVIDER_SQLITE_FIELD_BYTES = 8 * 1024 * 1024
+MAX_PROVIDER_SQLITE_FIELDS_BYTES = 256 * 1024 * 1024
 SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+@-]*")
 
 
-class ProviderDataLimitError(ValueError):
+class ProviderDataLimitError(RuntimeError):
     """A privacy-safe failure raised when provider input exceeds a hard limit."""
+
+
+class ProviderInputBudget:
+    """Bound untrusted discovery and SQLite work across one collection."""
+
+    def __init__(self) -> None:
+        self.candidates = 0
+        self.sqlite_rows = 0
+        self.sqlite_field_bytes = 0
+
+    def sorted_paths(self, paths: Iterable[Path]) -> list[Path]:
+        result: list[Path] = []
+        for path in paths:
+            self.candidates += 1
+            if self.candidates > MAX_PROVIDER_CANDIDATES:
+                raise ProviderDataLimitError("provider_candidate_limit_exceeded")
+            result.append(path)
+        return sorted(result)
+
+    def rows(self, rows: Iterable[Any]) -> Iterator[Any]:
+        for row in rows:
+            self.sqlite_rows += 1
+            if self.sqlite_rows > MAX_PROVIDER_SQLITE_ROWS:
+                raise ProviderDataLimitError("provider_sqlite_row_limit_exceeded")
+            yield row
+
+    def json_field(self, value: Any) -> Any:
+        if isinstance(value, str):
+            if len(value) > MAX_PROVIDER_SQLITE_FIELD_BYTES:
+                raise ProviderDataLimitError("provider_sqlite_field_too_large")
+            size = len(value.encode("utf-8"))
+        elif isinstance(value, bytes):
+            size = len(value)
+        else:
+            return value
+        if size > MAX_PROVIDER_SQLITE_FIELD_BYTES:
+            raise ProviderDataLimitError("provider_sqlite_field_too_large")
+        self.sqlite_field_bytes += size
+        if self.sqlite_field_bytes > MAX_PROVIDER_SQLITE_FIELDS_BYTES:
+            raise ProviderDataLimitError("provider_sqlite_fields_too_large")
+        return value
 
 
 def mapping(value: object) -> dict[str, Any]:
@@ -168,8 +214,12 @@ def iter_bounded_jsonl_bytes(
     reject_provider_file_symlink(path)
     if path.stat().st_size > maximum_file:
         raise ProviderDataLimitError("provider_file_too_large")
+    total = 0
     with path.open("rb") as handle:
         for line in handle:
+            total += len(line)
+            if total > maximum_file:
+                raise ProviderDataLimitError("provider_file_too_large")
             if len(line) > maximum_line:
                 raise ProviderDataLimitError("provider_line_too_large")
             yield line
@@ -178,3 +228,19 @@ def iter_bounded_jsonl_bytes(
 def reject_provider_file_symlink(path: Path) -> None:
     if path.is_symlink():
         raise ProviderDataLimitError("provider_file_symlink_not_allowed")
+
+
+def check_provider_sqlite_file(path: Path) -> None:
+    total = 0
+    for candidate in (
+        path,
+        Path(f"{path}-wal"),
+        Path(f"{path}-shm"),
+        Path(f"{path}-journal"),
+    ):
+        if candidate != path and not candidate.exists():
+            continue
+        reject_provider_file_symlink(candidate)
+        total += candidate.stat().st_size
+        if total > MAX_PROVIDER_SQLITE_BYTES:
+            raise ProviderDataLimitError("provider_sqlite_file_too_large")

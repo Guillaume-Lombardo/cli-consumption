@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    check_provider_sqlite_file,
     iter_bounded_jsonl_bytes,
-    reject_provider_file_symlink,
 )
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -58,6 +59,7 @@ class CursorAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Conversation] = {}
         duplicates = malformed = 0
         for machine, home in sources:
@@ -68,12 +70,12 @@ class CursorAdapter:
                     f"Missing Cursor CLI projects or chats directory under: {home}"
                 )
 
-            metas, invalid = _read_metas(chats)
+            metas, invalid = _read_metas(chats, budget)
             malformed += invalid
             seen: set[str] = set()
             if projects.is_dir():
                 pattern = "*/agent-transcripts/*/*.jsonl"
-                for path in sorted(projects.glob(pattern)):
+                for path in budget.sorted_paths(projects.glob(pattern)):
                     candidate, invalid = _read_transcript(path, machine, metas)
                     malformed += invalid
                     if candidate is None:
@@ -316,13 +318,15 @@ def _record(value: object, line_number: int) -> tuple[_Record | None, int]:
     return _Record(line_number, role, visible_user, tool_names), malformed
 
 
-def _read_metas(chats: Path) -> tuple[dict[str, _Meta], int]:
+def _read_metas(
+    chats: Path, budget: ProviderInputBudget
+) -> tuple[dict[str, _Meta], int]:
     if not chats.is_dir():
         return {}, 0
     result: dict[str, _Meta] = {}
     malformed = 0
-    for path in sorted(chats.glob("*/*/store.db")):
-        meta = _read_meta(path)
+    for path in budget.sorted_paths(chats.glob("*/*/store.db")):
+        meta = _read_meta(path, budget)
         if meta is None:
             malformed += 1
             continue
@@ -332,9 +336,9 @@ def _read_metas(chats: Path) -> tuple[dict[str, _Meta], int]:
     return result, malformed
 
 
-def _read_meta(path: Path) -> _Meta | None:
+def _read_meta(path: Path, budget: ProviderInputBudget) -> _Meta | None:
     try:
-        reject_provider_file_symlink(path)
+        check_provider_sqlite_file(path)
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.execute("PRAGMA trusted_schema=OFF")
         connection.execute("PRAGMA query_only=ON")
@@ -353,7 +357,7 @@ def _read_meta(path: Path) -> _Meta | None:
         return None
     if row is None or not isinstance(row[0], str):
         return None
-    raw = row[0]
+    raw = budget.json_field(row[0])
     if len(raw) > MAX_META_HEX_BYTES * 2:
         return None
     try:

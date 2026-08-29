@@ -10,7 +10,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import reject_provider_file_symlink
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    check_provider_sqlite_file,
+)
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -266,7 +269,8 @@ class GooseAdapter:
 
 def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
     try:
-        reject_provider_file_symlink(path)
+        check_provider_sqlite_file(path)
+        budget = ProviderInputBudget()
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")
@@ -312,10 +316,12 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
                 f"Unsupported Goose database schema: {path}"
             )
 
-        rows = connection.execute(
-            "SELECT id, working_dir, created_at, updated_at, provider_name, "
-            "model_config_json FROM sessions ORDER BY id"
-        ).fetchall()
+        rows = budget.rows(
+            connection.execute(
+                "SELECT id, working_dir, created_at, updated_at, provider_name, "
+                "model_config_json FROM sessions ORDER BY id"
+            )
+        )
         conversations: list[_Conversation] = []
         malformed = 0
         for row in rows:
@@ -323,21 +329,29 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
             if not external_id:
                 malformed += 1
                 continue
-            message_rows = connection.execute(
-                "SELECT id, message_id, role, content_json, created_timestamp, "
-                "metadata_json FROM messages WHERE session_id = ? "
-                "ORDER BY created_timestamp, id",
-                (row["id"],),
-            ).fetchall()
-            usage_rows = connection.execute(
-                "SELECT id, created_timestamp, model, input_tokens, output_tokens, "
-                "total_tokens, cache_read_tokens, cache_write_tokens, is_compaction "
-                "FROM usage_ledger WHERE session_id = ? ORDER BY created_timestamp, id",
-                (row["id"],),
-            ).fetchall()
+            budget.json_field(row["model_config_json"])
+            message_rows = budget.rows(
+                connection.execute(
+                    "SELECT id, message_id, role, content_json, created_timestamp, "
+                    "metadata_json FROM messages WHERE session_id = ? "
+                    "ORDER BY created_timestamp, id",
+                    (row["id"],),
+                )
+            )
+            usage_rows = budget.rows(
+                connection.execute(
+                    "SELECT id, created_timestamp, model, input_tokens, output_tokens, "
+                    "total_tokens, cache_read_tokens, cache_write_tokens, "
+                    "is_compaction FROM usage_ledger WHERE session_id = ? "
+                    "ORDER BY created_timestamp, id",
+                    (row["id"],),
+                )
+            )
             digest = hashlib.sha256()
             messages: list[_Message] = []
             for message_row in message_rows:
+                budget.json_field(message_row["content_json"])
+                budget.json_field(message_row["metadata_json"])
                 digest.update(str(tuple(message_row)).encode())
                 message, invalid = _message(message_row)
                 malformed += invalid

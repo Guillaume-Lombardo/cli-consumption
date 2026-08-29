@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     add_tokens,
     digest_records,
     finish_turn,
@@ -28,17 +29,20 @@ class PlandexAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         del project_mappings
         selected: dict[str, tuple[str, list[dict[str, Any]]]] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            directories = sorted((home / "orgs").glob("*/plans/*/conversation"))
+            directories = budget.sorted_paths(
+                (home / "orgs").glob("*/plans/*/conversation")
+            )
             if not directories:
                 raise ValueError(
                     f"Missing Plandex server conversations under: {home / 'orgs'}"
                 )
             for directory in directories:
-                messages, invalid = _read_messages(directory)
+                messages, invalid = _read_messages(directory, budget)
                 malformed += invalid
                 if not messages:
                     continue
@@ -64,10 +68,12 @@ class PlandexAdapter:
         return snapshot
 
 
-def _read_messages(directory: Path) -> tuple[list[dict[str, Any]], int]:
+def _read_messages(
+    directory: Path, budget: ProviderInputBudget
+) -> tuple[list[dict[str, Any]], int]:
     messages: list[dict[str, Any]] = []
     malformed = 0
-    for path in sorted(directory.glob("*.json")):
+    for path in budget.sorted_paths(directory.glob("*.json")):
         try:
             value = read_json(path)
         except (OSError, json.JSONDecodeError, UnicodeDecodeError):

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import read_bounded_bytes
+from cli_consumption.adapters._shared import ProviderInputBudget, read_bounded_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -38,6 +38,7 @@ class OpenHandsAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Conversation] = {}
         duplicates = malformed = 0
         for machine, home in sources:
@@ -46,10 +47,10 @@ class OpenHandsAdapter:
                 raise ValueError(
                     f"Missing OpenHands conversations directory: {conversations}"
                 )
-            for path in sorted(
-                value for value in conversations.iterdir() if value.is_dir()
-            ):
-                candidate, invalid = _read_conversation(path, machine)
+            for path in budget.sorted_paths(conversations.iterdir()):
+                if not path.is_dir():
+                    continue
+                candidate, invalid = _read_conversation(path, machine, budget)
                 malformed += invalid
                 if candidate is None:
                     continue
@@ -287,7 +288,9 @@ class OpenHandsAdapter:
         )
 
 
-def _read_conversation(path: Path, machine: str) -> tuple[_Conversation | None, int]:
+def _read_conversation(
+    path: Path, machine: str, budget: ProviderInputBudget
+) -> tuple[_Conversation | None, int]:
     base_path = path / "base_state.json"
     if not base_path.is_file():
         return None, 0
@@ -308,7 +311,7 @@ def _read_conversation(path: Path, machine: str) -> tuple[_Conversation | None, 
     malformed = 0
     events_dir = path / "events"
     if events_dir.is_dir():
-        for event_path in sorted(events_dir.glob("event-*.json")):
+        for event_path in budget.sorted_paths(events_dir.glob("event-*.json")):
             try:
                 raw_event = read_bounded_bytes(event_path)
                 digest.update(event_path.name.encode())

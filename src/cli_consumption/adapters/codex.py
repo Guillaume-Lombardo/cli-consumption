@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    check_provider_sqlite_file,
     iter_bounded_jsonl_bytes,
-    reject_provider_file_symlink,
 )
 from cli_consumption.models import TOKEN_FIELDS, Snapshot, empty_tokens
 
@@ -160,20 +161,25 @@ class CodexAdapter:
     ) -> list[dict[str, Any]]:
         if not state_path.is_file():
             return []
-        reject_provider_file_symlink(state_path)
+        check_provider_sqlite_file(state_path)
+        budget = ProviderInputBudget()
         connection = sqlite3.connect(f"file:{state_path}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         try:
-            rows = connection.execute(
-                """
+            rows = list(
+                budget.rows(
+                    connection.execute(
+                        """
                 SELECT e.parent_thread_id, e.child_thread_id, e.status,
                        t.created_at_ms, t.updated_at_ms, t.agent_role,
                        t.tokens_used
                 FROM thread_spawn_edges e
                 LEFT JOIN threads t ON t.id = e.child_thread_id
                 ORDER BY t.created_at_ms, e.child_thread_id
-                """
-            ).fetchall()
+                        """
+                    )
+                )
+            )
         except sqlite3.OperationalError:
             return []
         finally:
@@ -197,6 +203,7 @@ class CodexAdapter:
     def _discover(
         self, sources: list[tuple[str, Path]]
     ) -> tuple[list[tuple[str, Path, int, str]], int, int]:
+        budget = ProviderInputBudget()
         selected: dict[str, tuple[str, Path, int, str]] = {}
         duplicates = 0
         malformed = 0
@@ -204,7 +211,7 @@ class CodexAdapter:
             sessions = codex_home / "sessions"
             if not sessions.is_dir():
                 raise ValueError(f"Missing Codex sessions directory: {sessions}")
-            for path in sorted(sessions.rglob("*.jsonl")):
+            for path in budget.sorted_paths(sessions.rglob("*.jsonl")):
                 event_count = 0
                 conversation_id = ""
                 digest = hashlib.sha256()

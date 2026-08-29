@@ -10,7 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import read_json, reject_provider_file_symlink
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    check_provider_sqlite_file,
+    read_json,
+)
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -319,7 +323,8 @@ def _read_database(
     path: Path, machine: str, directory: str | None
 ) -> tuple[list[_Conversation], int]:
     try:
-        reject_provider_file_symlink(path)
+        check_provider_sqlite_file(path)
+        budget = ProviderInputBudget()
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")
@@ -356,10 +361,12 @@ def _read_database(
         summary = (
             "is_summary_message" if "is_summary_message" in message_columns else "0"
         )
-        rows = connection.execute(
-            "SELECT id, prompt_tokens, completion_tokens, created_at, updated_at "
-            "FROM sessions WHERE parent_session_id IS NULL ORDER BY id"
-        ).fetchall()
+        rows = budget.rows(
+            connection.execute(
+                "SELECT id, prompt_tokens, completion_tokens, created_at, updated_at "
+                "FROM sessions WHERE parent_session_id IS NULL ORDER BY id"
+            )
+        )
         conversations: list[_Conversation] = []
         malformed = 0
         for row in rows:
@@ -367,17 +374,20 @@ def _read_database(
             if not external_id:
                 malformed += 1
                 continue
-            message_rows = connection.execute(
-                f"SELECT id, role, parts, model, {provider} AS provider, "
-                f"created_at, updated_at, {finished_at} AS finished_at, "
-                f"{summary} AS is_summary_message FROM messages "
-                "WHERE session_id = ? ORDER BY created_at, rowid",
-                (row["id"],),
-            ).fetchall()
+            message_rows = budget.rows(
+                connection.execute(
+                    f"SELECT id, role, parts, model, {provider} AS provider, "
+                    f"created_at, updated_at, {finished_at} AS finished_at, "
+                    f"{summary} AS is_summary_message FROM messages "
+                    "WHERE session_id = ? ORDER BY created_at, rowid",
+                    (row["id"],),
+                )
+            )
             digest = hashlib.sha256()
             digest.update(str(tuple(row)).encode())
             messages: list[_Message] = []
             for message_row in message_rows:
+                budget.json_field(message_row["parts"])
                 digest.update(str(tuple(message_row)).encode())
                 message, invalid = _parse_message(message_row)
                 malformed += invalid

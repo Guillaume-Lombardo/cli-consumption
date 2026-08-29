@@ -112,9 +112,12 @@ provider and source machine is strictly more complete and none is less complete.
 Identical, graph-only, or older copies cannot erase a newer graph.
 
 Provider files are untrusted. Monolithic JSON files are limited to 64 MiB, JSONL files
-to 256 MiB with an 8 MiB per-line limit, and a snapshot to 250,000 normalized records
-while it is being built. Direct provider-file symlinks are refused. `collect --strict`
-refuses to write a snapshot when malformed records were skipped.
+to 256 MiB with an 8 MiB per-line limit, and discovery to 10,000 candidate entries per
+provider collection. Provider SQLite files are limited to 512 MiB, 250,000 selected
+rows, 8 MiB per structured field, and 256 MiB across structured fields. A snapshot is
+limited to 250,000 normalized records while it is being built. Direct provider-file
+symlinks are refused. `collect --strict` refuses to write a snapshot when malformed
+records were skipped.
 
 Map original working-directory prefixes to stable project labels with repeated
 `--project NAME=PATH_PREFIX` options. The longest matching prefix wins:

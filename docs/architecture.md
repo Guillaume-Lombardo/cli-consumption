@@ -98,10 +98,14 @@ generic validation errors. A newer client sent to an older strict API is rejecte
 before ingestion, so central deployments must upgrade the server first.
 
 Provider input is bounded before persistence. Monolithic JSON files are capped at
-64 MiB, JSONL files at 256 MiB with an 8 MiB per-line limit, and the complete in-memory
-normalized snapshot at 250,000 records. Direct symlinks to provider files are rejected.
-These limits use generic error codes and apply to local collection as well as snapshots
-later sent to the API.
+64 MiB, JSONL files at 256 MiB with an 8 MiB per-line limit, and discovery at 10,000
+candidate entries per provider collection before sorting. JSONL readers count bytes as
+they stream, so a file that grows after its initial size check cannot bypass the cap.
+Provider SQLite files are capped at 512 MiB; readers share budgets of 250,000 selected
+rows, 8 MiB per structured field, and 256 MiB of structured fields in total. The
+complete in-memory normalized snapshot remains capped at 250,000 records. Direct
+symlinks to provider files are rejected. These limits use generic error codes and apply
+to local collection as well as snapshots later sent to the API.
 
 Retention is an explicit two-step operation: `retention --keep-days N` reports what
 would be deleted, while `--apply` deletes old conversations (with cascading children),

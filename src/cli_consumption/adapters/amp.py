@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import read_bounded_bytes
+from cli_consumption.adapters._shared import ProviderInputBudget, read_bounded_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -35,13 +35,14 @@ class AmpAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Thread] = {}
         duplicates = malformed = 0
         for machine, home in sources:
             threads = home / "threads"
             if not threads.is_dir():
                 raise ValueError(f"Missing Amp threads directory: {threads}")
-            for path in sorted(threads.glob("T-*.json")):
+            for path in budget.sorted_paths(threads.glob("T-*.json")):
                 candidate, invalid = _read_thread(path, machine)
                 malformed += invalid
                 if candidate is None:

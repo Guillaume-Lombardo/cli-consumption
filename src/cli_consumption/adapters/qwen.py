@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    iter_bounded_jsonl_bytes,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -37,13 +40,14 @@ class QwenAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Candidate] = {}
         duplicates = malformed = 0
         for machine, home in sources:
             projects = home / "projects"
             if not projects.is_dir():
                 raise ValueError(f"Missing Qwen Code projects directory: {projects}")
-            for path in sorted(projects.glob("*/chats/*.jsonl")):
+            for path in budget.sorted_paths(projects.glob("*/chats/*.jsonl")):
                 records, invalid, digest = _read_records(path)
                 malformed += invalid
                 session_id = _session_id(records)

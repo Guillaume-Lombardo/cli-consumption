@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     iter_bounded_jsonl_bytes,
     read_bounded_bytes,
 )
@@ -38,6 +39,7 @@ class GeminiAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         del project_mappings  # Gemini stores only a one-way project hash.
         selected: dict[str, _Candidate] = {}
         duplicates = malformed = 0
@@ -45,8 +47,8 @@ class GeminiAdapter:
             temporary = home / "tmp"
             if not temporary.is_dir():
                 raise ValueError(f"Missing Gemini CLI temporary directory: {temporary}")
-            paths = sorted(temporary.glob("*/chats/session-*.json"))
-            paths.extend(sorted(temporary.glob("*/chats/session-*.jsonl")))
+            paths = budget.sorted_paths(temporary.glob("*/chats/session-*.json"))
+            paths.extend(budget.sorted_paths(temporary.glob("*/chats/session-*.jsonl")))
             for path in paths:
                 metadata, _, invalid, event_count, digest = _read_session(path)
                 malformed += invalid

@@ -10,7 +10,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import reject_provider_file_symlink
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    check_provider_sqlite_file,
+)
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -267,7 +270,8 @@ class OpenCodeAdapter:
 
 def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
     try:
-        reject_provider_file_symlink(path)
+        check_provider_sqlite_file(path)
+        budget = ProviderInputBudget()
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")
@@ -293,10 +297,12 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
             )
 
         directory = "directory" if "directory" in session_columns else "NULL"
-        rows = connection.execute(
-            f"SELECT id, {directory} AS directory, time_created, time_updated "
-            "FROM session ORDER BY id"
-        ).fetchall()
+        rows = budget.rows(
+            connection.execute(
+                f"SELECT id, {directory} AS directory, time_created, time_updated "
+                "FROM session ORDER BY id"
+            )
+        )
         conversations: list[_Conversation] = []
         malformed = 0
         for row in rows:
@@ -304,14 +310,17 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
             if not external_id:
                 malformed += 1
                 continue
-            message_rows = connection.execute(
-                "SELECT id, type, seq, time_created, time_updated, data "
-                "FROM session_message WHERE session_id = ? ORDER BY seq, id",
-                (row["id"],),
-            ).fetchall()
+            message_rows = budget.rows(
+                connection.execute(
+                    "SELECT id, type, seq, time_created, time_updated, data "
+                    "FROM session_message WHERE session_id = ? ORDER BY seq, id",
+                    (row["id"],),
+                )
+            )
             digest = hashlib.sha256()
             messages: list[_Message] = []
             for message_row in message_rows:
+                budget.json_field(message_row["data"])
                 digest.update(str(tuple(message_row)).encode())
                 message_id = _label(message_row["id"], 512)
                 kind = _label(message_row["type"], 64)

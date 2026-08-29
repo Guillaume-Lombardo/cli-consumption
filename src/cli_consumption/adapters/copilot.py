@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    iter_bounded_jsonl_bytes,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -35,6 +38,7 @@ class CopilotAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Candidate] = {}
         duplicates = malformed = 0
         for machine, home in sources:
@@ -43,7 +47,7 @@ class CopilotAdapter:
                 raise ValueError(
                     f"Missing GitHub Copilot CLI session-state directory: {sessions}"
                 )
-            for path in sorted(sessions.glob("*/events.jsonl")):
+            for path in budget.sorted_paths(sessions.glob("*/events.jsonl")):
                 events, invalid, digest = _read_events(path)
                 malformed += invalid
                 session_id = _session_id(events)

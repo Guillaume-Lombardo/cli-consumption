@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import read_bounded_bytes
+from cli_consumption.adapters._shared import ProviderInputBudget, read_bounded_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -36,13 +36,14 @@ class ContinueAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Session] = {}
         duplicates = malformed = 0
         for machine, home in sources:
             sessions = home / "sessions"
             if not sessions.is_dir():
                 raise ValueError(f"Missing Continue sessions directory: {sessions}")
-            for path in sorted(sessions.glob("*.json")):
+            for path in budget.sorted_paths(sessions.glob("*.json")):
                 if path.name == "sessions.json":
                     continue
                 candidate, invalid = _read_session(path, machine)

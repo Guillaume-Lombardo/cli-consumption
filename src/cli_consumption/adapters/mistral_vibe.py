@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     add_tokens,
     counter,
     iso,
@@ -42,6 +43,7 @@ class MistralVibeAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Candidate] = {}
         duplicates = malformed = 0
         for machine, home in sources:
@@ -50,7 +52,7 @@ class MistralVibeAdapter:
                 raise ValueError(
                     f"Missing Mistral Vibe session log directory: {sessions}"
                 )
-            for metadata_path in sorted(sessions.glob("*/meta.json")):
+            for metadata_path in budget.sorted_paths(sessions.glob("*/meta.json")):
                 candidate, invalid = _read_candidate(machine, metadata_path)
                 malformed += invalid
                 if candidate is None:

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    check_provider_sqlite_file,
     digest_records,
     finish_turn,
     iso,
@@ -13,7 +15,6 @@ from cli_consumption.adapters._shared import (
     mapping,
     new_turn,
     project,
-    reject_provider_file_symlink,
     timestamp,
 )
 from cli_consumption.adapters.base import UnsupportedProviderFormat
@@ -64,7 +65,8 @@ def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
     malformed = 0
     result: list[tuple[str, dict[str, Any]]] = []
     try:
-        reject_provider_file_symlink(path)
+        check_provider_sqlite_file(path)
+        budget = ProviderInputBudget()
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")
@@ -77,11 +79,11 @@ def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
             raise UnsupportedProviderFormat(
                 f"Unsupported Amazon Q Developer CLI database schema: {path}"
             )
-        for row in connection.execute(
-            "SELECT key, value FROM conversations ORDER BY key"
+        for row in budget.rows(
+            connection.execute("SELECT key, value FROM conversations ORDER BY key")
         ):
             try:
-                value = json.loads(row["value"])
+                value = json.loads(budget.json_field(row["value"]))
             except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
                 malformed += 1
                 continue

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     add_tokens,
     digest_records,
     finish_turn,
@@ -29,11 +30,12 @@ class KimiAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         del project_mappings
         selected: dict[str, tuple[str, list[dict[str, Any]], int]] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            files = sorted((home / "sessions").glob("*/*/wire.jsonl"))
+            files = budget.sorted_paths((home / "sessions").glob("*/*/wire.jsonl"))
             if not files:
                 raise ValueError(
                     f"Missing Kimi Code CLI sessions under: {home / 'sessions'}"

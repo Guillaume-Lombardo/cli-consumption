@@ -8,7 +8,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    iter_bounded_jsonl_bytes,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -46,13 +49,14 @@ class ClaudeAdapter:
     def _discover(
         self, sources: list[tuple[str, Path]]
     ) -> tuple[list[tuple[str, Path, int, str, str]], int, int]:
+        budget = ProviderInputBudget()
         selected: dict[str, tuple[str, Path, int, str, str]] = {}
         duplicates = malformed = 0
         for machine, home in sources:
             projects = home / "projects"
             if not projects.is_dir():
                 raise ValueError(f"Missing Claude Code projects directory: {projects}")
-            for path in sorted(projects.glob("*/*.jsonl")):
+            for path in budget.sorted_paths(projects.glob("*/*.jsonl")):
                 digest = hashlib.sha256()
                 count = 0
                 session_id: str | None = None

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.crush import CrushAdapter
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
@@ -267,6 +268,32 @@ def test_reads_direct_database_and_deduplicates_copies(tmp_path: Path) -> None:
         snapshot.to_dict()
         == CrushAdapter().collect([("desktop", first), ("laptop", second)]).to_dict()
     )
+
+
+def test_crush_shares_sqlite_budget_across_databases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    first_db, second_db = database(first), database(second)
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared.MAX_PROVIDER_SQLITE_BYTES",
+        first_db.stat().st_size + second_db.stat().st_size - 1,
+    )
+    with pytest.raises(ProviderDataLimitError) as error:
+        CrushAdapter().collect([("desktop", first), ("laptop", second)])
+    assert str(error.value) == "provider_sqlite_file_too_large"
+
+
+def test_crush_budgets_registry_entries_before_path_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home, data_dir = tmp_path / "global", tmp_path / "project"
+    database(data_dir)
+    registry(home, "/srv/project", data_dir)
+    monkeypatch.setattr("cli_consumption.adapters._shared.MAX_PROVIDER_CANDIDATES", 3)
+    with pytest.raises(ProviderDataLimitError) as error:
+        CrushAdapter().collect([("machine", home)])
+    assert str(error.value) == "provider_candidate_limit_exceeded"
 
 
 def test_rejects_missing_or_old_data_without_exposing_records(tmp_path: Path) -> None:

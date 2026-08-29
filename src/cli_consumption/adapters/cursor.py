@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    ensure_provider_sqlite_fields,
     iter_bounded_jsonl_bytes,
-    reject_provider_file_symlink,
+    open_provider_sqlite,
 )
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -58,6 +60,7 @@ class CursorAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Conversation] = {}
         duplicates = malformed = 0
         for machine, home in sources:
@@ -68,13 +71,13 @@ class CursorAdapter:
                     f"Missing Cursor CLI projects or chats directory under: {home}"
                 )
 
-            metas, invalid = _read_metas(chats)
+            metas, invalid = _read_metas(chats, budget)
             malformed += invalid
             seen: set[str] = set()
             if projects.is_dir():
                 pattern = "*/agent-transcripts/*/*.jsonl"
-                for path in sorted(projects.glob(pattern)):
-                    candidate, invalid = _read_transcript(path, machine, metas)
+                for path in budget.sorted_paths(projects.glob(pattern)):
+                    candidate, invalid = _read_transcript(path, machine, metas, budget)
                     malformed += invalid
                     if candidate is None:
                         continue
@@ -234,6 +237,7 @@ def _read_transcript(
     path: Path,
     machine: str,
     metas: dict[str, _Meta],
+    budget: ProviderInputBudget,
 ) -> tuple[_Conversation | None, int]:
     external_id = _label(path.stem, 512)
     if external_id is None or path.parent.name != path.stem:
@@ -242,7 +246,7 @@ def _read_transcript(
     digest = hashlib.sha256()
     records: list[_Record] = []
     malformed = 0
-    for line_number, raw_line in enumerate(iter_bounded_jsonl_bytes(path), 1):
+    for line_number, raw_line in enumerate(iter_bounded_jsonl_bytes(path, budget), 1):
         digest.update(raw_line)
         if not raw_line.strip():
             continue
@@ -316,13 +320,15 @@ def _record(value: object, line_number: int) -> tuple[_Record | None, int]:
     return _Record(line_number, role, visible_user, tool_names), malformed
 
 
-def _read_metas(chats: Path) -> tuple[dict[str, _Meta], int]:
+def _read_metas(
+    chats: Path, budget: ProviderInputBudget
+) -> tuple[dict[str, _Meta], int]:
     if not chats.is_dir():
         return {}, 0
     result: dict[str, _Meta] = {}
     malformed = 0
-    for path in sorted(chats.glob("*/*/store.db")):
-        meta = _read_meta(path)
+    for path in budget.sorted_paths(chats.glob("*/*/store.db")):
+        meta = _read_meta(path, budget)
         if meta is None:
             malformed += 1
             continue
@@ -332,28 +338,27 @@ def _read_metas(chats: Path) -> tuple[dict[str, _Meta], int]:
     return result, malformed
 
 
-def _read_meta(path: Path) -> _Meta | None:
+def _read_meta(path: Path, budget: ProviderInputBudget) -> _Meta | None:
     try:
-        reject_provider_file_symlink(path)
-        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute("PRAGMA query_only=ON")
+        manager = open_provider_sqlite(path, budget)
+        connection = manager.__enter__()
         try:
             columns = {
                 str(row[1]) for row in connection.execute("PRAGMA table_info(meta)")
             }
             if not {"key", "value"}.issubset(columns):
                 return None
+            ensure_provider_sqlite_fields(connection, [("meta", "value")])
             row = connection.execute(
                 "SELECT value FROM meta WHERE key = ? LIMIT 1", ("0",)
             ).fetchone()
         finally:
-            connection.close()
+            manager.__exit__(None, None, None)
     except (OSError, sqlite3.DatabaseError):
         return None
     if row is None or not isinstance(row[0], str):
         return None
-    raw = row[0]
+    raw = budget.json_field(row[0])
     if len(raw) > MAX_META_HEX_BYTES * 2:
         return None
     try:

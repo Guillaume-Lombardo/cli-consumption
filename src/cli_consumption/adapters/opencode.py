@@ -10,7 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import reject_provider_file_symlink
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    ensure_provider_sqlite_fields,
+    open_provider_sqlite,
+)
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -49,13 +53,14 @@ class OpenCodeAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Conversation] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            database = home / "opencode.db"
+            database = budget.candidate(home / "opencode.db")
             if not database.is_file():
                 raise ValueError(f"Missing OpenCode database: {database}")
-            conversations, invalid = _read_database(database, machine)
+            conversations, invalid = _read_database(database, machine, budget)
             malformed += invalid
             for candidate in conversations:
                 previous = selected.get(candidate.external_id)
@@ -265,13 +270,13 @@ class OpenCodeAdapter:
         )
 
 
-def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
+def _read_database(
+    path: Path, machine: str, budget: ProviderInputBudget
+) -> tuple[list[_Conversation], int]:
     try:
-        reject_provider_file_symlink(path)
-        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        manager = open_provider_sqlite(path, budget)
+        connection = manager.__enter__()
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute("PRAGMA query_only=ON")
         session_columns = _columns(connection, "session")
         message_columns = _columns(connection, "session_message")
         required_session = {"id", "time_created", "time_updated"}
@@ -291,12 +296,15 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
             raise UnsupportedProviderFormat(
                 f"Unsupported OpenCode database schema: {path}"
             )
+        ensure_provider_sqlite_fields(connection, [("session_message", "data")])
 
         directory = "directory" if "directory" in session_columns else "NULL"
-        rows = connection.execute(
-            f"SELECT id, {directory} AS directory, time_created, time_updated "
-            "FROM session ORDER BY id"
-        ).fetchall()
+        rows = budget.rows(
+            connection.execute(
+                f"SELECT id, {directory} AS directory, time_created, time_updated "
+                "FROM session ORDER BY id"
+            )
+        )
         conversations: list[_Conversation] = []
         malformed = 0
         for row in rows:
@@ -304,14 +312,17 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
             if not external_id:
                 malformed += 1
                 continue
-            message_rows = connection.execute(
-                "SELECT id, type, seq, time_created, time_updated, data "
-                "FROM session_message WHERE session_id = ? ORDER BY seq, id",
-                (row["id"],),
-            ).fetchall()
+            message_rows = budget.rows(
+                connection.execute(
+                    "SELECT id, type, seq, time_created, time_updated, data "
+                    "FROM session_message WHERE session_id = ? ORDER BY seq, id",
+                    (row["id"],),
+                )
+            )
             digest = hashlib.sha256()
             messages: list[_Message] = []
             for message_row in message_rows:
+                budget.json_field(message_row["data"])
                 digest.update(str(tuple(message_row)).encode())
                 message_id = _label(message_row["id"], 512)
                 kind = _label(message_row["type"], 64)
@@ -352,7 +363,7 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
         raise ValueError(f"Could not read OpenCode database: {path}") from None
     finally:
         if "connection" in locals():
-            connection.close()
+            manager.__exit__(None, None, None)
 
 
 def _columns(connection: sqlite3.Connection, table: str) -> set[str]:

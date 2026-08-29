@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    iter_bounded_jsonl_bytes,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -37,14 +40,15 @@ class PiAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Session] = {}
         duplicates = malformed = 0
         for machine, home in sources:
             sessions = home / "sessions"
             if not sessions.is_dir():
                 raise ValueError(f"Missing Pi sessions directory: {sessions}")
-            for path in sorted(sessions.rglob("*.jsonl")):
-                candidate, invalid = _read_session(path, machine)
+            for path in budget.sorted_paths(sessions.rglob("*.jsonl")):
+                candidate, invalid = _read_session(path, machine, budget)
                 malformed += invalid
                 if candidate is None:
                     continue
@@ -263,11 +267,13 @@ class PiAdapter:
         )
 
 
-def _read_session(path: Path, machine: str) -> tuple[_Session | None, int]:
+def _read_session(
+    path: Path, machine: str, budget: ProviderInputBudget
+) -> tuple[_Session | None, int]:
     digest = hashlib.sha256()
     entries: list[dict[str, Any]] = []
     malformed = 0
-    for line in iter_bounded_jsonl_bytes(path):
+    for line in iter_bounded_jsonl_bytes(path, budget):
         digest.update(line)
         try:
             entry = json.loads(line)

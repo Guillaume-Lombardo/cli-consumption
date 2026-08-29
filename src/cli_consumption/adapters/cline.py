@@ -5,16 +5,18 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     add_tokens,
     digest_records,
+    ensure_provider_sqlite_fields,
     finish_turn,
     iso,
     label,
     mapping,
     new_turn,
+    open_provider_sqlite,
     project,
     read_json,
-    reject_provider_file_symlink,
     timestamp,
     tokens,
 )
@@ -32,13 +34,14 @@ class ClineAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, tuple[str, dict[str, Any], list[dict[str, Any]]]] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            database = home / "sessions" / "sessions.db"
+            database = budget.candidate(home / "sessions" / "sessions.db")
             if not database.is_file():
                 raise ValueError(f"Missing Cline CLI database: {database}")
-            rows, invalid = _read_database(database, home)
+            rows, invalid = _read_database(database, home, budget)
             malformed += invalid
             for row, messages in rows:
                 key = str(row["session_id"])
@@ -62,16 +65,14 @@ class ClineAdapter:
 
 
 def _read_database(
-    path: Path, home: Path
+    path: Path, home: Path, budget: ProviderInputBudget
 ) -> tuple[list[tuple[dict[str, Any], list[dict[str, Any]]]], int]:
     connection: sqlite3.Connection | None = None
     malformed = 0
     try:
-        reject_provider_file_symlink(path)
-        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        manager = open_provider_sqlite(path, budget)
+        connection = manager.__enter__()
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute("PRAGMA query_only=ON")
         columns = {
             str(row["name"])
             for row in connection.execute('PRAGMA table_info("sessions")')
@@ -89,19 +90,24 @@ def _read_database(
             raise UnsupportedProviderFormat(
                 f"Unsupported Cline CLI database schema: {path}"
             )
+        ensure_provider_sqlite_fields(connection, [("sessions", "metadata_json")])
         optional = [
             name
             for name in ("ended_at", "updated_at", "workspace_root", "messages_path")
             if name in columns
         ]
-        rows = connection.execute(
-            "SELECT "
-            + ", ".join(sorted(required | set(optional)))
-            + " FROM sessions ORDER BY session_id"
-        ).fetchall()
+        rows = budget.rows(
+            connection.execute(
+                "SELECT "
+                + ", ".join(sorted(required | set(optional)))
+                + " FROM sessions ORDER BY session_id"
+            )
+        )
         result: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
         for raw in rows:
             row = dict(raw)
+            if "metadata_json" in row:
+                budget.json_field(row["metadata_json"])
             if not label(row.get("session_id")):
                 malformed += 1
                 continue
@@ -122,11 +128,16 @@ def _read_database(
             )
             messages: list[dict[str, Any]] = []
             artifact = next(
-                (candidate for candidate in candidates if candidate.is_file()), None
+                (
+                    candidate
+                    for candidate in candidates
+                    if budget.candidate(candidate).is_file()
+                ),
+                None,
             )
             if artifact:
                 try:
-                    value = read_json(artifact)
+                    value = read_json(artifact, budget)
                     raw_messages = mapping(value).get("messages")
                     if isinstance(raw_messages, list):
                         messages = [
@@ -143,7 +154,7 @@ def _read_database(
         raise ValueError(f"Could not read Cline CLI database: {path}") from None
     finally:
         if connection is not None:
-            connection.close()
+            manager.__exit__(None, None, None)
 
 
 def _rank(

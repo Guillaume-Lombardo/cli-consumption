@@ -6,14 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     digest_records,
+    ensure_provider_sqlite_fields,
     finish_turn,
     iso,
     label,
     mapping,
     new_turn,
+    open_provider_sqlite,
     project,
-    reject_provider_file_symlink,
     timestamp,
 )
 from cli_consumption.adapters.base import UnsupportedProviderFormat
@@ -30,13 +32,14 @@ class AmazonQAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, tuple[str, str, dict[str, Any]]] = {}
         duplicates = malformed = 0
         for machine, home in sources:
-            database = home / "data.sqlite3"
+            database = budget.candidate(home / "data.sqlite3")
             if not database.is_file():
                 raise ValueError(f"Missing Amazon Q Developer CLI database: {database}")
-            rows, invalid = _read_database(database)
+            rows, invalid = _read_database(database, budget)
             malformed += invalid
             for directory, state in rows:
                 external_id = label(state.get("conversation_id"))
@@ -59,16 +62,16 @@ class AmazonQAdapter:
         return snapshot
 
 
-def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
+def _read_database(
+    path: Path, budget: ProviderInputBudget
+) -> tuple[list[tuple[str, dict[str, Any]]], int]:
     connection: sqlite3.Connection | None = None
     malformed = 0
     result: list[tuple[str, dict[str, Any]]] = []
     try:
-        reject_provider_file_symlink(path)
-        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        manager = open_provider_sqlite(path, budget)
+        connection = manager.__enter__()
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA trusted_schema=OFF")
-        connection.execute("PRAGMA query_only=ON")
         columns = {
             str(row["name"])
             for row in connection.execute('PRAGMA table_info("conversations")')
@@ -77,11 +80,12 @@ def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
             raise UnsupportedProviderFormat(
                 f"Unsupported Amazon Q Developer CLI database schema: {path}"
             )
-        for row in connection.execute(
-            "SELECT key, value FROM conversations ORDER BY key"
+        ensure_provider_sqlite_fields(connection, [("conversations", "value")])
+        for row in budget.rows(
+            connection.execute("SELECT key, value FROM conversations ORDER BY key")
         ):
             try:
-                value = json.loads(row["value"])
+                value = json.loads(budget.json_field(row["value"]))
             except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
                 malformed += 1
                 continue
@@ -96,7 +100,7 @@ def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
         ) from None
     finally:
         if connection is not None:
-            connection.close()
+            manager.__exit__(None, None, None)
 
 
 def _history(state: dict[str, Any]) -> list[dict[str, Any]]:

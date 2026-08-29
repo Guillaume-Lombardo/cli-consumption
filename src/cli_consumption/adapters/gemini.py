@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     iter_bounded_jsonl_bytes,
     read_bounded_bytes,
 )
@@ -38,6 +39,7 @@ class GeminiAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         del project_mappings  # Gemini stores only a one-way project hash.
         selected: dict[str, _Candidate] = {}
         duplicates = malformed = 0
@@ -45,10 +47,10 @@ class GeminiAdapter:
             temporary = home / "tmp"
             if not temporary.is_dir():
                 raise ValueError(f"Missing Gemini CLI temporary directory: {temporary}")
-            paths = sorted(temporary.glob("*/chats/session-*.json"))
-            paths.extend(sorted(temporary.glob("*/chats/session-*.jsonl")))
+            paths = budget.sorted_paths(temporary.glob("*/chats/session-*.json"))
+            paths.extend(budget.sorted_paths(temporary.glob("*/chats/session-*.jsonl")))
             for path in paths:
-                metadata, _, invalid, event_count, digest = _read_session(path)
+                metadata, _, invalid, event_count, digest = _read_session(path, budget)
                 malformed += invalid
                 external_id = _label(metadata.get("sessionId"), 512)
                 if external_id is None:
@@ -75,7 +77,7 @@ class GeminiAdapter:
             malformed_records=malformed,
         )
         for candidate in sorted(selected.values(), key=lambda item: item.external_id):
-            metadata, messages, _, _, _ = _read_session(candidate.path)
+            metadata, messages, _, _, _ = _read_session(candidate.path, budget)
             self._normalize(snapshot, candidate, metadata, messages)
         return snapshot
 
@@ -250,17 +252,14 @@ class GeminiAdapter:
 
 
 def _read_session(
-    path: Path,
+    path: Path, budget: ProviderInputBudget
 ) -> tuple[dict[str, Any], list[dict[str, Any]], int, int, str]:
     digest_builder = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest_builder.update(chunk)
-    digest = digest_builder.hexdigest()
     records: list[dict[str, Any]] = []
     malformed = 0
     if path.suffix == ".jsonl":
-        for line in iter_bounded_jsonl_bytes(path):
+        for line in iter_bounded_jsonl_bytes(path, budget):
+            digest_builder.update(line)
             if not line.strip():
                 continue
             try:
@@ -273,12 +272,14 @@ def _read_session(
             else:
                 malformed += 1
     else:
+        payload = read_bounded_bytes(path, budget)
+        digest_builder.update(payload)
         try:
-            record = json.loads(read_bounded_bytes(path))
+            record = json.loads(payload)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return {}, [], 1, 0, digest
+            return {}, [], 1, 0, digest_builder.hexdigest()
         if not isinstance(record, dict):
-            return {}, [], 1, 0, digest
+            return {}, [], 1, 0, digest_builder.hexdigest()
         records.append(record)
 
     metadata: dict[str, Any] = {}
@@ -327,7 +328,13 @@ def _read_session(
                         identifier := _label(message.get("id"), 512)
                     ):
                         messages[identifier] = message
-    return metadata, list(messages.values()), malformed, len(records), digest
+    return (
+        metadata,
+        list(messages.values()),
+        malformed,
+        len(records),
+        digest_builder.hexdigest(),
+    )
 
 
 def _usage(value: object) -> dict[str, int]:

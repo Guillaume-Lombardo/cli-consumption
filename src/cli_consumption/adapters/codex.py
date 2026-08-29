@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
     iter_bounded_jsonl_bytes,
-    reject_provider_file_symlink,
+    open_provider_sqlite,
 )
 from cli_consumption.models import TOKEN_FIELDS, Snapshot, empty_tokens
 
@@ -140,7 +141,8 @@ class CodexAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
-        selected, duplicates, discovery_malformed = self._discover(sources)
+        budget = ProviderInputBudget()
+        selected, duplicates, discovery_malformed = self._discover(sources, budget)
         snapshot = Snapshot(
             provider=self.name,
             duplicate_conversations=duplicates,
@@ -148,36 +150,45 @@ class CodexAdapter:
         )
         mappings = project_mappings or []
         for machine, path, event_count, digest in selected:
-            self._read_rollout(snapshot, machine, path, event_count, digest, mappings)
+            self._read_rollout(
+                snapshot, machine, path, event_count, digest, mappings, budget
+            )
         for machine, codex_home in sources:
             snapshot.subagents.extend(
-                self._read_subagents(codex_home / "state_5.sqlite", machine)
+                self._read_subagents(codex_home / "state_5.sqlite", machine, budget)
             )
         return snapshot
 
     def _read_subagents(
-        self, state_path: Path, source_machine: str
+        self,
+        state_path: Path,
+        source_machine: str,
+        budget: ProviderInputBudget,
     ) -> list[dict[str, Any]]:
-        if not state_path.is_file():
+        if not budget.candidate(state_path).is_file():
             return []
-        reject_provider_file_symlink(state_path)
-        connection = sqlite3.connect(f"file:{state_path}?mode=ro", uri=True)
+        manager = open_provider_sqlite(state_path, budget)
+        connection = manager.__enter__()
         connection.row_factory = sqlite3.Row
         try:
-            rows = connection.execute(
-                """
+            rows = list(
+                budget.rows(
+                    connection.execute(
+                        """
                 SELECT e.parent_thread_id, e.child_thread_id, e.status,
                        t.created_at_ms, t.updated_at_ms, t.agent_role,
                        t.tokens_used
                 FROM thread_spawn_edges e
                 LEFT JOIN threads t ON t.id = e.child_thread_id
                 ORDER BY t.created_at_ms, e.child_thread_id
-                """
-            ).fetchall()
+                        """
+                    )
+                )
+            )
         except sqlite3.OperationalError:
             return []
         finally:
-            connection.close()
+            manager.__exit__(None, None, None)
         return [
             {
                 "id": f"codex:{source_machine}:{row['child_thread_id']}",
@@ -195,7 +206,7 @@ class CodexAdapter:
         ]
 
     def _discover(
-        self, sources: list[tuple[str, Path]]
+        self, sources: list[tuple[str, Path]], budget: ProviderInputBudget
     ) -> tuple[list[tuple[str, Path, int, str]], int, int]:
         selected: dict[str, tuple[str, Path, int, str]] = {}
         duplicates = 0
@@ -204,11 +215,11 @@ class CodexAdapter:
             sessions = codex_home / "sessions"
             if not sessions.is_dir():
                 raise ValueError(f"Missing Codex sessions directory: {sessions}")
-            for path in sorted(sessions.rglob("*.jsonl")):
+            for path in budget.sorted_paths(sessions.rglob("*.jsonl")):
                 event_count = 0
                 conversation_id = ""
                 digest = hashlib.sha256()
-                for raw_line in iter_bounded_jsonl_bytes(path):
+                for raw_line in iter_bounded_jsonl_bytes(path, budget):
                     digest.update(raw_line)
                     try:
                         event = json.loads(raw_line)
@@ -240,9 +251,10 @@ class CodexAdapter:
         event_count: int,
         digest: str,
         mappings: list[tuple[str, str]],
+        budget: ProviderInputBudget,
     ) -> None:
         events: list[dict[str, Any]] = []
-        for line in iter_bounded_jsonl_bytes(path):
+        for line in iter_bounded_jsonl_bytes(path, budget):
             try:
                 event = json.loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError):

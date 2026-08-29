@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    iter_bounded_jsonl_bytes,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -35,6 +38,7 @@ class CopilotAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
+        budget = ProviderInputBudget()
         selected: dict[str, _Candidate] = {}
         duplicates = malformed = 0
         for machine, home in sources:
@@ -43,8 +47,8 @@ class CopilotAdapter:
                 raise ValueError(
                     f"Missing GitHub Copilot CLI session-state directory: {sessions}"
                 )
-            for path in sorted(sessions.glob("*/events.jsonl")):
-                events, invalid, digest = _read_events(path)
+            for path in budget.sorted_paths(sessions.glob("*/events.jsonl")):
+                events, invalid, digest = _read_events(path, budget)
                 malformed += invalid
                 session_id = _session_id(events)
                 if session_id is None:
@@ -71,7 +75,7 @@ class CopilotAdapter:
             malformed_records=malformed,
         )
         for candidate in sorted(selected.values(), key=lambda item: item.external_id):
-            events, _, _ = _read_events(candidate.path)
+            events, _, _ = _read_events(candidate.path, budget)
             self._normalize(snapshot, candidate, events, project_mappings or [])
         return snapshot
 
@@ -304,11 +308,13 @@ class CopilotAdapter:
         )
 
 
-def _read_events(path: Path) -> tuple[list[dict[str, Any]], int, str]:
+def _read_events(
+    path: Path, budget: ProviderInputBudget
+) -> tuple[list[dict[str, Any]], int, str]:
     digest = hashlib.sha256()
     events: list[dict[str, Any]] = []
     malformed = 0
-    for line in iter_bounded_jsonl_bytes(path):
+    for line in iter_bounded_jsonl_bytes(path, budget):
         digest.update(line)
         if not line.strip():
             continue

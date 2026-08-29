@@ -50,6 +50,14 @@ compatibility status is one of:
 The diagnostic is deliberately coarse: it does not persist collected records or emit
 local paths, provider identifiers, record counts, malformed values, or parser errors.
 
+All adapters share the provider-input limits documented in the privacy boundary:
+10,000 discovered candidates and 512 MiB of actual provider-file reads per collection;
+64 MiB per monolithic JSON file; 256 MiB per JSONL file and 8 MiB per line; and, for
+SQLite stores, 512 MiB cumulatively across databases plus active sidecars, 250,000
+selected rows, 8 MiB per structured field, and 256 MiB across structured fields.
+Exceeding a limit aborts collection with a generic code rather than silently producing
+a partial snapshot.
+
 ## Mistral Vibe CLI
 
 Mistral Vibe CLI reads top-level session directories under

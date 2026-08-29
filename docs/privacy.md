@@ -55,10 +55,18 @@ constant-time bearer-token comparison when authentication is configured and refu
 unauthenticated non-local bind through the CLI.
 
 Local parsing caps monolithic JSON files at 64 MiB, JSONL files at 256 MiB with an
-8 MiB per-line limit, and the normalized snapshot at 250,000 records during
-construction. Direct provider file symlinks are rejected. Limit failures expose only
-generic codes, never paths or record content. The sync client requires HTTPS beyond
-loopback unless the operator uses the explicit `--allow-insecure` override.
+8 MiB per-line limit, 512 MiB of actual provider-file reads, and candidate discovery at
+10,000 entries per provider collection. JSON and JSONL descriptors refuse symlinks,
+verify file identity, and count bytes during reading. Untrusted provider SQLite inputs
+share 512 MiB cumulatively across databases and active WAL, SHM, or rollback-journal
+sidecars, 250,000 selected rows, 8 MiB per structured field, and 256 MiB for structured
+fields. SQLite length preflights apply before values reach Python. Database and sidecar
+identities and growth are checked around extraction while retaining live WAL support;
+the residual transient-mutation race is documented in the architecture. The
+normalized snapshot remains capped at 250,000 records during construction. Limit
+failures expose only generic codes, never paths or record content. The sync client
+requires HTTPS beyond loopback unless the operator uses the explicit
+`--allow-insecure` override.
 
 An exported database still reveals work patterns, model choices, project names, and
 activity times. Treat it as private operational data. Restrict filesystem and database

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes, read_json
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -454,7 +455,7 @@ def _finish_turn(turn: dict[str, Any], timestamp: datetime | None) -> None:
 
 def _read_object(path: Path) -> dict[str, Any] | None:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = read_json(path)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
     return value if isinstance(value, dict) else None
@@ -465,11 +466,7 @@ def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int, str]:
     records: list[dict[str, Any]] = []
     malformed = 0
     try:
-        handle = path.open("rb")
-    except OSError:
-        return records, malformed, digest.hexdigest()
-    with handle:
-        for line in handle:
+        for line in iter_bounded_jsonl_bytes(path):
             digest.update(line)
             if not line.strip():
                 continue
@@ -482,6 +479,8 @@ def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int, str]:
                 records.append(record)
             else:
                 malformed += 1
+    except OSError:
+        return records, malformed, digest.hexdigest()
     return records, malformed, digest.hexdigest()
 
 

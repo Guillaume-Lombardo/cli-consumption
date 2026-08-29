@@ -11,6 +11,7 @@ import typer
 from sqlalchemy.engine import Engine
 
 from cli_consumption import __version__
+from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.registry import (
     ADAPTER_SPECS,
     AdapterSpec,
@@ -21,7 +22,7 @@ from cli_consumption.adapters.registry import (
 )
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
-from cli_consumption.models import Snapshot
+from cli_consumption.models import Snapshot, SnapshotValidationError
 from cli_consumption.reporting import parse_export_window
 from cli_consumption.retention import retain_before
 from cli_consumption.storage import (
@@ -74,7 +75,7 @@ def providers(
     """Show implemented and planned CLI adapters."""
     if json_output:
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "providers": [
                 diagnose_provider(spec, default_source_path(spec)).to_dict()
                 for spec in ADAPTER_SPECS
@@ -117,9 +118,23 @@ def collect(
             help="NAME=PATH_PREFIX project mapping. Longest matching prefix wins.",
         ),
     ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help="Refuse ingestion when any malformed provider record was skipped.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit a deterministic JSON result.")
+    ] = False,
 ) -> None:
     """Collect one or more local/copied CLI data directories into SQL storage."""
     snapshots = _collect_snapshots(provider, source, project)
+    if strict and any(snapshot.malformed_records for snapshot in snapshots):
+        raise typer.BadParameter(
+            "--strict refused snapshots containing malformed provider records"
+        )
     engine = _open_database(database)
     try:
         results = [
@@ -127,6 +142,28 @@ def collect(
         ]
     finally:
         engine.dispose()
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "ingestions": [
+                        {
+                            "provider": snapshot.provider,
+                            "run_id": result.run_id,
+                            "received": result.received,
+                            "written": result.written,
+                            "skipped": result.skipped,
+                            "malformed": snapshot.malformed_records,
+                            "duplicates": snapshot.duplicate_conversations,
+                        }
+                        for snapshot, result in results
+                    ]
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return
     for snapshot, result in results:
         typer.echo(
             f"Ingestion {snapshot.provider} {result.run_id}: "
@@ -158,6 +195,13 @@ def sync(
         str,
         typer.Option(help="Environment variable containing the API bearer token."),
     ] = "CLI_CONSUMPTION_API_TOKEN",
+    allow_insecure: Annotated[
+        bool,
+        typer.Option(
+            "--allow-insecure",
+            help="Allow plain HTTP to a non-loopback collector on a trusted network.",
+        ),
+    ] = False,
 ) -> None:
     """Collect locally and send metadata-only records to a central collector."""
     try:
@@ -170,7 +214,12 @@ def sync(
     snapshots = _collect_snapshots(provider, source, project)
     token = os.environ.get(token_env)
     for snapshot in snapshots:
-        result = send_snapshot(snapshot, endpoint, token)
+        try:
+            result = send_snapshot(
+                snapshot, endpoint, token, allow_insecure=allow_insecure
+            )
+        except ValueError as error:
+            raise typer.BadParameter(str(error)) from None
         typer.echo(
             f"Remote ingestion {snapshot.provider} {result['run_id']}: "
             f"{result['written']} written, {result['skipped']} unchanged."
@@ -213,6 +262,9 @@ def export_command(
             ),
         ),
     ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit a deterministic JSON result.")
+    ] = False,
 ) -> None:
     """Write a self-contained HTML dashboard and optional detailed CSV tables."""
     if share_safe and not dashboard:
@@ -250,7 +302,19 @@ def export_command(
             paths.append(dashboard_path)
     finally:
         engine.dispose()
-    typer.echo(f"Wrote {len(paths)} files to {output.resolve()}")
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "files": [path.name for path in paths],
+                    "written": len(paths),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        typer.echo(f"Wrote {len(paths)} files to {output.resolve()}")
 
 
 @app.command("retention")
@@ -273,6 +337,9 @@ def retention_command(
             help="Apply the deletion. Without this flag, only preview counts.",
         ),
     ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit a deterministic JSON result.")
+    ] = False,
 ) -> None:
     """Preview or delete normalized metadata older than a retention window."""
     cutoff = datetime.now(UTC) - timedelta(days=keep_days)
@@ -281,12 +348,27 @@ def retention_command(
         result = retain_before(engine, cutoff, apply=apply)
     finally:
         engine.dispose()
-    mode = "Applied" if result.applied else "Preview"
-    typer.echo(
-        f"{mode} retention before {result.cutoff.isoformat()}: "
-        f"{result.conversations} conversations, {result.subagents} subagents, "
-        f"{result.ingestion_runs} ingestion runs."
-    )
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "applied": result.applied,
+                    "cutoff": result.cutoff.isoformat(),
+                    "conversations": result.conversations,
+                    "subagents": result.subagents,
+                    "ingestion_runs": result.ingestion_runs,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        mode = "Applied" if result.applied else "Preview"
+        typer.echo(
+            f"{mode} retention before {result.cutoff.isoformat()}: "
+            f"{result.conversations} conversations, {result.subagents} subagents, "
+            f"{result.ingestion_runs} ingestion runs."
+        )
 
 
 @app.command()
@@ -338,9 +420,7 @@ def _collect_snapshots(
     mappings = _parse_project_mappings(project_values or [])
     if spec is not None:
         return [
-            spec.adapter_type().collect(
-                _parse_sources(source_values or [], spec), mappings
-            )
+            _collect_adapter(spec, _parse_sources(source_values or [], spec), mappings)
         ]
 
     snapshots: list[Snapshot] = []
@@ -353,7 +433,7 @@ def _collect_snapshots(
             ]
             if matched:
                 matched_labels.update(label for label, _ in matched)
-                snapshots.append(candidate.adapter_type().collect(matched, mappings))
+                snapshots.append(_collect_adapter(candidate, matched, mappings))
         unmatched = [label for label, _ in sources if label not in matched_labels]
         if unmatched:
             raise typer.BadParameter(
@@ -366,11 +446,24 @@ def _collect_snapshots(
             path = default_source_path(candidate)
             if has_provider_data(candidate, path):
                 snapshots.append(
-                    candidate.adapter_type().collect([(machine, path)], mappings)
+                    _collect_adapter(candidate, [(machine, path)], mappings)
                 )
     if not snapshots:
         raise typer.BadParameter("No supported provider data detected.")
     return snapshots
+
+
+def _collect_adapter(
+    spec: AdapterSpec,
+    sources: list[tuple[str, Path]],
+    mappings: list[tuple[str, str]],
+) -> Snapshot:
+    try:
+        return spec.adapter_type().collect(sources, mappings)
+    except (ProviderDataLimitError, SnapshotValidationError):
+        raise typer.BadParameter(
+            f"Provider {spec.name!r} data exceeds collection safety limits."
+        ) from None
 
 
 def _parse_sources(

@@ -14,6 +14,7 @@ from cli_consumption.adapters._shared import (
     new_turn,
     project,
     read_json,
+    reject_provider_file_symlink,
     timestamp,
     tokens,
 )
@@ -66,6 +67,7 @@ def _read_database(
     connection: sqlite3.Connection | None = None
     malformed = 0
     try:
+        reject_provider_file_symlink(path)
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")

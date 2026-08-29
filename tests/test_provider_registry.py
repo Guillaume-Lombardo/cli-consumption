@@ -87,6 +87,29 @@ def test_registry_is_complete_unique_and_consistent() -> None:
     assert all(spec.adapter_type().name == spec.name for spec in ADAPTER_SPECS)
     assert all(spec.markers for spec in ADAPTER_SPECS)
     assert all(spec.support == "supported" for spec in ADAPTER_SPECS)
+    assert {spec.name: spec.token_semantics for spec in ADAPTER_SPECS} == {
+        "aider": "additive",
+        "amazon-q": "unavailable",
+        "amp": "additive",
+        "codex": "additive",
+        "copilot": "conversation-aggregate",
+        "continue": "additive",
+        "crush": "context-snapshot",
+        "cursor": "unavailable",
+        "gemini": "additive",
+        "goose": "additive",
+        "grok": "additive",
+        "claude": "additive",
+        "cline": "additive",
+        "kilo": "additive",
+        "kimi": "additive",
+        "mistral-vibe": "conversation-aggregate",
+        "opencode": "additive",
+        "openhands": "additive",
+        "pi": "additive",
+        "plandex": "additive",
+        "qwen": "additive",
+    }
 
     registered_names = {
         name for spec in ADAPTER_SPECS for name in (spec.name, *spec.aliases)
@@ -99,6 +122,16 @@ def test_registry_resolves_canonical_names_and_aliases() -> None:
     assert claude is not None
     assert resolve_adapter_spec("claude-code") is claude
     assert resolve_adapter_spec("unknown") is None
+
+
+def test_every_registered_adapter_has_a_synthetic_privacy_canary_contract() -> None:
+    tests = Path(__file__).parent
+    for spec in ADAPTER_SPECS:
+        test_module = tests / f"test_{spec.name.replace('-', '_')}_adapter.py"
+        source = test_module.read_text(encoding="utf-8")
+        assert "CANARY" in source or "privacy canary" in source
+        assert "snapshot.to_dict()" in source
+        assert "not in" in source
 
 
 def test_adapter_specs_are_immutable() -> None:

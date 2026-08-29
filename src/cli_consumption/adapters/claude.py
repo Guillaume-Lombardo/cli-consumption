@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -55,19 +56,18 @@ class ClaudeAdapter:
                 digest = hashlib.sha256()
                 count = 0
                 session_id: str | None = None
-                with path.open("rb") as handle:
-                    for line in handle:
-                        digest.update(line)
-                        try:
-                            event = json.loads(line)
-                        except (json.JSONDecodeError, UnicodeDecodeError):
-                            malformed += 1
-                            continue
-                        if not isinstance(event, dict):
-                            malformed += 1
-                            continue
-                        count += 1
-                        session_id = session_id or _label(event.get("sessionId"), 512)
+                for line in iter_bounded_jsonl_bytes(path):
+                    digest.update(line)
+                    try:
+                        event = json.loads(line)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        malformed += 1
+                        continue
+                    if not isinstance(event, dict):
+                        malformed += 1
+                        continue
+                    count += 1
+                    session_id = session_id or _label(event.get("sessionId"), 512)
                 content_hash = digest.hexdigest()
                 session_id = (
                     session_id
@@ -95,14 +95,13 @@ class ClaudeAdapter:
         mappings: list[tuple[str, str]],
     ) -> None:
         events: list[dict[str, Any]] = []
-        with path.open("rb") as handle:
-            for line in handle:
-                try:
-                    event = json.loads(line)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    continue
-                if isinstance(event, dict):
-                    events.append(event)
+        for line in iter_bounded_jsonl_bytes(path):
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(event, dict):
+                events.append(event)
 
         conversation_id = f"claude:{session_id}"
         timestamps = [

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -266,18 +267,17 @@ def _read_session(path: Path, machine: str) -> tuple[_Session | None, int]:
     digest = hashlib.sha256()
     entries: list[dict[str, Any]] = []
     malformed = 0
-    with path.open("rb") as handle:
-        for line in handle:
-            digest.update(line)
-            try:
-                entry = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                malformed += 1
-                continue
-            if not isinstance(entry, dict):
-                malformed += 1
-                continue
-            entries.append(entry)
+    for line in iter_bounded_jsonl_bytes(path):
+        digest.update(line)
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            malformed += 1
+            continue
+        if not isinstance(entry, dict):
+            malformed += 1
+            continue
+        entries.append(entry)
 
     header = next((entry for entry in entries if entry.get("type") == "session"), None)
     if header is None or (external_id := _label(header.get("id"), 512)) is None:

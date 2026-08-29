@@ -11,6 +11,7 @@ from cli_consumption.adapters._shared import (
     iso,
     label,
     new_turn,
+    read_json,
     timestamp,
     tokens,
 )
@@ -68,7 +69,7 @@ def _read_messages(directory: Path) -> tuple[list[dict[str, Any]], int]:
     malformed = 0
     for path in sorted(directory.glob("*.json")):
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = read_json(path)
         except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             malformed += 1
             continue

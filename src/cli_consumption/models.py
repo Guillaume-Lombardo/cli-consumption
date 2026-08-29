@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
-from typing import Annotated, Any, Literal
+from collections.abc import Iterable
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Annotated, Any, Literal, SupportsIndex
 
 from pydantic import (
     AfterValidator,
@@ -15,6 +16,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from cli_consumption.timestamps import canonical_timestamp
 
 CURRENT_SNAPSHOT_SCHEMA = 1
 MIN_SUPPORTED_SNAPSHOT_SCHEMA = 1
@@ -55,13 +58,7 @@ Normalized512 = Annotated[
 
 
 def _timestamp(value: str) -> str:
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ValueError("invalid timestamp") from error
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError("timestamp must include a timezone")
-    return value
+    return canonical_timestamp(value)
 
 
 Timestamp = Annotated[
@@ -325,8 +322,29 @@ class Snapshot:
     duplicate_conversations: int = 0
     schema_version: int = CURRENT_SNAPSHOT_SCHEMA
 
+    def __post_init__(self) -> None:
+        for name in _SNAPSHOT_COLLECTIONS:
+            values = getattr(self, name)
+            setattr(self, name, _SnapshotRecordList(self, values))
+        if sum(len(getattr(self, name)) for name in _SNAPSHOT_COLLECTIONS) > (
+            MAX_SNAPSHOT_RECORDS
+        ):
+            raise SnapshotValidationError("snapshot_too_large")
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "provider": self.provider,
+            **{
+                name: [deepcopy(record) for record in getattr(self, name)]
+                for name in _SNAPSHOT_COLLECTIONS
+            },
+            "malformed_records": self.malformed_records,
+            "duplicate_conversations": self.duplicate_conversations,
+            "schema_version": self.schema_version,
+        }
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Snapshot:
+        return Snapshot.from_dict(self.to_dict())
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Snapshot:
@@ -336,3 +354,44 @@ class Snapshot:
             raise SnapshotValidationError() from error
         values = payload.model_dump()
         return cls(**values)
+
+
+_SNAPSHOT_COLLECTIONS = (
+    "conversations",
+    "turns",
+    "model_calls",
+    "tool_calls",
+    "work_items",
+    "context_samples",
+    "turn_settings",
+    "compaction_events",
+    "subagents",
+)
+
+
+class _SnapshotRecordList(list[dict[str, Any]]):
+    def __init__(self, owner: Snapshot, values: list[dict[str, Any]]) -> None:
+        self._owner = owner
+        super().__init__(values)
+
+    def _require_capacity(self, added: int) -> None:
+        total = sum(len(getattr(self._owner, name)) for name in _SNAPSHOT_COLLECTIONS)
+        if total + added > MAX_SNAPSHOT_RECORDS:
+            raise SnapshotValidationError("snapshot_too_large")
+
+    def append(self, value: dict[str, Any]) -> None:
+        self._require_capacity(1)
+        super().append(value)
+
+    def extend(self, values: Iterable[dict[str, Any]]) -> None:
+        materialized = list(values)
+        self._require_capacity(len(materialized))
+        super().extend(materialized)
+
+    def insert(self, index: SupportsIndex, value: dict[str, Any]) -> None:
+        self._require_capacity(1)
+        super().insert(index, value)
+
+    def __iadd__(self, values: Iterable[dict[str, Any]]) -> _SnapshotRecordList:
+        self.extend(values)
+        return self

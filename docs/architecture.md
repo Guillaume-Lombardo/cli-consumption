@@ -32,7 +32,7 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
   provide an offline HTML view by default, and stream deterministic portable CSV tables
   when explicitly requested.
 - `adapters.registry`: is the single source for canonical names, aliases, adapter
-  classes, default homes, detection markers, and support state.
+  classes, default homes, detection markers, support state, and token semantics.
 - `cli`: exposes the same capabilities through one executable.
 
 When Codex exposes its local thread graph, the adapter also records metadata-only
@@ -64,27 +64,40 @@ or platform ingress. Read access is not exposed. The collector limits bodies to 
 including chunked requests, accepts snapshot schema v1, and caps a snapshot at 250,000
 normalized records. `/api/v1/capabilities` publishes these limits and the supported
 schema range so clients can fail before uploading incompatible data.
+The sync client refuses plain HTTP beyond loopback unless the operator passes the
+explicit `--allow-insecure` override for a trusted network.
 
 ## Storage
 
 SQLite is the zero-configuration default. PostgreSQL is selected by passing a
 `postgresql+psycopg://` URL. Every database open upgrades through packaged Alembic
-migrations. An unversioned database is adopted only when its tables exactly match a
-published schema; an unknown, newer, or locally modified schema is refused. Migration
-revisions support SQLite and PostgreSQL and define a bounded downgrade, but application
-rollback can still require restoring a pre-upgrade backup. Operators must upgrade the
-server first and avoid mixed-version access during migration. The detailed policy is
-recorded in [ADR 0001](decisions/0001-versioned-schema-migrations.md).
+migrations. An unversioned database is adopted only when its columns, SQL types,
+nullability, primary and foreign keys, and indexes exactly match a published schema; an
+unknown, newer, or locally modified schema is refused. Migration revisions support
+SQLite and PostgreSQL and define a bounded downgrade, but application rollback can
+still require restoring a pre-upgrade backup. Operators must upgrade the server first
+and avoid mixed-version access during migration. The detailed policy is recorded in
+[ADR 0001](decisions/0001-versioned-schema-migrations.md).
 
 Conversation records use a provider-qualified stable ID. Repeated ingestion skips an
 identical or less complete record. A more complete copy atomically replaces the
 conversation and its child records.
+
+Subagent relationships have a provider-and-source-machine lifecycle. Every represented
+scope is replaced atomically on ingestion, including when its latest snapshot contains
+no edges, so deleted provider relationships do not remain indefinitely.
 
 Workflow analytics use additive child tables: `work_items`, `context_samples`,
 `turn_settings`, and `compaction_events`. Snapshot schema v1 validates every record,
 rejects unknown fields, enforces normalized labels and relationships, and exposes only
 generic validation errors. A newer client sent to an older strict API is rejected
 before ingestion, so central deployments must upgrade the server first.
+
+Provider input is bounded before persistence. Monolithic JSON files are capped at
+64 MiB, JSONL files at 256 MiB with an 8 MiB per-line limit, and the complete in-memory
+normalized snapshot at 250,000 records. Direct symlinks to provider files are rejected.
+These limits use generic error codes and apply to local collection as well as snapshots
+later sent to the API.
 
 Retention is an explicit two-step operation: `retention --keep-days N` reports what
 would be deleted, while `--apply` deletes old conversations (with cascading children),
@@ -103,3 +116,9 @@ each table, and neutralizes text that spreadsheet software could execute as a fo
 Adapters are introduced one at a time because local data formats are undocumented or
 can evolve independently. Each adapter must have synthetic fixtures, format detection,
 privacy tests, and a documented support level before it appears as supported.
+
+Timestamp fields are canonical fixed-width UTC strings after strict snapshot
+validation and schema revision `0003`. Reporting and retention bind values in the same
+form and use direct indexed predicates with explicit null branches. The representation,
+migration, and rollback boundary are documented in
+[ADR 0002](decisions/0002-canonical-utc-timestamps.md).

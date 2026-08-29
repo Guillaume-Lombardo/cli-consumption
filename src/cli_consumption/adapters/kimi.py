@@ -9,6 +9,7 @@ from cli_consumption.adapters._shared import (
     digest_records,
     finish_turn,
     iso,
+    iter_bounded_jsonl_bytes,
     label,
     mapping,
     new_turn,
@@ -65,7 +66,7 @@ def _read_wire(path: Path) -> tuple[list[dict[str, Any]], int]:
     records: list[dict[str, Any]] = []
     malformed = 0
     try:
-        for raw in path.read_text(encoding="utf-8").splitlines():
+        for raw in iter_bounded_jsonl_bytes(path):
             if not raw.strip():
                 continue
             try:

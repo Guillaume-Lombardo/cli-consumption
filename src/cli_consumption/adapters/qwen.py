@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -282,20 +283,19 @@ def _read_records(path: Path) -> tuple[list[dict[str, Any]], int, str]:
     digest = hashlib.sha256()
     records: list[dict[str, Any]] = []
     malformed = 0
-    with path.open("rb") as handle:
-        for line in handle:
-            digest.update(line)
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                malformed += 1
-                continue
-            if isinstance(record, dict):
-                records.append(record)
-            else:
-                malformed += 1
+    for line in iter_bounded_jsonl_bytes(path):
+        digest.update(line)
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            malformed += 1
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+        else:
+            malformed += 1
     return records, malformed, digest.hexdigest()
 
 

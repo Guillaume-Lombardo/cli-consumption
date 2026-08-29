@@ -6,11 +6,12 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import DateTime, and_, cast, exists, func, or_, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql import Select
 
 from cli_consumption.storage import TABLES, Conversation
+from cli_consumption.timestamps import canonical_timestamp
 
 DATE_VALUE = re.compile(r"\d{4}-\d{2}-\d{2}")
 CONVERSATION_CHILDREN = frozenset(
@@ -104,7 +105,7 @@ def report_statement(
             statement = statement.where(_subagent_belongs_to_selection(table, selected))
         elif table_name == "ingestion_runs":
             statement = statement.where(
-                _timestamp_conditions(connection, table.c.ingested_at, active_window)
+                _timestamp_conditions(table.c.ingested_at, active_window)
             )
     return statement.order_by(*table.primary_key)
 
@@ -116,15 +117,15 @@ def _selected_conversations(
     statement = select(table.c.id)
     if not window.bounded:
         return statement
-    started = _timestamp_expression(connection, table.c.started_at)
-    ended = _timestamp_expression(connection, table.c.ended_at)
-    first_activity = func.coalesce(started, ended)
-    last_activity = func.coalesce(ended, started)
-    conditions = [first_activity.is_not(None), last_activity.is_not(None)]
+    started = table.c.started_at
+    ended = table.c.ended_at
+    conditions = [or_(started.is_not(None), ended.is_not(None))]
     if window.since is not None:
-        conditions.append(last_activity >= _bound_expression(connection, window.since))
+        bound = canonical_timestamp(window.since)
+        conditions.append(or_(ended >= bound, and_(ended.is_(None), started >= bound)))
     if window.until is not None:
-        conditions.append(first_activity < _bound_expression(connection, window.until))
+        bound = canonical_timestamp(window.until)
+        conditions.append(or_(started < bound, and_(started.is_(None), ended < bound)))
     return statement.where(and_(*conditions))
 
 
@@ -151,29 +152,13 @@ def _subagent_belongs_to_selection(table: Any, selected: Select[Any]) -> Any:
     return or_(parent, child)
 
 
-def _timestamp_conditions(
-    connection: Connection, column: Any, window: ExportWindow
-) -> Any:
-    value = _timestamp_expression(connection, column)
-    conditions = [value.is_not(None)]
+def _timestamp_conditions(column: Any, window: ExportWindow) -> Any:
+    conditions = [column.is_not(None)]
     if window.since is not None:
-        conditions.append(value >= _bound_expression(connection, window.since))
+        conditions.append(column >= canonical_timestamp(window.since))
     if window.until is not None:
-        conditions.append(value < _bound_expression(connection, window.until))
+        conditions.append(column < canonical_timestamp(window.until))
     return and_(*conditions)
-
-
-def _timestamp_expression(connection: Connection, column: Any) -> Any:
-    if connection.dialect.name == "sqlite":
-        return func.datetime(column)
-    return cast(column, DateTime(timezone=True))
-
-
-def _bound_expression(connection: Connection, value: datetime) -> Any:
-    instant = value.astimezone(UTC)
-    if connection.dialect.name == "sqlite":
-        return func.datetime(instant)
-    return instant
 
 
 def _parse_bound(value: str | None, *, end: bool) -> datetime | None:
@@ -196,7 +181,7 @@ def _parse_bound(value: str | None, *, end: bool) -> datetime | None:
 
 
 def _utc_iso(value: datetime | None) -> str | None:
-    return value.astimezone(UTC).isoformat() if value is not None else None
+    return canonical_timestamp(value) if value is not None else None
 
 
 def _day_floor(value: datetime | None) -> datetime | None:

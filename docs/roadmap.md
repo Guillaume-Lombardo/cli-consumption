@@ -14,6 +14,11 @@
 - Versioned SQLite/PostgreSQL migrations, safe legacy adoption, and retention previews
 - Central provider registry with privacy-minimized compatibility diagnostics
 - Deterministic, streamed, time-bounded exports with spreadsheet-safe CSV cells
+- Exact legacy-schema adoption, bounded provider inputs, authoritative subagent-scope
+  replacement, and HTTPS-by-default synchronization
+- Deterministic JSON results for collection, export, and retention automation
+- Canonical fixed-width UTC timestamp storage with bounded legacy migration and
+  indexable reporting and retention predicates
 
 ## Next provider increments
 

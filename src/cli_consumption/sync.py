@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
+from urllib.parse import urlsplit
+
 import httpx
 
 from cli_consumption.models import CURRENT_SNAPSHOT_SCHEMA, Snapshot
@@ -10,7 +13,10 @@ def send_snapshot(
     endpoint: str,
     token: str | None = None,
     timeout: float = 60.0,
+    *,
+    allow_insecure: bool = False,
 ) -> dict[str, int | str]:
+    _require_secure_endpoint(endpoint, allow_insecure=allow_insecure)
     payload_to_send = Snapshot.from_dict(snapshot.to_dict()).to_dict()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     capabilities = httpx.get(
@@ -37,6 +43,25 @@ def send_snapshot(
     ):
         raise ValueError("Collector returned an invalid response")
     return payload
+
+
+def _require_secure_endpoint(endpoint: str, *, allow_insecure: bool) -> None:
+    parsed = urlsplit(endpoint)
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Collector URL must not contain credentials")
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme != "http" or parsed.hostname is None:
+        raise ValueError("Collector endpoint must be an HTTP(S) URL")
+    try:
+        loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        loopback = parsed.hostname.lower() == "localhost"
+    if not loopback and not allow_insecure:
+        raise ValueError(
+            "Remote collector requires HTTPS; pass --allow-insecure explicitly "
+            "only on a trusted network"
+        )
 
 
 def _require_compatible_schema(payload: object) -> None:

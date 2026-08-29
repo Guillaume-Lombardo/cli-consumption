@@ -30,6 +30,12 @@ errors, and the documented server-first upgrade sequence. Export changes must pr
 deterministic ordering, bounded-memory CSV streaming, complete selected conversation
 graphs, and spreadsheet-formula neutralization.
 
+Provider readers must use the bounded file and JSONL helpers in `adapters/_shared.py`,
+must not follow direct provider-file symlinks, and must stay within the shared snapshot
+record budget. Every registered adapter test module must include a synthetic canary and
+assert its absence from the normalized snapshot; shared privacy tests cover all later
+output surfaces.
+
 ## Validate and review
 
 Run the quality gates documented in `AGENTS.md`, inspect the complete diff, then open a

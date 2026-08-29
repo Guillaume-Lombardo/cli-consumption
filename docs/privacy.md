@@ -52,6 +52,12 @@ records, constrain accepted fields, and never evaluate embedded content. The API
 constant-time bearer-token comparison when authentication is configured and refuses an
 unauthenticated non-local bind through the CLI.
 
+Local parsing caps monolithic JSON files at 64 MiB, JSONL files at 256 MiB with an
+8 MiB per-line limit, and the normalized snapshot at 250,000 records during
+construction. Direct provider file symlinks are rejected. Limit failures expose only
+generic codes, never paths or record content. The sync client requires HTTPS beyond
+loopback unless the operator uses the explicit `--allow-insecure` override.
+
 An exported database still reveals work patterns, model choices, project names, and
 activity times. Treat it as private operational data. Restrict filesystem and database
 access, use TLS for remote collection, rotate tokens, and define a retention policy
@@ -82,9 +88,14 @@ their own timestamp. CSV output neutralizes leading spreadsheet formula and cont
 prefixes with an apostrophe, but still contains detailed normalized operational data.
 
 Provider diagnostics inspect local stores transiently and emit only provider name,
-documented aliases, support state, and one coarse compatibility status. They do not
-persist snapshots or reveal paths, conversation identifiers, record counts, malformed
-values, or exception text.
+documented aliases, support state, documented token semantics, and one coarse
+compatibility status. They do not persist snapshots or reveal paths, conversation
+identifiers, record counts, malformed values, or exception text.
+
+Every registered adapter has a synthetic canary regression at the extraction boundary.
+Shared contract tests then check that prohibited content is absent from snapshots, SQL,
+API requests and errors, CSV, HTML, logs, and malformed-input diagnostics. This layered
+contract is required for every newly registered provider.
 
 Retention removes normalized rows, not provider source files, existing exports,
 database backups, database engine logs, reverse-proxy logs, or snapshots already sent

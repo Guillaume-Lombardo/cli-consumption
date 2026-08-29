@@ -9,6 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import (
+    iter_bounded_jsonl_bytes,
+    reject_provider_file_symlink,
+)
 from cli_consumption.models import TOKEN_FIELDS, Snapshot, empty_tokens
 
 OUTSIDE_PROJECT = "outside-project"
@@ -156,6 +160,7 @@ class CodexAdapter:
     ) -> list[dict[str, Any]]:
         if not state_path.is_file():
             return []
+        reject_provider_file_symlink(state_path)
         connection = sqlite3.connect(f"file:{state_path}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         try:
@@ -203,22 +208,19 @@ class CodexAdapter:
                 event_count = 0
                 conversation_id = ""
                 digest = hashlib.sha256()
-                with path.open("rb") as handle:
-                    for raw_line in handle:
-                        digest.update(raw_line)
-                        try:
-                            event = json.loads(raw_line)
-                        except (json.JSONDecodeError, UnicodeDecodeError):
-                            malformed += 1
-                            continue
-                        if not isinstance(event, dict):
-                            malformed += 1
-                            continue
-                        event_count += 1
-                        if event.get("type") == "session_meta":
-                            conversation_id = str(
-                                event.get("payload", {}).get("id", "")
-                            )
+                for raw_line in iter_bounded_jsonl_bytes(path):
+                    digest.update(raw_line)
+                    try:
+                        event = json.loads(raw_line)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        malformed += 1
+                        continue
+                    if not isinstance(event, dict):
+                        malformed += 1
+                        continue
+                    event_count += 1
+                    if event.get("type") == "session_meta":
+                        conversation_id = str(event.get("payload", {}).get("id", ""))
                 conversation_id = conversation_id or path.stem
                 candidate = (machine, path, event_count, digest.hexdigest())
                 previous = selected.get(conversation_id)
@@ -240,14 +242,13 @@ class CodexAdapter:
         mappings: list[tuple[str, str]],
     ) -> None:
         events: list[dict[str, Any]] = []
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, dict):
-                    events.append(event)
+        for line in iter_bounded_jsonl_bytes(path):
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(event, dict):
+                events.append(event)
 
         metadata: dict[str, Any] = next(
             (

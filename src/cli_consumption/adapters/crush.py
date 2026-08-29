@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import read_json, reject_provider_file_symlink
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -269,7 +270,7 @@ def _discover_databases(home: Path) -> tuple[list[tuple[Path, str | None]], int]
     if not registry.is_file():
         return [], 0
     try:
-        value = json.loads(registry.read_text(encoding="utf-8"))
+        value = read_json(registry)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         raise ValueError(f"Could not read Crush project registry: {registry}") from None
 
@@ -318,6 +319,7 @@ def _read_database(
     path: Path, machine: str, directory: str | None
 ) -> tuple[list[_Conversation], int]:
     try:
+        reject_provider_file_symlink(path)
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")

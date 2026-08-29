@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import reject_provider_file_symlink
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -273,6 +274,7 @@ class KiloAdapter:
 
 def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
     try:
+        reject_provider_file_symlink(path)
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")

@@ -33,8 +33,11 @@ ingests each metadata-only snapshot independently. With no explicit source it ch
 the local default homes; repeated `--source` paths are filtered by detected format.
 
 Provider metadata is maintained in one registry: canonical name, aliases, adapter,
-default home, detection markers, and support state. `providers --json` uses that same
-registry to check default local stores and emits deterministic schema-v1 JSON. Its
+default home, detection markers, support state, and token semantics. `providers --json`
+uses that same registry to check default local stores and emits deterministic schema-v2
+JSON. Token semantics are one of `additive`, `conversation-aggregate`,
+`context-snapshot`, or `unavailable`; a missing counter is never presented as a measured
+zero in provider capability output. Its
 compatibility status is one of:
 
 - `no-data`: no registered detection marker was found;

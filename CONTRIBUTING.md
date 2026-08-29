@@ -45,6 +45,13 @@ checks pass and review is complete.
 
 ## Release
 
+The source distribution is deliberately limited to the project metadata, README,
+license notices, and complete `src/cli_consumption` package. It excludes tests and
+repository-only automation; Hatchling also carries `.gitignore` so downstream builds
+continue to exclude local artifacts. `tests/test_packaging.py` builds the sdist,
+reconstructs a wheel from it, and verifies both artifact manifests; update that
+contract when adding new runtime package data.
+
 Update the project version with `uv version <version>` and include the resulting
 `pyproject.toml` and `uv.lock` changes in a pull request. When that version change is
 squash-merged into `main`, the release workflow reruns the quality gates, builds the

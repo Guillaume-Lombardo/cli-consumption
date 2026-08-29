@@ -40,11 +40,7 @@ SHARED_ALIAS_CONTRACTS: dict[str, dict[str, Any]] = {
         "_label": basic_label,
     },
     "continue_cli": {"_list": list_value, "_mapping": mapping, "_sum": bounded_sum},
-    "copilot": {
-        "_add_tokens": add_tokens,
-        "_counter": counter,
-        "_label": basic_label,
-    },
+    "copilot": {"_add_tokens": add_tokens},
     "crush": {
         "_add_tokens": add_tokens,
         "_columns": sqlite_columns,

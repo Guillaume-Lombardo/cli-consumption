@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,16 +13,11 @@ from cli_consumption.adapters._shared import (
 )
 from cli_consumption.adapters._shared import (
     ProviderInputBudget,
+    basic_label,
     iter_bounded_jsonl_bytes,
 )
 from cli_consumption.adapters._shared import (
     add_tokens as _add_tokens,
-)
-from cli_consumption.adapters._shared import (
-    basic_label as _label,
-)
-from cli_consumption.adapters._shared import (
-    counter as _counter,
 )
 from cli_consumption.models import Snapshot, empty_tokens
 
@@ -415,8 +411,20 @@ def _rank(candidate: _Candidate) -> tuple[int, str, str]:
     return candidate.event_count, candidate.digest, str(candidate.path)
 
 
+def _label(value: Any, limit: int) -> str | None:
+    return basic_label(value, limit)
+
+
 def _bounded_label(value: Any, limit: int) -> str | None:
     return _label(value, limit)
+
+
+def _counter(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if not math.isfinite(value) or value < 0:
+        return 0
+    return min(int(value), MAX_BIGINT)
 
 
 def _timestamp(value: Any) -> datetime | None:

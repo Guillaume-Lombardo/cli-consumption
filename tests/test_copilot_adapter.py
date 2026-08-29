@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from cli_consumption.adapters.copilot import CopilotAdapter
+from cli_consumption.adapters.copilot import CopilotAdapter, _counter, _label
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
 from cli_consumption.storage import (
@@ -322,6 +322,39 @@ def test_deduplicates_and_tolerates_malformed_or_partial_sessions(
         ValueError, match="Missing GitHub Copilot CLI session-state directory"
     ):
         CopilotAdapter().collect([("machine", tmp_path / "missing")])
+
+
+@pytest.mark.parametrize("value", [10**309, -(10**309)])
+def test_huge_json_integer_token_preserves_qualified_overflow(
+    tmp_path: Path, value: int
+) -> None:
+    home = tmp_path / "copilot"
+    path = session(home)
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    latest = next(event for event in events if event["id"] == "shutdown-latest")
+    latest["data"]["modelMetrics"]["gpt-5.4"]["usage"]["inputTokens"] = value
+    path.write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+
+    with pytest.raises(OverflowError) as error:
+        CopilotAdapter().collect([("machine", home)])
+
+    assert CANARY not in str(error.value)
+    assert str(value) not in str(error.value)
+
+
+def test_private_copilot_helpers_keep_their_qualified_boundaries() -> None:
+    assert _counter(False) == 0
+    assert _counter(-1) == 0
+    assert _counter(float("nan")) == 0
+    assert _counter(float("inf")) == 0
+    assert _counter(1.9) == 1
+    with pytest.raises(OverflowError):
+        _counter(10**309)
+    label_without_limit: Any = _label
+    with pytest.raises(TypeError):
+        label_without_limit("model-without-explicit-limit")
 
 
 def test_privacy_canary_is_absent_and_ingestion_is_idempotent(tmp_path: Path) -> None:

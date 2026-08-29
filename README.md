@@ -254,9 +254,13 @@ plain HTTP beyond loopback unless `--allow-insecure` is passed explicitly. See
 Use `GET /health` as the process liveness probe; it never opens the database. Use
 `GET /ready` as the traffic readiness probe; it returns `200` only when the database
 is reachable and its schema is the expected revision, otherwise a generic `503`.
-The readiness path uses one fixed schema query with a two-second statement/busy
-timeout. Engine connection and PostgreSQL pool acquisition are capped at five seconds,
-so a configured PostgreSQL probe has a seven-second upper operational deadline.
+The readiness path uses one fixed schema query and returns within a two-second
+application deadline. PostgreSQL uses a separate unpooled engine with connection and
+server-side timeouts configured at startup; SQLite lock waiting is capped at 1.5
+seconds. If a network stack ignores its connection timeout, the single daemon probe
+may continue after the response, but no second probe or connection starts until it
+finishes. Configure the orchestrator probe timeout slightly above two seconds as an
+independent safeguard.
 Both endpoints are intentionally unauthenticated so infrastructure probes can call
 them, and every HTTP response carries a bounded `X-Request-ID`. Put the collector
 behind a TLS-terminating reverse proxy or platform ingress. Configure request rate

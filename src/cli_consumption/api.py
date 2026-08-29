@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import secrets
+import threading
 import uuid
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
@@ -24,7 +28,11 @@ from cli_consumption.models import (
     SnapshotValidationError,
 )
 from cli_consumption.schema import CURRENT_DATABASE_REVISION
-from cli_consumption.storage import ingest_snapshot, initialize_database
+from cli_consumption.storage import (
+    create_postgresql_readiness_engine,
+    ingest_snapshot,
+    initialize_database,
+)
 
 MAX_REQUEST_BYTES = 32 * 1024 * 1024
 REQUEST_ID_HEADER = b"x-request-id"
@@ -42,12 +50,10 @@ READINESS_TABLES = (
     "subagent_scopes",
     "ingestion_runs",
 )
-READINESS_STATEMENT_TIMEOUT_MS = 2_000
+READINESS_RESPONSE_TIMEOUT_SECONDS = 2.0
+READINESS_CONNECT_TIMEOUT_SECONDS = 2
+READINESS_STATEMENT_TIMEOUT_MS = 1_500
 READINESS_LOCK_TIMEOUT_MS = 1_000
-POSTGRESQL_STATEMENT_TIMEOUT_SQL = (
-    f"SET LOCAL statement_timeout = {READINESS_STATEMENT_TIMEOUT_MS}"
-)
-POSTGRESQL_LOCK_TIMEOUT_SQL = f"SET LOCAL lock_timeout = {READINESS_LOCK_TIMEOUT_MS}"
 READINESS_SQL = text(
     "SELECT CASE WHEN COUNT(*) = 1 AND MIN(version_num) = :revision "
     "THEN 1 ELSE 0 END"
@@ -63,6 +69,15 @@ SAFE_ROUTES = frozenset(
         "/ready",
         "/api/v1/capabilities",
         "/api/v1/snapshots",
+    }
+)
+SAFE_EXCEPTION_TYPES = frozenset(
+    {
+        "Exception",
+        "ConnectionError",
+        "ReadinessBusy",
+        "RuntimeError",
+        "TimeoutError",
     }
 )
 logger = logging.getLogger("cli_consumption.api")
@@ -145,6 +160,7 @@ def _log_event(
     scope: Scope,
     code: str,
     error: Exception | None = None,
+    exception_type: str | None = None,
 ) -> None:
     payload = {
         "code": code,
@@ -155,7 +171,106 @@ def _log_event(
     }
     if error is not None:
         payload["exception_type"] = _safe_exception_type(error)
+    elif exception_type is not None:
+        payload["exception_type"] = (
+            exception_type if exception_type in SAFE_EXCEPTION_TYPES else "Exception"
+        )
     logger.log(level, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+@dataclass(frozen=True)
+class ReadinessOutcome:
+    ready: bool
+    exception_type: str | None = None
+
+
+class ReadinessProbeRunner:
+    """Bound readiness latency while allowing at most one abandoned daemon probe."""
+
+    def __init__(self, engine: Engine, *, owns_engine: bool) -> None:
+        self.engine = engine
+        self.owns_engine = owns_engine
+        self._lock = threading.Lock()
+        self._active_count = 0
+        self._closed = False
+        self._max_active = 0
+
+    @property
+    def max_active_probes(self) -> int:
+        with self._lock:
+            return self._max_active
+
+    async def run(self) -> ReadinessOutcome:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[ReadinessOutcome] = loop.create_future()
+        with self._lock:
+            if self._closed or self._active_count:
+                return ReadinessOutcome(False, "ReadinessBusy")
+            self._active_count += 1
+            self._max_active = max(self._max_active, self._active_count)
+
+        def probe() -> None:
+            try:
+                outcome = _probe_database_readiness(self.engine)
+            finally:
+                with self._lock:
+                    self._active_count -= 1
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._deliver, future, outcome)
+
+        threading.Thread(
+            target=probe,
+            name="cli-consumption-readiness",
+            daemon=True,
+        ).start()
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(future), timeout=READINESS_RESPONSE_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            return ReadinessOutcome(False, "TimeoutError")
+
+    @staticmethod
+    def _deliver(
+        future: asyncio.Future[ReadinessOutcome], outcome: ReadinessOutcome
+    ) -> None:
+        if not future.done():
+            future.set_result(outcome)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+        if self.owns_engine:
+            try:
+                self.engine.dispose()
+            except Exception as error:
+                logger.error(
+                    json.dumps(
+                        {
+                            "event": "readiness_engine_dispose_failed",
+                            "exception_type": _safe_exception_type(error),
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
+
+
+def _probe_database_readiness(engine: Engine) -> ReadinessOutcome:
+    try:
+        with engine.connect() as connection:
+            if connection.dialect.name == "sqlite":
+                connection.exec_driver_sql(
+                    f"PRAGMA busy_timeout = {READINESS_STATEMENT_TIMEOUT_MS}"
+                )
+            ready_value = connection.execute(
+                READINESS_SQL, {"revision": CURRENT_DATABASE_REVISION}
+            ).scalar_one()
+            if ready_value != 1:
+                raise RuntimeError("unexpected database revision")
+    except Exception as error:
+        return ReadinessOutcome(False, _safe_exception_type(error))
+    return ReadinessOutcome(True)
 
 
 class SafeExceptionBoundary:
@@ -249,7 +364,19 @@ class RequestSizeLimitMiddleware:
 
 def create_app(engine: Engine, api_token: str | None = None) -> SafeExceptionBoundary:
     initialize_database(engine)
+    if engine.dialect.name == "postgresql":
+        probe_engine = create_postgresql_readiness_engine(
+            engine.url,
+            connect_timeout_seconds=READINESS_CONNECT_TIMEOUT_SECONDS,
+            statement_timeout_ms=READINESS_STATEMENT_TIMEOUT_MS,
+            lock_timeout_ms=READINESS_LOCK_TIMEOUT_MS,
+        )
+        readiness = ReadinessProbeRunner(probe_engine, owns_engine=True)
+    else:
+        readiness = ReadinessProbeRunner(engine, owns_engine=False)
     app = FastAPI(title="CLI Consumption collector", version=__version__)
+    app.state.readiness = readiness
+    app.router.add_event_handler("shutdown", readiness.close)
     app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(RequestIdMiddleware)
 
@@ -298,28 +425,15 @@ def create_app(engine: Engine, api_token: str | None = None) -> SafeExceptionBou
         }
 
     @app.get("/ready")
-    def ready(request: Request) -> JSONResponse:
-        try:
-            with engine.connect() as connection:
-                if connection.dialect.name == "postgresql":
-                    connection.exec_driver_sql(POSTGRESQL_STATEMENT_TIMEOUT_SQL)
-                    connection.exec_driver_sql(POSTGRESQL_LOCK_TIMEOUT_SQL)
-                elif connection.dialect.name == "sqlite":
-                    connection.exec_driver_sql(
-                        f"PRAGMA busy_timeout = {READINESS_STATEMENT_TIMEOUT_MS}"
-                    )
-                ready_value = connection.execute(
-                    READINESS_SQL, {"revision": CURRENT_DATABASE_REVISION}
-                ).scalar_one()
-                if ready_value != 1:
-                    raise RuntimeError("unexpected database revision")
-        except Exception as error:
+    async def ready(request: Request) -> JSONResponse:
+        outcome = await readiness.run()
+        if not outcome.ready:
             _log_event(
                 logging.WARNING,
                 event="readiness_failed",
                 scope=request.scope,
                 code="database_unavailable",
-                error=error,
+                exception_type=outcome.exception_type,
             )
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

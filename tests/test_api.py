@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import nullcontext
@@ -19,6 +20,8 @@ from starlette.types import Message, Scope
 
 from cli_consumption.adapters.codex import CodexAdapter
 from cli_consumption.api import (
+    ReadinessOutcome,
+    ReadinessProbeRunner,
     RequestSizeLimitMiddleware,
     SafeExceptionBoundary,
     create_app,
@@ -310,7 +313,8 @@ async def test_request_ids_are_bounded_and_readiness_is_concurrent(
     tmp_path: Path,
 ) -> None:
     engine = create_database_engine(tmp_path / "central.sqlite")
-    transport = httpx.ASGITransport(app=create_app(engine))
+    application = create_app(engine)
+    transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://collector.test"
     ) as client:
@@ -321,7 +325,9 @@ async def test_request_ids_are_bounded_and_readiness_is_concurrent(
             client.get("/health", headers={"X-Request-ID": "secret/value"}),
         )
 
-    assert all(response.status_code == 200 for response in responses)
+    assert {response.status_code for response in responses[:20]} <= {200, 503}
+    assert any(response.status_code == 200 for response in responses[:20])
+    assert application.state.readiness.max_active_probes == 1
     generated = [response.headers["x-request-id"] for response in responses[:20]]
     assert len(set(generated)) == 20
     assert responses[20].headers["x-request-id"] == "valid.id-_1"
@@ -337,7 +343,8 @@ async def test_blocked_concurrent_readiness_probes_finish_within_deadline(
 ) -> None:
     database = tmp_path / "blocked.sqlite"
     engine = create_database_engine(database)
-    transport = httpx.ASGITransport(app=create_app(engine))
+    application = create_app(engine)
+    transport = httpx.ASGITransport(app=application)
     blocker = sqlite3.connect(database, isolation_level=None)
     blocker.execute("BEGIN EXCLUSIVE")
     try:
@@ -358,11 +365,12 @@ async def test_blocked_concurrent_readiness_probes_finish_within_deadline(
     assert live_response.status_code == 200
     assert live_elapsed < 0.5
     assert {response.status_code for response in responses} == {503}
-    assert elapsed < 3.5
+    assert elapsed < 2.5
+    assert application.state.readiness.max_active_probes == 1
 
 
 @pytest.mark.anyio
-async def test_postgresql_readiness_sets_local_timeouts_and_uses_one_probe(
+async def test_postgresql_readiness_uses_isolated_startup_timeouts_and_one_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Result:
@@ -373,11 +381,7 @@ async def test_postgresql_readiness_sets_local_timeouts_and_uses_one_probe(
         dialect = SimpleNamespace(name="postgresql")
 
         def __init__(self) -> None:
-            self.driver_statements: list[str] = []
             self.probes = 0
-
-        def exec_driver_sql(self, statement: str) -> None:
-            self.driver_statements.append(statement)
 
         def execute(self, _statement, _parameters) -> Result:
             self.probes += 1
@@ -385,21 +389,139 @@ async def test_postgresql_readiness_sets_local_timeouts_and_uses_one_probe(
 
     connection = Connection()
 
-    class FakeEngine:
+    class ProbeEngine:
+        disposed = False
+
         def connect(self):
             return nullcontext(connection)
 
+        def dispose(self) -> None:
+            self.disposed = True
+
+    class MainEngine:
+        dialect = SimpleNamespace(name="postgresql")
+        url = object()
+
+    observed: dict[str, object] = {}
+
+    probe_engine = ProbeEngine()
+
+    def create_probe_engine(url, **kwargs):
+        observed.update(url=url, **kwargs)
+        return cast(Engine, probe_engine)
+
     monkeypatch.setattr("cli_consumption.api.initialize_database", lambda _engine: None)
-    engine = cast(Engine, FakeEngine())
-    transport = httpx.ASGITransport(app=create_app(engine))
+    monkeypatch.setattr(
+        "cli_consumption.api.create_postgresql_readiness_engine",
+        create_probe_engine,
+    )
+    engine = cast(Engine, MainEngine())
+    application = create_app(engine)
+    transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://collector.test"
     ) as client:
         response = await client.get("/ready")
 
     assert response.status_code == 200
-    assert connection.driver_statements == [
-        "SET LOCAL statement_timeout = 2000",
-        "SET LOCAL lock_timeout = 1000",
-    ]
+    assert observed == {
+        "url": MainEngine.url,
+        "connect_timeout_seconds": 2,
+        "statement_timeout_ms": 1_500,
+        "lock_timeout_ms": 1_000,
+    }
     assert connection.probes == 1
+    application.state.readiness.close()
+    assert probe_engine.disposed is True
+
+
+@pytest.mark.anyio
+async def test_application_deadline_allows_only_one_abandoned_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_database_engine(tmp_path / "deadline.sqlite")
+    app = create_app(engine)
+    started = threading.Event()
+    release = threading.Event()
+    counter_lock = threading.Lock()
+    active = 0
+    maximum = 0
+
+    def blocked_probe(_engine: Engine) -> ReadinessOutcome:
+        nonlocal active, maximum
+        with counter_lock:
+            active += 1
+            maximum = max(maximum, active)
+        started.set()
+        release.wait(timeout=5)
+        with counter_lock:
+            active -= 1
+        return ReadinessOutcome(True)
+
+    monkeypatch.setattr("cli_consumption.api._probe_database_readiness", blocked_probe)
+    monkeypatch.setattr("cli_consumption.api.READINESS_RESPONSE_TIMEOUT_SECONDS", 0.1)
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://collector.test"
+        ) as client:
+            began = time.monotonic()
+            first = asyncio.create_task(client.get("/ready"))
+            assert await asyncio.to_thread(started.wait, 1)
+            others = await asyncio.gather(*(client.get("/ready") for _ in range(19)))
+            first_response = await first
+            elapsed = time.monotonic() - began
+
+        close_started = time.monotonic()
+        app.state.readiness.close()
+        close_elapsed = time.monotonic() - close_started
+    finally:
+        release.set()
+        await asyncio.sleep(0.05)
+        engine.dispose()
+
+    responses = [first_response, *others]
+    assert {response.status_code for response in responses} == {503}
+    assert elapsed < 0.5
+    assert close_elapsed < 0.1
+    assert maximum == 1
+    assert app.state.readiness.max_active_probes == 1
+
+
+@pytest.mark.anyio
+async def test_owned_readiness_engine_shutdown_does_not_wait_for_abandoned_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    started = threading.Event()
+
+    class OwnedEngine:
+        disposed = False
+
+        def dispose(self) -> None:
+            self.disposed = True
+
+    owned_engine = OwnedEngine()
+
+    def blocked_probe(_engine: Engine) -> ReadinessOutcome:
+        started.set()
+        release.wait(timeout=5)
+        return ReadinessOutcome(True)
+
+    monkeypatch.setattr("cli_consumption.api._probe_database_readiness", blocked_probe)
+    monkeypatch.setattr("cli_consumption.api.READINESS_RESPONSE_TIMEOUT_SECONDS", 0.1)
+    runner = ReadinessProbeRunner(cast(Engine, owned_engine), owns_engine=True)
+    try:
+        task = asyncio.create_task(runner.run())
+        assert await asyncio.to_thread(started.wait, 1)
+        outcome = await task
+        began = time.monotonic()
+        runner.close()
+        elapsed = time.monotonic() - began
+    finally:
+        release.set()
+        await asyncio.sleep(0.05)
+
+    assert outcome == ReadinessOutcome(False, "TimeoutError")
+    assert elapsed < 0.1
+    assert owned_engine.disposed is True

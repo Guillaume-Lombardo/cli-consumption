@@ -10,6 +10,8 @@ from typing import cast
 import pytest
 from sqlalchemy import Table, inspect
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine import make_url
+from sqlalchemy.pool import NullPool
 from sqlalchemy.schema import CreateTable
 
 from cli_consumption.adapters.codex import CodexAdapter
@@ -26,6 +28,7 @@ from cli_consumption.storage import (
     SCHEMA_TABLES,
     TABLES,
     create_database_engine,
+    create_postgresql_readiness_engine,
     ingest_snapshot,
     initialize_database,
     normalize_database_url,
@@ -518,31 +521,36 @@ def test_database_urls_support_paths_and_postgresql(tmp_path: Path) -> None:
     assert engine.url.drivername == "postgresql+psycopg"
     engine.dispose()
 
-    sqlite_engine = create_database_engine(tmp_path / "timeouts.sqlite")
-    with sqlite_engine.connect() as connection:
-        assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 5_000
-    sqlite_engine.dispose()
 
-
-def test_postgresql_engine_has_bounded_connect_and_pool_acquisition(
+def test_postgresql_readiness_engine_is_isolated_from_main_engine(
     monkeypatch,
 ) -> None:
-    observed: dict[str, object] = {}
-    sentinel = object()
+    observed: list[tuple[object, dict[str, object]]] = []
+    engines = [object(), object()]
 
     def capture_create_engine(url: str, **kwargs):
-        observed.update(url=url, **kwargs)
-        return sentinel
+        observed.append((url, kwargs))
+        return engines[len(observed) - 1]
 
     monkeypatch.setattr("cli_consumption.storage.create_engine", capture_create_engine)
 
-    engine = create_database_engine("postgresql://user:password@db/usage")
+    main_engine = create_database_engine("postgresql://user:password@db/usage")
+    readiness_engine = create_postgresql_readiness_engine(
+        make_url("postgresql+psycopg://user:password@db/usage"),
+        connect_timeout_seconds=2,
+        statement_timeout_ms=1_500,
+        lock_timeout_ms=1_000,
+    )
 
-    assert engine is sentinel
-    assert observed == {
-        "url": "postgresql+psycopg://user:password@db/usage",
-        "connect_args": {"connect_timeout": 5},
-        "pool_timeout": 5,
+    assert main_engine is engines[0]
+    assert readiness_engine is engines[1]
+    assert observed[0] == ("postgresql+psycopg://user:password@db/usage", {})
+    assert observed[1][1] == {
+        "poolclass": NullPool,
+        "connect_args": {
+            "connect_timeout": 2,
+            "options": "-c statement_timeout=1500 -c lock_timeout=1000",
+        },
     }
 
 

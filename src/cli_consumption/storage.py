@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import URL, Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import NullPool
 
@@ -32,9 +32,6 @@ from cli_consumption.schema import upgrade_database
 from cli_consumption.timestamps import canonical_timestamp
 
 DEFAULT_DATABASE = "sqlite:///cli-consumption.sqlite"
-DATABASE_CONNECT_TIMEOUT_SECONDS = 5
-DATABASE_POOL_TIMEOUT_SECONDS = 5
-SQLITE_BUSY_TIMEOUT_MS = 5_000
 
 
 class MissingOptionalDependencyError(RuntimeError):
@@ -287,30 +284,43 @@ def create_database_engine(database: str | Path) -> Engine:
                 "PostgreSQL support requires optional dependencies; "
                 "install cli-consumption[postgres]"
             ) from None
-    if url.startswith("sqlite:"):
-        engine = create_engine(
-            url,
-            poolclass=NullPool,
-            connect_args={"timeout": DATABASE_CONNECT_TIMEOUT_SECONDS},
-        )
-    elif url.startswith("postgresql+psycopg:"):
-        engine = create_engine(
-            url,
-            connect_args={"connect_timeout": DATABASE_CONNECT_TIMEOUT_SECONDS},
-            pool_timeout=DATABASE_POOL_TIMEOUT_SECONDS,
-        )
-    else:
-        engine = create_engine(url)
+    engine = (
+        create_engine(url, poolclass=NullPool)
+        if url.startswith("sqlite:")
+        else create_engine(url)
+    )
     if url.startswith("sqlite:"):
 
         @event.listens_for(engine, "connect")
         def _enable_foreign_keys(dbapi_connection: Any, _: Any) -> None:
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
             cursor.close()
 
     return engine
+
+
+def create_postgresql_readiness_engine(
+    database_url: URL,
+    *,
+    connect_timeout_seconds: int,
+    statement_timeout_ms: int,
+    lock_timeout_ms: int,
+) -> Engine:
+    """Create an isolated, unpooled PostgreSQL engine for readiness only."""
+    if database_url.drivername != "postgresql+psycopg":
+        raise ValueError("Readiness engine requires PostgreSQL")
+    options = (
+        f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
+    )
+    return create_engine(
+        database_url,
+        poolclass=NullPool,
+        connect_args={
+            "connect_timeout": connect_timeout_seconds,
+            "options": options,
+        },
+    )
 
 
 def initialize_database(engine: Engine) -> None:

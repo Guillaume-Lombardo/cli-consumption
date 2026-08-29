@@ -83,8 +83,12 @@ requires HTTPS beyond loopback unless the operator uses the explicit
 
 The unauthenticated liveness endpoint does not touch the database. The unauthenticated
 readiness endpoint reads only a bounded schema revision and fixed table probes. It
-uses one consolidated query with backend statement, lock, connection, and pool
-timeouts and returns generic ready/not-ready state without database values or errors.
+uses one consolidated query and a two-second application response deadline, returning
+generic ready/not-ready state without database values or errors. PostgreSQL uses a
+dedicated unpooled engine with startup connection, statement, and lock timeouts. At
+most one daemon probe can continue after a timed-out response; concurrent probes
+return not-ready without opening another connection, and shutdown does not wait for
+that residual operation.
 These endpoints expose process and database availability to callers and should be
 scoped by network policy even though they disclose no usage metadata.
 

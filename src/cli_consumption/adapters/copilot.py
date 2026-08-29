@@ -3,20 +3,23 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    MAX_BIGINT as MAX_BIGINT,
+)
+from cli_consumption.adapters._shared import (
     ProviderInputBudget,
+    basic_label,
     iter_bounded_jsonl_bytes,
 )
+from cli_consumption.adapters._shared import (
+    add_tokens as _add_tokens,
+)
 from cli_consumption.models import Snapshot, empty_tokens
-
-MAX_BIGINT = 9_223_372_036_854_775_807
-SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
 @dataclass(slots=True)
@@ -409,9 +412,7 @@ def _rank(candidate: _Candidate) -> tuple[int, str, str]:
 
 
 def _label(value: Any, limit: int) -> str | None:
-    if not isinstance(value, str) or not (value := value.strip()) or len(value) > limit:
-        return None
-    return value if SAFE_LABEL.fullmatch(value) else None
+    return basic_label(value, limit)
 
 
 def _bounded_label(value: Any, limit: int) -> str | None:
@@ -440,8 +441,3 @@ def _timestamp(value: Any) -> datetime | None:
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
-
-
-def _add_tokens(target: dict[str, Any], tokens: dict[str, int]) -> None:
-    for key, value in tokens.items():
-        target[key] = min(MAX_BIGINT, int(target[key]) + value)

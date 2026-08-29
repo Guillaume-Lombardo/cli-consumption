@@ -3,17 +3,34 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import ProviderInputBudget, read_bounded_bytes
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    read_bounded_bytes,
+)
+from cli_consumption.adapters._shared import (
+    add_tokens as _add_tokens,
+)
+from cli_consumption.adapters._shared import (
+    basic_label as _label,
+)
+from cli_consumption.adapters._shared import (
+    bounded_sum as _sum,
+)
+from cli_consumption.adapters._shared import (
+    counter as _counter,
+)
+from cli_consumption.adapters._shared import (
+    list_value as _list,
+)
+from cli_consumption.adapters._shared import (
+    mapping as _mapping,
+)
 from cli_consumption.models import Snapshot, empty_tokens
-
-MAX_BIGINT = 9_223_372_036_854_775_807
-SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
 @dataclass(slots=True)
@@ -461,14 +478,6 @@ def _finish_turn(turn: dict[str, Any], fallback: datetime | None) -> None:
         turn["duration_ms"] = max(0, int((end - start).total_seconds() * 1000))
 
 
-def _mapping(value: object) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _list(value: object) -> list[Any]:
-    return value if isinstance(value, list) else []
-
-
 def _timestamp(value: object) -> datetime | None:
     try:
         if isinstance(value, bool):
@@ -494,30 +503,6 @@ def _identifier(value: object) -> str | None:
     return _label(value, 512)
 
 
-def _label(value: object, maximum: int) -> str | None:
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value if 0 < len(value) <= maximum and SAFE_LABEL.fullmatch(value) else None
-
-
-def _counter(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return 0
-    if isinstance(value, float) and not math.isfinite(value):
-        return 0
-    return min(MAX_BIGINT, max(0, int(value)))
-
-
 def _positive_counter(value: object) -> int | None:
     result = _counter(value)
     return result or None
-
-
-def _sum(*values: int) -> int:
-    return min(MAX_BIGINT, sum(values))
-
-
-def _add_tokens(target: dict[str, Any], tokens: dict[str, int]) -> None:
-    for field, value in tokens.items():
-        target[field] = _sum(int(target[field]), value)

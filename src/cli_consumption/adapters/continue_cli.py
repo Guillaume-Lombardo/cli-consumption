@@ -3,17 +3,31 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cli_consumption.adapters._shared import ProviderInputBudget, read_bounded_bytes
+from cli_consumption.adapters._shared import (
+    MAX_BIGINT as MAX_BIGINT,
+)
+from cli_consumption.adapters._shared import (
+    SAFE_BASIC_LABEL as SAFE_LABEL,
+)
+from cli_consumption.adapters._shared import (
+    ProviderInputBudget,
+    read_bounded_bytes,
+)
+from cli_consumption.adapters._shared import (
+    bounded_sum as _sum,
+)
+from cli_consumption.adapters._shared import (
+    list_value as _list,
+)
+from cli_consumption.adapters._shared import (
+    mapping as _mapping,
+)
 from cli_consumption.models import Snapshot, empty_tokens
-
-MAX_BIGINT = 9_223_372_036_854_775_807
-SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
 @dataclass(slots=True)
@@ -370,22 +384,10 @@ def _counter(value: object) -> int:
     return 0
 
 
-def _sum(*values: int) -> int:
-    return min(MAX_BIGINT, sum(values))
-
-
 def _label(value: object, maximum: int) -> str | None:
     if not isinstance(value, str) or not (1 <= len(value) <= maximum):
         return None
     return value if SAFE_LABEL.fullmatch(value) else None
-
-
-def _mapping(value: object) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _list(value: object) -> list[Any]:
-    return value if isinstance(value, list) else []
 
 
 def _iso(value: datetime) -> str:

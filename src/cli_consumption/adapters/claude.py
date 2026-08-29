@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    MAX_BIGINT as MAX_BIGINT,
+)
+from cli_consumption.adapters._shared import (
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
 )
+from cli_consumption.adapters._shared import (
+    add_tokens as _add_tokens,
+)
+from cli_consumption.adapters._shared import (
+    basic_label as _label,
+)
+from cli_consumption.adapters._shared import (
+    counter as _counter,
+)
 from cli_consumption.models import Snapshot, empty_tokens
-
-MAX_BIGINT = 9_223_372_036_854_775_807
-SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
 class ClaudeAdapter:
@@ -377,23 +384,3 @@ def _timestamp(value: object) -> datetime | None:
 
 def _iso(value: object) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else None
-
-
-def _label(value: object, maximum: int) -> str | None:
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value if 0 < len(value) <= maximum and SAFE_LABEL.fullmatch(value) else None
-
-
-def _counter(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return 0
-    if isinstance(value, float) and not math.isfinite(value):
-        return 0
-    return min(MAX_BIGINT, max(0, int(value)))
-
-
-def _add_tokens(target: dict[str, Any], tokens: dict[str, int]) -> None:
-    for field, value in tokens.items():
-        target[field] = min(MAX_BIGINT, int(target[field]) + value)

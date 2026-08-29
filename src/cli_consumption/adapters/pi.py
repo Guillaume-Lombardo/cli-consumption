@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,10 +12,26 @@ from cli_consumption.adapters._shared import (
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
 )
+from cli_consumption.adapters._shared import (
+    add_tokens as _add_tokens,
+)
+from cli_consumption.adapters._shared import (
+    basic_label as _label,
+)
+from cli_consumption.adapters._shared import (
+    bounded_sum as _sum,
+)
+from cli_consumption.adapters._shared import (
+    counter as _counter,
+)
+from cli_consumption.adapters._shared import (
+    mapping as _mapping,
+)
+from cli_consumption.adapters._shared import (
+    project as _project,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
-MAX_BIGINT = 9_223_372_036_854_775_807
-SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 
@@ -396,27 +411,11 @@ def _model_change(entry: dict[str, Any]) -> str | None:
     return identifier
 
 
-def _project(cwd: str | None, mappings: list[tuple[str, str]]) -> tuple[str, str]:
-    if cwd:
-        normalized = cwd.replace("\\", "/").rstrip("/")
-        for name, prefix in sorted(
-            mappings, key=lambda item: len(item[1]), reverse=True
-        ):
-            prefix = prefix.replace("\\", "/").rstrip("/")
-            if normalized == prefix or normalized.startswith(prefix + "/"):
-                return name, "mapping"
-    return "outside-project", "none"
-
-
 def _finish_turn(turn: dict[str, Any], fallback: datetime | None) -> None:
     turn["ended_at"] = turn["ended_at"] or _iso(fallback)
     start, end = _timestamp(turn["started_at"]), _timestamp(turn["ended_at"])
     if start and end:
         turn["duration_ms"] = max(0, int((end - start).total_seconds() * 1000))
-
-
-def _mapping(value: object) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
 
 
 def _timestamp(value: object) -> datetime | None:
@@ -434,27 +433,3 @@ def _timestamp(value: object) -> datetime | None:
 
 def _iso(value: object) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else None
-
-
-def _label(value: object, maximum: int) -> str | None:
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value if 0 < len(value) <= maximum and SAFE_LABEL.fullmatch(value) else None
-
-
-def _counter(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return 0
-    if isinstance(value, float) and not math.isfinite(value):
-        return 0
-    return min(MAX_BIGINT, max(0, int(value)))
-
-
-def _sum(*values: int) -> int:
-    return min(MAX_BIGINT, sum(values))
-
-
-def _add_tokens(target: dict[str, Any], tokens: dict[str, int]) -> None:
-    for field, value in tokens.items():
-        target[field] = _sum(int(target[field]), value)

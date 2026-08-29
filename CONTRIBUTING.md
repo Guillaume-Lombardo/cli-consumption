@@ -36,6 +36,11 @@ record budget. Every registered adapter test module must include a synthetic can
 assert its absence from the normalized snapshot; shared privacy tests cover all later
 output surfaces.
 
+Reuse adapter primitives from `adapters/_shared.py` only when their malformed-input,
+boundary, and normalization semantics are identical. Keep provider-specific timestamp
+thresholds, token composition, ranking, project inference, and other compatibility
+heuristics local even when their implementations look similar.
+
 ## Validate and review
 
 Run the quality gates documented in `AGENTS.md`, inspect the complete diff, then open a

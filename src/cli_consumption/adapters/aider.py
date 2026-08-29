@@ -3,20 +3,28 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    MAX_BIGINT as MAX_BIGINT,
+)
+from cli_consumption.adapters._shared import (
+    SAFE_BASIC_LABEL as SAFE_LABEL,
+)
+from cli_consumption.adapters._shared import (
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
 )
+from cli_consumption.adapters._shared import (
+    add_tokens as _add_tokens,
+)
+from cli_consumption.adapters._shared import (
+    bounded_sum as _sum,
+)
 from cli_consumption.models import Snapshot, empty_tokens
-
-MAX_BIGINT = 9_223_372_036_854_775_807
-SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
 @dataclass(slots=True)
@@ -307,15 +315,6 @@ def _counter(value: object) -> int:
     if not math.isfinite(value) or value < 0 or value > MAX_BIGINT:
         return 0
     return int(value)
-
-
-def _sum(*values: int) -> int:
-    return min(MAX_BIGINT, sum(values))
-
-
-def _add_tokens(target: dict[str, Any], values: dict[str, int]) -> None:
-    for key, value in values.items():
-        target[key] = _sum(int(target[key]), value)
 
 
 def _epoch(value: object) -> int | None:

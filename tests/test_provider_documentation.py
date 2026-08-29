@@ -14,7 +14,7 @@ PROVIDER_SUPPORT = PROJECT_ROOT / "docs" / "provider-support.md"
 def _cells(line: str) -> list[str]:
     cells: list[str] = []
     cell: list[str] = []
-    in_code = False
+    code_delimiter: int | None = None
     text = line.strip()
     index = 0
     while index < len(text):
@@ -25,8 +25,18 @@ def _cells(line: str) -> list[str]:
             index += 2
             continue
         if character == "`":
-            in_code = not in_code
-        if character == "|" and not in_code:
+            run_end = index + 1
+            while run_end < len(text) and text[run_end] == "`":
+                run_end += 1
+            run_length = run_end - index
+            if code_delimiter is None:
+                code_delimiter = run_length
+            elif code_delimiter == run_length:
+                code_delimiter = None
+            cell.extend(text[index:run_end])
+            index = run_end
+            continue
+        if character == "|" and code_delimiter is None:
             cells.append("".join(cell).strip())
             cell = []
         else:
@@ -117,7 +127,7 @@ def test_markdown_table_parser_preserves_escaped_and_inline_code_pipes(
         """\
 | Name | Narrative |
 | --- | --- |
-| `provider` | Escaped \\| pipe and `inline|code` pipe. |
+| `provider` | Escaped \\| pipe, `inline|code`, and ``inline `code` | pipe``. |
 """,
         encoding="utf-8",
     )
@@ -125,7 +135,9 @@ def test_markdown_table_parser_preserves_escaped_and_inline_code_pipes(
     assert _table(document, {"Name", "Narrative"}) == [
         {
             "Name": "`provider`",
-            "Narrative": "Escaped \\| pipe and `inline|code` pipe.",
+            "Narrative": (
+                "Escaped \\| pipe, `inline|code`, and ``inline `code` | pipe``."
+            ),
         }
     ]
 

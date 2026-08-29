@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event, Lock
 
 import pytest
 from alembic.migration import MigrationContext
@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    event,
     inspect,
     text,
 )
@@ -26,6 +27,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateSchema, DropSchema
 
+from cli_consumption import schema as schema_module
 from cli_consumption.migrations.versions import (
     v0001_baseline,
     v0002_minimize_subagents,
@@ -36,6 +38,7 @@ from cli_consumption.models import Snapshot
 from cli_consumption.retention import retain_before
 from cli_consumption.schema import (
     BASELINE_COLUMNS,
+    POSTGRESQL_MIGRATION_LOCK,
     SchemaCompatibilityError,
     _matching_type,
     downgrade_database,
@@ -53,6 +56,48 @@ from cli_consumption.storage import (
     read_table,
 )
 from cli_consumption.timestamps import canonical_timestamp
+
+
+def _observe_migration_lock(engine, statement_fragment: str):
+    guard = Lock()
+    attempts = 0
+    acquisitions = 0
+    second_attempting = Event()
+    first_acquired = Event()
+    second_acquired = Event()
+
+    def before_execute(
+        _connection, _cursor, statement: str, _parameters, _context, _many
+    ) -> None:
+        nonlocal attempts
+        if statement_fragment not in statement:
+            return
+        with guard:
+            attempts += 1
+            if attempts == 2:
+                second_attempting.set()
+
+    def after_execute(
+        _connection, _cursor, statement: str, _parameters, _context, _many
+    ) -> None:
+        nonlocal acquisitions
+        if statement_fragment not in statement:
+            return
+        with guard:
+            acquisitions += 1
+            if acquisitions == 1:
+                first_acquired.set()
+            elif acquisitions == 2:
+                second_acquired.set()
+
+    event.listen(engine, "before_cursor_execute", before_execute)
+    event.listen(engine, "after_cursor_execute", after_execute)
+
+    def remove() -> None:
+        event.remove(engine, "before_cursor_execute", before_execute)
+        event.remove(engine, "after_cursor_execute", after_execute)
+
+    return second_attempting, first_acquired, second_acquired, remove
 
 
 def _conversation(identifier: str, started_at: str | None) -> Conversation:
@@ -135,6 +180,190 @@ def test_empty_database_upgrades_to_packaged_head(tmp_path: Path) -> None:
         "ix_model_calls_timestamp",
         "ix_model_calls_turn_id",
     }
+    engine.dispose()
+
+
+def test_concurrent_sqlite_initialization_reaches_one_packaged_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_database_engine(tmp_path / "concurrent-empty.sqlite")
+    second_attempting, first_acquired, second_acquired, remove = (
+        _observe_migration_lock(engine, "BEGIN IMMEDIATE")
+    )
+    release_holder = Event()
+    original_preflight = schema_module._preflight_unversioned
+
+    def hold_first_migration(connection) -> None:
+        assert first_acquired.is_set()
+        assert connection.in_transaction()
+        assert release_holder.wait(2)
+        original_preflight(connection)
+
+    monkeypatch.setattr(schema_module, "_preflight_unversioned", hold_first_migration)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            holder = executor.submit(initialize_database, engine)
+            assert first_acquired.wait(2)
+            waiter = executor.submit(initialize_database, engine)
+            assert second_attempting.wait(2)
+            assert not second_acquired.wait(0.1)
+            release_holder.set()
+            holder.result()
+            waiter.result()
+            assert second_acquired.wait(2)
+    finally:
+        release_holder.set()
+        remove()
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0004"
+        )
+    assert set(inspect(engine).get_table_names()) == {
+        *BASELINE_COLUMNS,
+        "alembic_version",
+    }
+    engine.dispose()
+
+
+def test_concurrent_sqlite_migration_is_idempotent(tmp_path: Path) -> None:
+    engine = create_database_engine(tmp_path / "concurrent-migration.sqlite")
+    initialize_database(engine)
+    downgrade_database(engine, "0002")
+    barrier = Barrier(3)
+
+    def migrate() -> None:
+        barrier.wait()
+        upgrade_database(engine)
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(migrate) for _ in range(3)]
+        for future in futures:
+            future.result()
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0004"
+        )
+    assert "ix_conversations_ended_at" in {
+        item["name"] for item in inspect(engine).get_indexes("conversations")
+    }
+    engine.dispose()
+
+
+def test_failed_sqlite_migration_releases_waiter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_database_engine(tmp_path / "failed-concurrent-migration.sqlite")
+    initialize_database(engine)
+    downgrade_database(engine, "0002")
+    second_attempting, first_acquired, second_acquired, remove = (
+        _observe_migration_lock(engine, "BEGIN IMMEDIATE")
+    )
+    release_failure = Event()
+    original_upgrade = schema_module.command.upgrade
+    calls = 0
+    guard = Lock()
+
+    def fail_first_upgrade(config, revision: str) -> None:
+        nonlocal calls
+        with guard:
+            calls += 1
+            call = calls
+        if call == 1:
+            assert first_acquired.is_set()
+            assert config.attributes["connection"].in_transaction()
+            assert release_failure.wait(2)
+            raise RuntimeError("private migration failure")
+        original_upgrade(config, revision)
+
+    monkeypatch.setattr(schema_module.command, "upgrade", fail_first_upgrade)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            failing = executor.submit(upgrade_database, engine)
+            assert first_acquired.wait(2)
+            waiter = executor.submit(upgrade_database, engine)
+            assert second_attempting.wait(2)
+            assert not second_acquired.wait(0.1)
+            release_failure.set()
+            with pytest.raises(SchemaCompatibilityError) as error:
+                failing.result()
+            assert str(error.value) == "Database schema migration failed"
+            assert "private" not in str(error.value)
+            waiter.result()
+            assert second_acquired.wait(2)
+    finally:
+        release_failure.set()
+        remove()
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0004"
+        )
+    engine.dispose()
+
+
+def test_sqlite_migration_lock_timeout_is_bounded_and_generic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_database_engine(tmp_path / "migration-timeout.sqlite")
+    initialize_database(engine)
+    monkeypatch.setattr(schema_module, "SQLITE_MIGRATION_LOCK_TIMEOUT_MS", 10)
+
+    with engine.connect() as holder:
+        holder.exec_driver_sql("BEGIN IMMEDIATE")
+        with pytest.raises(SchemaCompatibilityError) as error:
+            upgrade_database(engine)
+        holder.rollback()
+
+    assert str(error.value) == "Database schema migration failed"
+    assert "migration-timeout" not in str(error.value)
+    engine.dispose()
+
+
+def test_concurrent_sqlite_downgrade_is_serialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_database_engine(tmp_path / "concurrent-downgrade.sqlite")
+    initialize_database(engine)
+    second_attempting, first_acquired, second_acquired, remove = (
+        _observe_migration_lock(engine, "BEGIN IMMEDIATE")
+    )
+    release_holder = Event()
+    original_downgrade = schema_module.command.downgrade
+    calls = 0
+    guard = Lock()
+
+    def hold_first_downgrade(config, revision: str) -> None:
+        nonlocal calls
+        with guard:
+            calls += 1
+            call = calls
+        if call == 1:
+            assert first_acquired.is_set()
+            assert release_holder.wait(2)
+        original_downgrade(config, revision)
+
+    monkeypatch.setattr(schema_module.command, "downgrade", hold_first_downgrade)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            holder = executor.submit(downgrade_database, engine, "0002")
+            assert first_acquired.wait(2)
+            waiter = executor.submit(downgrade_database, engine, "0002")
+            assert second_attempting.wait(2)
+            assert not second_acquired.wait(0.1)
+            release_holder.set()
+            holder.result()
+            waiter.result()
+            assert second_acquired.wait(2)
+    finally:
+        release_holder.set()
+        remove()
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0002"
+        )
     engine.dispose()
 
 
@@ -642,7 +871,9 @@ def test_retention_requires_timezone_aware_cutoff(tmp_path: Path) -> None:
     engine.dispose()
 
 
-def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
+def test_postgresql_runtime_migrations_ingestion_and_retention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     database_url = os.environ.get("TEST_POSTGRESQL_URL")
     if database_url is None:
         pytest.skip("TEST_POSTGRESQL_URL is not configured")
@@ -650,6 +881,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
     schema_name = f"cli_consumption_test_{uuid.uuid4().hex}"
     admin_engine = create_database_engine(database_url)
     test_engine = None
+    lock_probe_engine = None
     schema_created = False
     try:
         with admin_engine.begin() as connection:
@@ -659,8 +891,49 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
             {"options": f"-csearch_path={schema_name}"}
         )
         test_engine = create_engine(scoped_url)
+        lock_probe_engine = create_engine(scoped_url)
 
-        upgrade_database(test_engine)
+        second_attempting, first_acquired, second_acquired, remove = (
+            _observe_migration_lock(test_engine, "pg_advisory_xact_lock")
+        )
+        release_holder = Event()
+        original_preflight = schema_module._preflight_unversioned
+
+        def hold_first_postgresql_migration(connection) -> None:
+            assert first_acquired.is_set()
+            assert connection.in_transaction()
+            assert release_holder.wait(2)
+            original_preflight(connection)
+
+        monkeypatch.setattr(
+            schema_module, "_preflight_unversioned", hold_first_postgresql_migration
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                holder = executor.submit(upgrade_database, test_engine)
+                assert first_acquired.wait(2)
+                waiter = executor.submit(upgrade_database, test_engine)
+                assert second_attempting.wait(2)
+                assert not second_acquired.wait(0.1)
+                release_holder.set()
+                holder.result()
+                waiter.result()
+                assert second_acquired.wait(2)
+        finally:
+            release_holder.set()
+            remove()
+            monkeypatch.setattr(
+                schema_module, "_preflight_unversioned", original_preflight
+            )
+
+        with lock_probe_engine.begin() as connection:
+            assert (
+                connection.scalar(
+                    text("SELECT pg_try_advisory_xact_lock(:key)"),
+                    {"key": POSTGRESQL_MIGRATION_LOCK},
+                )
+                is True
+            )
         inspector = inspect(test_engine)
         assert "agent_nickname" not in {
             column["name"] for column in inspector.get_columns("subagents")
@@ -689,7 +962,16 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
                 )
             )
             connection.execute(text("DROP TABLE alembic_version"))
-        upgrade_database(test_engine)
+        migration_barrier = Barrier(3)
+
+        def migrate_concurrently() -> None:
+            migration_barrier.wait()
+            upgrade_database(test_engine)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(migrate_concurrently) for _ in range(3)]
+            for future in futures:
+                future.result()
         upgrade_database(test_engine)
         with test_engine.connect() as connection:
             assert (
@@ -733,6 +1015,14 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
             upgrade_database(test_engine)
         assert str(error.value) == "Database schema migration failed"
         assert "privacy canary" not in str(error.value)
+        with lock_probe_engine.begin() as connection:
+            assert (
+                connection.scalar(
+                    text("SELECT pg_try_advisory_xact_lock(:key)"),
+                    {"key": POSTGRESQL_MIGRATION_LOCK},
+                )
+                is True
+            )
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
@@ -751,7 +1041,43 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
             connection.execute(
                 text("DELETE FROM ingestion_runs WHERE id = 'postgres-invalid-run'")
             )
-        upgrade_database(test_engine)
+        second_attempting, first_acquired, second_acquired, remove = (
+            _observe_migration_lock(test_engine, "pg_advisory_xact_lock")
+        )
+        release_holder = Event()
+        original_upgrade = schema_module.command.upgrade
+        upgrade_calls = 0
+        upgrade_guard = Lock()
+
+        def hold_first_postgresql_upgrade(config, revision: str) -> None:
+            nonlocal upgrade_calls
+            with upgrade_guard:
+                upgrade_calls += 1
+                call = upgrade_calls
+            if call == 1:
+                assert first_acquired.is_set()
+                assert config.attributes["connection"].in_transaction()
+                assert release_holder.wait(2)
+            original_upgrade(config, revision)
+
+        monkeypatch.setattr(
+            schema_module.command, "upgrade", hold_first_postgresql_upgrade
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                holder = executor.submit(upgrade_database, test_engine)
+                assert first_acquired.wait(2)
+                waiter = executor.submit(upgrade_database, test_engine)
+                assert second_attempting.wait(2)
+                assert not second_acquired.wait(0.1)
+                release_holder.set()
+                holder.result()
+                waiter.result()
+                assert second_acquired.wait(2)
+        finally:
+            release_holder.set()
+            remove()
+            monkeypatch.setattr(schema_module.command, "upgrade", original_upgrade)
         assert read_table(test_engine, "conversations")[0]["started_at"] == (
             "2026-01-01T00:00:00.000000+00:00"
         )
@@ -912,7 +1238,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [
-                executor.submit(concurrent_ingest, concurrent_version(2, "older")),
+                executor.submit(concurrent_ingest, concurrent_version(0, "stale")),
                 executor.submit(concurrent_ingest, concurrent_version(3, "newest")),
             ]
             for future in futures:
@@ -923,9 +1249,51 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
             for row in read_table(test_engine, "subagents")
             if row["source_machine"] == "concurrent"
         ]
+        concurrent_conversation = next(
+            row
+            for row in read_table(test_engine, "conversations")
+            if row["id"] == "codex:postgres-concurrent"
+        )
+        assert concurrent_conversation["event_count"] == 3
         assert [row["id"] for row in concurrent_rows] == ["codex:concurrent:newest"]
 
-        downgrade_database(test_engine)
+        second_attempting, first_acquired, second_acquired, remove = (
+            _observe_migration_lock(test_engine, "pg_advisory_xact_lock")
+        )
+        release_holder = Event()
+        original_downgrade = schema_module.command.downgrade
+        downgrade_calls = 0
+        downgrade_guard = Lock()
+
+        def hold_first_postgresql_downgrade(config, revision: str) -> None:
+            nonlocal downgrade_calls
+            with downgrade_guard:
+                downgrade_calls += 1
+                call = downgrade_calls
+            if call == 1:
+                assert first_acquired.is_set()
+                assert config.attributes["connection"].in_transaction()
+                assert release_holder.wait(2)
+            original_downgrade(config, revision)
+
+        monkeypatch.setattr(
+            schema_module.command, "downgrade", hold_first_postgresql_downgrade
+        )
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                holder = executor.submit(downgrade_database, test_engine)
+                assert first_acquired.wait(2)
+                waiter = executor.submit(downgrade_database, test_engine)
+                assert second_attempting.wait(2)
+                assert not second_acquired.wait(0.1)
+                release_holder.set()
+                holder.result()
+                waiter.result()
+                assert second_acquired.wait(2)
+        finally:
+            release_holder.set()
+            remove()
+            monkeypatch.setattr(schema_module.command, "downgrade", original_downgrade)
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(
@@ -945,6 +1313,8 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
             column["name"] for column in inspect(test_engine).get_columns("subagents")
         }
     finally:
+        if lock_probe_engine is not None:
+            lock_probe_engine.dispose()
         if test_engine is not None:
             test_engine.dispose()
         if schema_created:

@@ -47,6 +47,7 @@ cli-consumption = "cli_consumption.cli:app"
 dev = [
   "fastapi>=0.115",
   "httpx>=0.27",
+  "hypothesis>=6.165.10",
   "pre-commit>=4.6.2",
   "psycopg[binary]>=3.2",
   "pytest>=8.3",

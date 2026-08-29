@@ -36,6 +36,17 @@ whose complete `0004` layout passes the strict adoption preflight retains its va
 scope rows and is stamped directly at head. Older recognized layouts still replay the
 required forward migrations.
 
+Schema inspection, adoption, and migration are serialized for concurrent processes of
+the same application version in one outer transaction. SQLite waits at most 15 seconds
+for `BEGIN IMMEDIATE`, then holds that transaction across the decision and migration.
+PostgreSQL takes a database-scoped `pg_advisory_xact_lock` with a package-defined key
+inside the same transaction; transaction pooling is therefore safe and commit or
+rollback releases the lock automatically. Alembic joins the already active external
+transaction and cannot expose an intermediate revision. Concurrent callers re-check
+the revision only after acquiring the lock, so one migrates and the others observe the
+result. Lock timeouts and migration failures retain the generic compatibility error.
+This coordination does not make mixed application versions supported.
+
 ## Deployment and rollback
 
 Back up a production database before upgrading. Stop or drain writers, deploy and
@@ -54,6 +65,6 @@ backup when exact rollback is required.
   migration history.
 - Unknown or locally modified schemas fail closed with a generic compatibility error.
 - Releases that change storage must include migration, adoption, idempotency,
-  upgrade/downgrade, and both-dialect tests.
+  upgrade/downgrade, concurrent initialization, and both-dialect tests.
 - Operators gain automatic upgrades but remain responsible for backups, writer
   coordination, and retention of those backups.

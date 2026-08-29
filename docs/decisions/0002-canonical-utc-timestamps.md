@@ -74,7 +74,8 @@ lexical rollback is required.
 ## Verification
 
 - Property tests proving chronological and lexical ordering agree across offsets,
-  daylight-saving transitions, negative offsets, and microsecond boundaries.
+  IANA daylight-saving zones, negative and positive fixed offsets, and microsecond
+  boundaries. Hypothesis generates the instants, zones, offsets, and boundary deltas.
 - Snapshot/API tests proving equivalent offsets serialize identically.
 - SQLite upgrade tests for valid legacy values, invalid-value fail-closed behavior,
   idempotence, query results, and `EXPLAIN QUERY PLAN` index use.

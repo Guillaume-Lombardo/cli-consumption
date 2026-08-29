@@ -471,7 +471,7 @@ def test_concurrent_sqlite_scope_updates_keep_richest_graph(
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [
-            executor.submit(ingest, version(2, "older")),
+            executor.submit(ingest, version(0, "stale")),
             executor.submit(ingest, version(3, "newest")),
         ]
         for future in futures:

@@ -27,6 +27,7 @@ from cli_consumption.storage import (
     initialize_database,
     read_table,
 )
+from cli_consumption.timestamps import canonical_timestamp
 
 
 def _conversation(
@@ -39,8 +40,8 @@ def _conversation(
         source_machine="machine",
         project="project",
         project_source="none",
-        started_at=started_at,
-        ended_at=ended_at,
+        started_at=canonical_timestamp(started_at) if started_at else None,
+        ended_at=canonical_timestamp(ended_at) if ended_at else None,
         duration_seconds=None,
         source="rollout",
         models_json="[]",
@@ -90,7 +91,7 @@ def _run(identifier: str, ingested_at: str) -> IngestionRun:
     return IngestionRun(
         id=identifier,
         provider="codex",
-        ingested_at=ingested_at,
+        ingested_at=canonical_timestamp(ingested_at),
         conversations_received=0,
         conversations_written=0,
         conversations_skipped=0,
@@ -110,8 +111,8 @@ def test_export_window_parses_dates_offsets_and_boundaries() -> None:
     )
     precise = parse_export_window("2026-06-01T10:00:00Z", "2026-06-02T10:00:00Z")
     assert precise.metadata(day_precision=True) == {
-        "since": "2026-06-01T00:00:00+00:00",
-        "until": "2026-06-03T00:00:00+00:00",
+        "since": "2026-06-01T00:00:00.000000+00:00",
+        "until": "2026-06-03T00:00:00.000000+00:00",
     }
     with pytest.raises(ValueError, match="timezone"):
         parse_export_window("2026-06-01T00:00:00")
@@ -142,6 +143,10 @@ def test_window_selects_overlaps_complete_graph_subagents_and_runs(
                     "2026-07-01T00:00:00+00:00",
                     "2026-07-01T01:00:00+00:00",
                 ),
+                _conversation("started-only-inside", "2026-06-10T00:00:00Z", None),
+                _conversation("ended-only-inside", None, "2026-06-20T00:00:00-04:00"),
+                _conversation("started-only-before", "2026-05-01T00:00:00Z", None),
+                _conversation("ended-only-after", None, "2026-07-02T00:00:00Z"),
                 _conversation("unknown", None, None),
                 _turn("overlap"),
                 _turn("inside"),
@@ -180,8 +185,10 @@ def test_window_selects_overlaps_complete_graph_subagents_and_runs(
     export_csv(engine, output, window=window)
     with (output / "conversations.csv").open(encoding="utf-8") as handle:
         assert [row["id"] for row in csv.DictReader(handle)] == [
+            "codex:ended-only-inside",
             "codex:inside",
             "codex:overlap",
+            "codex:started-only-inside",
         ]
     with (output / "turns.csv").open(encoding="utf-8") as handle:
         assert [row["conversation_id"] for row in csv.DictReader(handle)] == [
@@ -195,7 +202,7 @@ def test_window_selects_overlaps_complete_graph_subagents_and_runs(
 
     payload = _dashboard_payload(engine, window=window)
     assert payload["meta"]["exportWindow"] == window.metadata()
-    assert len(payload["conversations"]) == 2
+    assert len(payload["conversations"]) == 4
     assert len(payload["turns"]) == 2
     assert len(payload["subagents"]) == 1
     engine.dispose()
@@ -237,4 +244,5 @@ def test_window_queries_compile_for_postgresql() -> None:
         statement = report_statement(connection, table_name, window)
         sql = str(statement.compile(dialect=postgresql.dialect()))
         assert "ORDER BY" in sql
-        assert "TIMESTAMP WITH TIME ZONE" in sql
+        assert "CAST(" not in sql
+        assert "datetime(" not in sql

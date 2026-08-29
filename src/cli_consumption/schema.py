@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect
+from sqlalchemy import String, Table, inspect
 from sqlalchemy.engine import Connection, Engine
 
 
@@ -178,19 +180,111 @@ def _config(connection: Connection) -> Config:
 
 
 def _preflight_unversioned(connection: Connection) -> None:
+    from cli_consumption.storage import TABLES
+
     inspector = inspect(connection)
     existing = set(inspector.get_table_names())
     for table_name in existing & BASELINE_COLUMNS.keys():
-        actual = frozenset(
-            column["name"] for column in inspector.get_columns(table_name)
-        )
+        columns = inspector.get_columns(table_name)
+        actual = frozenset(column["name"] for column in columns)
         accepted = {BASELINE_COLUMNS[table_name]}
         if table_name == "subagents":
             accepted.add(BASELINE_COLUMNS[table_name] - {"agent_nickname"})
         if actual not in accepted:
-            raise SchemaCompatibilityError(
-                "The unversioned database does not match a published schema"
+            _reject_unpublished_schema()
+
+        declared = cast(Table, TABLES[table_name].__table__)
+        declared_columns = {column.name: column for column in declared.columns}
+        for column in columns:
+            name = column["name"]
+            if name == "agent_nickname":
+                if not _matches_legacy_nickname(column):
+                    _reject_unpublished_schema()
+                continue
+            expected = declared_columns[name]
+            if (
+                bool(column.get("primary_key")) != expected.primary_key
+                or bool(column["nullable"]) != expected.nullable
+                or not _matching_type(column["type"], expected.type)
+                or column.get("default") is not None
+            ):
+                _reject_unpublished_schema()
+
+        expected_indexes = {
+            (
+                index.name,
+                tuple(column.name for column in index.columns),
+                bool(index.unique),
             )
+            for index in declared.indexes
+        }
+        actual_indexes = {
+            (
+                index["name"],
+                tuple(index["column_names"]),
+                bool(index["unique"]),
+            )
+            for index in inspector.get_indexes(table_name)
+        }
+        accepted_indexes = {frozenset(expected_indexes)}
+        if table_name == "conversations":
+            accepted_indexes.add(
+                frozenset(
+                    expected_indexes
+                    - {("ix_conversations_ended_at", ("ended_at",), False)}
+                )
+            )
+        if frozenset(actual_indexes) not in accepted_indexes:
+            _reject_unpublished_schema()
+
+        expected_foreign_keys = {
+            (
+                tuple(element.parent.name for element in constraint.elements),
+                constraint.referred_table.name,
+                tuple(element.column.name for element in constraint.elements),
+                (constraint.ondelete or "").upper(),
+            )
+            for constraint in declared.foreign_key_constraints
+        }
+        actual_foreign_keys = {
+            (
+                tuple(foreign_key["constrained_columns"]),
+                foreign_key["referred_table"],
+                tuple(foreign_key["referred_columns"]),
+                str(foreign_key.get("options", {}).get("ondelete", "")).upper(),
+            )
+            for foreign_key in inspector.get_foreign_keys(table_name)
+        }
+        if actual_foreign_keys != expected_foreign_keys:
+            _reject_unpublished_schema()
+        if inspector.get_check_constraints(
+            table_name
+        ) or inspector.get_unique_constraints(table_name):
+            _reject_unpublished_schema()
+
+
+def _matching_type(actual: object, expected: object) -> bool:
+    actual_generic = getattr(actual, "as_generic", lambda: actual)()
+    expected_generic = getattr(expected, "as_generic", lambda: expected)()
+    if type(actual_generic) is not type(expected_generic):
+        return False
+    if isinstance(expected_generic, String):
+        return getattr(actual_generic, "length", None) == expected_generic.length
+    return True
+
+
+def _matches_legacy_nickname(column: Mapping[str, object]) -> bool:
+    return (
+        _matching_type(column["type"], String(255))
+        and column["nullable"] is False
+        and not column.get("primary_key")
+    )
+
+
+def _reject_unpublished_schema() -> None:
+    raise SchemaCompatibilityError(
+        "The unversioned database does not match a published schema"
+    )
 
 
 def upgrade_database(engine: Engine) -> None:

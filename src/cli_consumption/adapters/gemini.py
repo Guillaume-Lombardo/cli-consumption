@@ -9,6 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import (
+    iter_bounded_jsonl_bytes,
+    read_bounded_bytes,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -256,22 +260,21 @@ def _read_session(
     records: list[dict[str, Any]] = []
     malformed = 0
     if path.suffix == ".jsonl":
-        with path.open("rb") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                try:
-                    record = json.loads(line)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    malformed += 1
-                    continue
-                if isinstance(record, dict):
-                    records.append(record)
-                else:
-                    malformed += 1
+        for line in iter_bounded_jsonl_bytes(path):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                malformed += 1
+                continue
+            if isinstance(record, dict):
+                records.append(record)
+            else:
+                malformed += 1
     else:
         try:
-            record = json.loads(path.read_bytes())
+            record = json.loads(read_bounded_bytes(path))
         except (json.JSONDecodeError, UnicodeDecodeError):
             return {}, [], 1, 0, digest
         if not isinstance(record, dict):

@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,14 @@ from typing import Any
 from cli_consumption.models import empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
+MAX_PROVIDER_JSON_BYTES = 64 * 1024 * 1024
+MAX_PROVIDER_JSONL_BYTES = 256 * 1024 * 1024
+MAX_PROVIDER_JSONL_LINE_BYTES = 8 * 1024 * 1024
 SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+@-]*")
+
+
+class ProviderDataLimitError(ValueError):
+    """A privacy-safe failure raised when provider input exceeds a hard limit."""
 
 
 def mapping(value: object) -> dict[str, Any]:
@@ -138,4 +146,35 @@ def digest_records(records: object) -> str:
 
 
 def read_json(path: Path) -> object:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(read_bounded_bytes(path))
+
+
+def read_bounded_bytes(path: Path, maximum: int = MAX_PROVIDER_JSON_BYTES) -> bytes:
+    reject_provider_file_symlink(path)
+    if path.stat().st_size > maximum:
+        raise ProviderDataLimitError("provider_file_too_large")
+    with path.open("rb") as handle:
+        payload = handle.read(maximum + 1)
+    if len(payload) > maximum:
+        raise ProviderDataLimitError("provider_file_too_large")
+    return payload
+
+
+def iter_bounded_jsonl_bytes(
+    path: Path,
+    maximum_line: int = MAX_PROVIDER_JSONL_LINE_BYTES,
+    maximum_file: int = MAX_PROVIDER_JSONL_BYTES,
+) -> Iterator[bytes]:
+    reject_provider_file_symlink(path)
+    if path.stat().st_size > maximum_file:
+        raise ProviderDataLimitError("provider_file_too_large")
+    with path.open("rb") as handle:
+        for line in handle:
+            if len(line) > maximum_line:
+                raise ProviderDataLimitError("provider_line_too_large")
+            yield line
+
+
+def reject_provider_file_symlink(path: Path) -> None:
+    if path.is_symlink():
+        raise ProviderDataLimitError("provider_file_symlink_not_allowed")

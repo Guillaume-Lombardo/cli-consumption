@@ -19,6 +19,7 @@ async def test_collector_requires_token_and_ingests_snapshot(
     home = tmp_path / "codex"
     rollout_factory(home)
     snapshot = CodexAdapter().collect([("laptop", home)])
+    snapshot.conversations[0]["started_at"] = "2026-08-25T12:00:00+02:00"
     engine = create_database_engine(tmp_path / "central.sqlite")
     transport = httpx.ASGITransport(app=create_app(engine, "test-token"))
 
@@ -44,6 +45,9 @@ async def test_collector_requires_token_and_ingests_snapshot(
         assert response.status_code == 200
         assert response.json()["written"] == 1
         assert read_table(engine, "conversations")[0]["source_machine"] == "laptop"
+        assert read_table(engine, "conversations")[0]["started_at"] == (
+            "2026-08-25T10:00:00.000000+00:00"
+        )
         assert read_table(engine, "work_items")[0]["kind"] == "command"
         assert read_table(engine, "context_samples")[0]["input_tokens"] == 100
 

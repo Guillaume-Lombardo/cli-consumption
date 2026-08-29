@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import read_bounded_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -292,7 +293,7 @@ def _read_conversation(path: Path, machine: str) -> tuple[_Conversation | None, 
         return None, 0
     digest = hashlib.sha256()
     try:
-        raw_base = base_path.read_bytes()
+        raw_base = read_bounded_bytes(base_path)
         digest.update(raw_base)
         root = json.loads(raw_base)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
@@ -309,7 +310,7 @@ def _read_conversation(path: Path, machine: str) -> tuple[_Conversation | None, 
     if events_dir.is_dir():
         for event_path in sorted(events_dir.glob("event-*.json")):
             try:
-                raw_event = event_path.read_bytes()
+                raw_event = read_bounded_bytes(event_path)
                 digest.update(event_path.name.encode())
                 digest.update(raw_event)
                 event = json.loads(raw_event)

@@ -11,9 +11,11 @@ from cli_consumption.adapters._shared import (
     add_tokens,
     counter,
     iso,
+    iter_bounded_jsonl_bytes,
     label,
     mapping,
     project,
+    read_bounded_bytes,
     timestamp,
     tokens,
 )
@@ -204,7 +206,7 @@ class MistralVibeAdapter:
 def _read_candidate(machine: str, metadata_path: Path) -> tuple[_Candidate | None, int]:
     digest = hashlib.sha256()
     try:
-        metadata_bytes = metadata_path.read_bytes()
+        metadata_bytes = read_bounded_bytes(metadata_path)
         digest.update(metadata_bytes)
         metadata = json.loads(metadata_bytes)
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
@@ -219,22 +221,21 @@ def _read_candidate(machine: str, metadata_path: Path) -> tuple[_Candidate | Non
     malformed = 0
     messages_path = metadata_path.parent / "messages.jsonl"
     try:
-        with messages_path.open("rb") as handle:
-            for line in handle:
-                digest.update(line)
-                if not line.strip():
-                    continue
-                try:
-                    message = json.loads(line)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    malformed += 1
-                    continue
-                if not isinstance(message, dict) or not isinstance(
-                    message.get("role"), str
-                ):
-                    malformed += 1
-                    continue
-                messages.append(message)
+        for line in iter_bounded_jsonl_bytes(messages_path):
+            digest.update(line)
+            if not line.strip():
+                continue
+            try:
+                message = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                malformed += 1
+                continue
+            if not isinstance(message, dict) or not isinstance(
+                message.get("role"), str
+            ):
+                malformed += 1
+                continue
+            messages.append(message)
     except OSError:
         malformed += 1
 

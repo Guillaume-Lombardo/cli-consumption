@@ -57,12 +57,15 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     html = dashboard.read_text(encoding="utf-8")
     assert "CLI Consumption" in html
     assert "Turn performance" in html
+    assert "Turn rate" in html
+    assert "Technical throughput" not in html
     assert 'id="themeToggle"' in html
     assert "localStorage.getItem('cli-consumption-theme')" in html
     assert "radial-gradient" not in html
     assert "linear-gradient" not in html
     assert html.index("<h2>Models</h2>") < html.index("<h2>Turn performance</h2>")
-    assert "Median provider-reported total-token count" in html
+    assert "Median total-token count only for providers" in html
+    assert "tokenSemantics==='additive'" in html
     assert html.count('class="info"') == 1
     assert "Data quality" in html
     assert "https://" not in html
@@ -105,9 +108,11 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
         "ingestionRuns",
     }
     assert payload["meta"] == {"shareSafe": False}
+    assert payload["conversations"][0]["tokenSemantics"] == "additive"
     assert set(payload["conversations"][0]) == {
         "key",
         "provider",
+        "tokenSemantics",
         "machine",
         "project",
         "startedAt",
@@ -249,6 +254,42 @@ def test_richer_replacement_is_atomic_and_older_copy_cannot_regress_it(
         ingest_snapshot(engine, invalid)
     assert len(read_table(engine, "compaction_events")) == 1
     assert "privacy canary" not in str(read_table(engine, "work_items"))
+    engine.dispose()
+
+
+def test_subagent_scope_is_replaced_when_edges_disappear(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    snapshot = CodexAdapter().collect([("desktop", home)])
+    snapshot.subagents.append(
+        {
+            "id": "codex:desktop:child-thread",
+            "provider": "codex",
+            "source_machine": "desktop",
+            "parent_thread_id": "conversation-1",
+            "child_thread_id": "child-thread",
+            "status": "completed",
+            "created_at_ms": 1,
+            "updated_at_ms": 2,
+            "agent_role": "worker",
+            "tokens_used": 3,
+        }
+    )
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+
+    ingest_snapshot(engine, snapshot)
+    assert {row["id"] for row in read_table(engine, "subagents")} == {
+        "codex:desktop:child-thread"
+    }
+
+    without_edges = Snapshot.from_dict(snapshot.to_dict())
+    without_edges.subagents.clear()
+    result = ingest_snapshot(engine, without_edges)
+
+    assert (result.written, result.skipped) == (0, 1)
+    assert read_table(engine, "subagents") == []
     engine.dispose()
 
 

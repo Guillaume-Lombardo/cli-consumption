@@ -9,6 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import (
+    iter_bounded_jsonl_bytes,
+    reject_provider_file_symlink,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
 SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+@-]*")
@@ -238,20 +242,19 @@ def _read_transcript(
     digest = hashlib.sha256()
     records: list[_Record] = []
     malformed = 0
-    with path.open("rb") as handle:
-        for line_number, raw_line in enumerate(handle, 1):
-            digest.update(raw_line)
-            if not raw_line.strip():
-                continue
-            try:
-                value = json.loads(raw_line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                malformed += 1
-                continue
-            record, invalid = _record(value, line_number)
-            malformed += invalid
-            if record is not None:
-                records.append(record)
+    for line_number, raw_line in enumerate(iter_bounded_jsonl_bytes(path), 1):
+        digest.update(raw_line)
+        if not raw_line.strip():
+            continue
+        try:
+            value = json.loads(raw_line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            malformed += 1
+            continue
+        record, invalid = _record(value, line_number)
+        malformed += invalid
+        if record is not None:
+            records.append(record)
 
     if not records:
         return None, malformed + 1
@@ -331,6 +334,7 @@ def _read_metas(chats: Path) -> tuple[dict[str, _Meta], int]:
 
 def _read_meta(path: Path) -> _Meta | None:
     try:
+        reject_provider_file_symlink(path)
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.execute("PRAGMA trusted_schema=OFF")
         connection.execute("PRAGMA query_only=ON")

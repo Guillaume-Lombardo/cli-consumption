@@ -6,7 +6,8 @@ machines, and can send metadata-only snapshots to a central collector.
 
 It never stores prompts, responses, tool arguments, credentials, or raw provider
 events. Local token counters are usage metadata, not billing records. Read the
-[privacy boundary](docs/privacy.md) before sharing a database or report.
+[privacy boundary](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/privacy.md)
+before sharing a database or report.
 
 ## Quick start
 
@@ -85,7 +86,7 @@ Use the provider name below with `--provider` to select one CLI explicitly.
 
 Provider formats are internal and can change without notice. The detailed extraction
 rules and qualification versions are documented in
-[Provider support](docs/provider-support.md).
+[Provider support](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/provider-support.md).
 
 ## Collect copied data
 
@@ -106,6 +107,11 @@ uv run cli-consumption collect --provider codex \
 Copy only the required provider data. For Codex, copy the `sessions/` directory but
 never `auth.json` or other credentials. Globally identical conversation IDs are
 deduplicated, and the most complete copy wins.
+
+Provider files are untrusted. Monolithic JSON files are limited to 64 MiB, JSONL files
+to 256 MiB with an 8 MiB per-line limit, and a snapshot to 250,000 normalized records
+while it is being built. Direct provider-file symlinks are refused. `collect --strict`
+refuses to write a snapshot when malformed records were skipped.
 
 Map original working-directory prefixes to stable project labels with repeated
 `--project NAME=PATH_PREFIX` options. The longest matching prefix wins:
@@ -128,7 +134,7 @@ uv run cli-consumption collect --provider plandex \
 
 The dashboard can filter by time, provider, machine, project, and model. It reports
 activity, token composition, cache efficiency, latency and duration distributions,
-technical throughput, context pressure, work-item reliability, configuration cohorts,
+turn rate, context pressure, work-item reliability, configuration cohorts,
 compactions, subagent delegation, and ingestion quality. Availability varies by
 provider, as summarized in the table above.
 
@@ -174,8 +180,14 @@ unversioned databases that exactly match a published schema are adopted before t
 upgrade; unknown or modified schemas are refused. Back up production databases before
 upgrading and do not run mixed application versions against one database while a
 migration is in progress. See the
-[migration decision](docs/decisions/0001-versioned-schema-migrations.md) for rollback
-and compatibility rules.
+[migration decision](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/decisions/0001-versioned-schema-migrations.md)
+for rollback and compatibility rules.
+
+Timezone-aware timestamps are normalized to fixed-width UTC strings during ingestion.
+Revision `0003` rewrites legacy timestamp text in bounded batches and adds an indexed
+conversation end-time path; see the
+[timestamp decision](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/decisions/0002-canonical-utc-timestamps.md)
+for the exact representation and downgrade boundary.
 
 Preview retention before deleting normalized metadata:
 
@@ -208,8 +220,9 @@ uv run cli-consumption sync --provider all \
 ```
 
 The application refuses to bind beyond localhost without a token. Production
-deployments also need TLS and standard operational controls. See
-[Architecture](docs/architecture.md) for the trade-offs.
+deployments also need TLS and standard operational controls. The sync client refuses
+plain HTTP beyond loopback unless `--allow-insecure` is passed explicitly. See
+[Architecture](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/architecture.md) for the trade-offs.
 
 Snapshots use strict schema version 1. The collector rejects request bodies larger
 than 32 MiB and snapshots containing more than 250,000 normalized records. A sync
@@ -228,7 +241,10 @@ uv run cli-consumption providers --json
 Each provider reports one of `no-data`, `detected`, `compatible`, `degraded`, or
 `unsupported-schema`. Diagnostics parse enough metadata to assess compatibility but do
 not persist it and never include paths, identifiers, record contents, counts, or parser
-errors in their output.
+errors in their output. Schema version 2 also declares whether token counters are
+additive, conversation aggregates, context snapshots, or unavailable. Dashboard token
+per-turn percentiles use only additive providers rather than treating missing measures
+as zero.
 
 ## Commands
 
@@ -242,6 +258,10 @@ errors in their output.
 | `retention` | Preview or apply deletion of metadata outside a retention window. |
 
 Run `uv run cli-consumption COMMAND --help` for all options.
+
+`collect`, `export`, and `retention` accept `--json` for deterministic
+machine-readable results. `collect --strict` rejects snapshots containing malformed
+provider records before opening the destination database.
 
 ## Development
 
@@ -257,9 +277,12 @@ uv build
 ```
 
 Development uses short-lived branches and squash-merged pull requests into protected
-`main`. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before
-changing the project.
+`main`. Read
+[CONTRIBUTING.md](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/CONTRIBUTING.md)
+and [AGENTS.md](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/AGENTS.md)
+before changing the project. Security issues follow the private reporting guidance in
+[SECURITY.md](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/SECURITY.md).
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/LICENSE).

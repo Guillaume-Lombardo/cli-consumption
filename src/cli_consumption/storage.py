@@ -25,6 +25,7 @@ from sqlalchemy.pool import NullPool
 
 from cli_consumption.models import Snapshot, SnapshotPayload, SnapshotValidationError
 from cli_consumption.schema import upgrade_database
+from cli_consumption.timestamps import canonical_timestamp
 
 DEFAULT_DATABASE = "sqlite:///cli-consumption.sqlite"
 
@@ -47,7 +48,7 @@ class Conversation(Base):
     project: Mapped[str] = mapped_column(String(512), index=True)
     project_source: Mapped[str] = mapped_column(String(32))
     started_at: Mapped[str | None] = mapped_column(String(64), index=True)
-    ended_at: Mapped[str | None] = mapped_column(String(64))
+    ended_at: Mapped[str | None] = mapped_column(String(64), index=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(255))
     models_json: Mapped[str] = mapped_column(Text)
@@ -288,7 +289,7 @@ def initialize_database(engine: Engine) -> None:
 
 
 def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
-    validate_snapshot(snapshot)
+    snapshot = validate_snapshot(snapshot)
     initialize_database(engine)
     run_id = str(uuid.uuid4())
     written = 0
@@ -300,9 +301,20 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
     context_by_conversation = _group(snapshot.context_samples)
     settings_by_conversation = _group(snapshot.turn_settings)
     compactions_by_conversation = _group(snapshot.compaction_events)
+    subagent_scopes = {
+        (snapshot.provider, str(record["source_machine"]))
+        for record in (*snapshot.conversations, *snapshot.subagents)
+    }
     with Session(engine) as session, session.begin():
+        for provider, source_machine in subagent_scopes:
+            session.execute(
+                delete(Subagent).where(
+                    Subagent.provider == provider,
+                    Subagent.source_machine == source_machine,
+                )
+            )
         for subagent in snapshot.subagents:
-            session.merge(Subagent(**subagent))
+            session.add(Subagent(**subagent))
         for record in snapshot.conversations:
             conversation_id = str(record["id"])
             existing = session.get(Conversation, conversation_id)
@@ -361,7 +373,7 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
             IngestionRun(
                 id=run_id,
                 provider=snapshot.provider,
-                ingested_at=datetime.now(UTC).isoformat(),
+                ingested_at=canonical_timestamp(datetime.now(UTC)),
                 conversations_received=len(snapshot.conversations),
                 conversations_written=written,
                 conversations_skipped=skipped,
@@ -392,7 +404,7 @@ def read_table(engine: Engine, table_name: str) -> list[dict[str, Any]]:
         ]
 
 
-def validate_snapshot(snapshot: Snapshot) -> None:
+def validate_snapshot(snapshot: Snapshot) -> Snapshot:
     """Validate values and referential integrity before opening a transaction."""
     try:
         payload = SnapshotPayload.model_validate(snapshot.to_dict())
@@ -465,6 +477,7 @@ def validate_snapshot(snapshot: Snapshot) -> None:
             and item.completed_at_ms < item.started_at_ms
         ):
             raise SnapshotValidationError()
+    return Snapshot(**payload.model_dump())
 
 
 def _validate_time_range(started_at: str | None, ended_at: str | None) -> None:

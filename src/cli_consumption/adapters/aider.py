@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import iter_bounded_jsonl_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -185,32 +186,31 @@ def _read_sessions(
     active: list[dict[str, Any]] | None = None
     malformed = 0
     ordinals: dict[tuple[str, int], int] = {}
-    with path.open("rb") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                malformed += 1
-                continue
-            if not isinstance(event, dict) or not isinstance(event.get("event"), str):
-                malformed += 1
-                continue
-            if _epoch(event.get("time")) is None:
-                malformed += 1
-                continue
-            if event["event"] == "launched":
-                if active:
-                    sessions.append(_session(active, ordinals))
-                active = [event]
-                continue
-            if active is None:
-                continue
-            active.append(event)
-            if event["event"] == "exit":
+    for line in iter_bounded_jsonl_bytes(path):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            malformed += 1
+            continue
+        if not isinstance(event, dict) or not isinstance(event.get("event"), str):
+            malformed += 1
+            continue
+        if _epoch(event.get("time")) is None:
+            malformed += 1
+            continue
+        if event["event"] == "launched":
+            if active:
                 sessions.append(_session(active, ordinals))
-                active = None
+            active = [event]
+            continue
+        if active is None:
+            continue
+        active.append(event)
+        if event["event"] == "exit":
+            sessions.append(_session(active, ordinals))
+            active = None
     if active:
         sessions.append(_session(active, ordinals))
     return sessions, malformed

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._shared import read_bounded_bytes
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -217,7 +218,7 @@ class ContinueAdapter:
 
 
 def _read_session(path: Path, machine: str) -> tuple[_Session | None, int]:
-    raw = path.read_bytes()
+    raw = read_bounded_bytes(path)
     digest = hashlib.sha256(raw).hexdigest()
     try:
         root = json.loads(raw)

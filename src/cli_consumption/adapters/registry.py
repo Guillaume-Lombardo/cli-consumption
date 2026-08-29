@@ -28,6 +28,9 @@ from cli_consumption.adapters.plandex import PlandexAdapter
 from cli_consumption.adapters.qwen import QwenAdapter
 
 SupportStatus = Literal["supported"]
+TokenSemantics = Literal[
+    "additive", "conversation-aggregate", "context-snapshot", "unavailable"
+]
 CompatibilityStatus = Literal[
     "no-data",
     "detected",
@@ -47,6 +50,7 @@ class AdapterSpec:
     markers: tuple[str, ...]
     aliases: tuple[str, ...] = ()
     support: SupportStatus = "supported"
+    token_semantics: TokenSemantics = "unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +61,7 @@ class ProviderDiagnostic:
     aliases: tuple[str, ...]
     support: SupportStatus
     status: CompatibilityStatus
+    token_semantics: TokenSemantics
 
     def to_dict(self) -> dict[str, str | list[str]]:
         return {
@@ -64,21 +69,45 @@ class ProviderDiagnostic:
             "aliases": list(self.aliases),
             "support": self.support,
             "status": self.status,
+            "token_semantics": self.token_semantics,
         }
 
 
 ADAPTER_SPECS = (
-    AdapterSpec("aider", AiderAdapter, ".aider", ("analytics.jsonl",)),
+    AdapterSpec(
+        "aider",
+        AiderAdapter,
+        ".aider",
+        ("analytics.jsonl",),
+        token_semantics="additive",
+    ),
     AdapterSpec("amazon-q", AmazonQAdapter, ".local/share/amazon-q", ("data.sqlite3",)),
-    AdapterSpec("amp", AmpAdapter, ".local/share/amp", ("threads",)),
-    AdapterSpec("codex", CodexAdapter, ".codex", ("sessions",)),
-    AdapterSpec("copilot", CopilotAdapter, ".copilot", ("session-state",)),
-    AdapterSpec("continue", ContinueAdapter, ".continue", ("sessions",)),
+    AdapterSpec(
+        "amp", AmpAdapter, ".local/share/amp", ("threads",), token_semantics="additive"
+    ),
+    AdapterSpec(
+        "codex", CodexAdapter, ".codex", ("sessions",), token_semantics="additive"
+    ),
+    AdapterSpec(
+        "copilot",
+        CopilotAdapter,
+        ".copilot",
+        ("session-state",),
+        token_semantics="conversation-aggregate",
+    ),
+    AdapterSpec(
+        "continue",
+        ContinueAdapter,
+        ".continue",
+        ("sessions",),
+        token_semantics="additive",
+    ),
     AdapterSpec(
         "crush",
         CrushAdapter,
         ".local/share/crush",
         ("projects.json", "crush.db", ".crush/crush.db"),
+        token_semantics="context-snapshot",
     ),
     AdapterSpec(
         "cursor",
@@ -86,40 +115,90 @@ ADAPTER_SPECS = (
         ".cursor",
         ("chats", "projects/*/agent-transcripts"),
     ),
-    AdapterSpec("gemini", GeminiAdapter, ".gemini", ("tmp",)),
-    AdapterSpec("goose", GooseAdapter, ".local/share/goose/sessions", ("sessions.db",)),
-    AdapterSpec("grok", GrokAdapter, ".grok", ("sessions/*/*/summary.json",)),
+    AdapterSpec(
+        "gemini", GeminiAdapter, ".gemini", ("tmp",), token_semantics="additive"
+    ),
+    AdapterSpec(
+        "goose",
+        GooseAdapter,
+        ".local/share/goose/sessions",
+        ("sessions.db",),
+        token_semantics="additive",
+    ),
+    AdapterSpec(
+        "grok",
+        GrokAdapter,
+        ".grok",
+        ("sessions/*/*/summary.json",),
+        token_semantics="additive",
+    ),
     AdapterSpec(
         "claude",
         ClaudeAdapter,
         ".claude",
         ("projects/*/*.jsonl",),
         aliases=("claude-code",),
+        token_semantics="additive",
     ),
-    AdapterSpec("cline", ClineAdapter, ".cline/data", ("sessions/sessions.db",)),
-    AdapterSpec("kilo", KiloAdapter, ".local/share/kilo", ("kilo.db",)),
-    AdapterSpec("kimi", KimiAdapter, ".kimi", ("sessions/*/*/wire.jsonl",)),
+    AdapterSpec(
+        "cline",
+        ClineAdapter,
+        ".cline/data",
+        ("sessions/sessions.db",),
+        token_semantics="additive",
+    ),
+    AdapterSpec(
+        "kilo",
+        KiloAdapter,
+        ".local/share/kilo",
+        ("kilo.db",),
+        token_semantics="additive",
+    ),
+    AdapterSpec(
+        "kimi",
+        KimiAdapter,
+        ".kimi",
+        ("sessions/*/*/wire.jsonl",),
+        token_semantics="additive",
+    ),
     AdapterSpec(
         "mistral-vibe",
         MistralVibeAdapter,
         ".vibe",
         ("logs/session/*/meta.json",),
+        token_semantics="conversation-aggregate",
     ),
-    AdapterSpec("opencode", OpenCodeAdapter, ".local/share/opencode", ("opencode.db",)),
+    AdapterSpec(
+        "opencode",
+        OpenCodeAdapter,
+        ".local/share/opencode",
+        ("opencode.db",),
+        token_semantics="additive",
+    ),
     AdapterSpec(
         "openhands",
         OpenHandsAdapter,
         ".openhands",
         ("conversations/*/base_state.json",),
+        token_semantics="additive",
     ),
-    AdapterSpec("pi", PiAdapter, ".pi/agent", ("sessions",)),
+    AdapterSpec(
+        "pi", PiAdapter, ".pi/agent", ("sessions",), token_semantics="additive"
+    ),
     AdapterSpec(
         "plandex",
         PlandexAdapter,
         "/plandex-server",
         ("orgs/*/plans/*/conversation",),
+        token_semantics="additive",
     ),
-    AdapterSpec("qwen", QwenAdapter, ".qwen", ("projects/*/chats",)),
+    AdapterSpec(
+        "qwen",
+        QwenAdapter,
+        ".qwen",
+        ("projects/*/chats",),
+        token_semantics="additive",
+    ),
 )
 
 
@@ -166,4 +245,6 @@ def diagnose_provider(spec: AdapterSpec, path: Path) -> ProviderDiagnostic:
                 status = "compatible"
             else:
                 status = "detected"
-    return ProviderDiagnostic(spec.name, spec.aliases, spec.support, status)
+    return ProviderDiagnostic(
+        spec.name, spec.aliases, spec.support, status, spec.token_semantics
+    )

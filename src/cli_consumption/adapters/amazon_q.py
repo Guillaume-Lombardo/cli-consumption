@@ -13,6 +13,7 @@ from cli_consumption.adapters._shared import (
     mapping,
     new_turn,
     project,
+    reject_provider_file_symlink,
     timestamp,
 )
 from cli_consumption.adapters.base import UnsupportedProviderFormat
@@ -63,6 +64,7 @@ def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
     malformed = 0
     result: list[tuple[str, dict[str, Any]]] = []
     try:
+        reject_provider_file_symlink(path)
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA trusted_schema=OFF")

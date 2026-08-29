@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import BigInteger, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -17,12 +17,14 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 from cli_consumption.migrations.versions import (
     v0001_baseline,
     v0002_minimize_subagents,
+    v0003_canonical_timestamps,
 )
 from cli_consumption.models import Snapshot
 from cli_consumption.retention import retain_before
 from cli_consumption.schema import (
     BASELINE_COLUMNS,
     SchemaCompatibilityError,
+    _matching_type,
     downgrade_database,
     upgrade_database,
 )
@@ -37,6 +39,7 @@ from cli_consumption.storage import (
     initialize_database,
     read_table,
 )
+from cli_consumption.timestamps import canonical_timestamp
 
 
 def _conversation(identifier: str, started_at: str | None) -> Conversation:
@@ -47,7 +50,7 @@ def _conversation(identifier: str, started_at: str | None) -> Conversation:
         source_machine="machine",
         project="project",
         project_source="none",
-        started_at=started_at,
+        started_at=canonical_timestamp(started_at) if started_at else None,
         ended_at=None,
         duration_seconds=None,
         source="synthetic",
@@ -103,7 +106,7 @@ def test_empty_database_upgrades_to_packaged_head(tmp_path: Path) -> None:
     assert set(inspector.get_table_names()) == {*BASELINE_COLUMNS, "alembic_version"}
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0002"
+            "0003"
         )
     for table in Base.metadata.sorted_tables:
         assert {column["name"] for column in inspector.get_columns(table.name)} == (
@@ -120,6 +123,14 @@ def test_empty_database_upgrades_to_packaged_head(tmp_path: Path) -> None:
         "ix_model_calls_turn_id",
     }
     engine.dispose()
+
+
+def test_legacy_type_comparison_distinguishes_widths_and_text_kinds() -> None:
+    assert _matching_type(BigInteger(), BigInteger())
+    assert _matching_type(String(64), String(64))
+    assert not _matching_type(Integer(), BigInteger())
+    assert not _matching_type(Text(), String(64))
+    assert not _matching_type(String(255), String(64))
 
 
 def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> None:
@@ -140,7 +151,7 @@ def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> No
     assert read_table(engine, "ingestion_runs")[0]["id"] == "run"
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0002"
+            "0003"
         )
     assert "agent_nickname" not in {
         column["name"] for column in inspect(engine).get_columns("subagents")
@@ -181,6 +192,44 @@ def test_ambiguous_unversioned_database_is_rejected_before_mutation(
     engine.dispose()
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "DROP INDEX ix_ingestion_runs_provider",
+        """
+        ALTER TABLE ingestion_runs RENAME TO ingestion_runs_original;
+        CREATE TABLE ingestion_runs (
+            id INTEGER PRIMARY KEY,
+            provider BLOB,
+            ingested_at INTEGER,
+            conversations_received TEXT,
+            conversations_written TEXT,
+            conversations_skipped TEXT,
+            malformed_records TEXT,
+            duplicate_conversations TEXT
+        );
+        DROP TABLE ingestion_runs_original
+        """,
+    ),
+)
+def test_unversioned_database_rejects_modified_constraints_and_types(
+    tmp_path: Path, mutation: str
+) -> None:
+    engine = create_database_engine(tmp_path / "modified.sqlite")
+    initialize_database(engine)
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE alembic_version"))
+        for statement in mutation.split(";"):
+            if statement.strip():
+                connection.execute(text(statement))
+
+    with pytest.raises(SchemaCompatibilityError, match="published schema"):
+        initialize_database(engine)
+
+    assert "alembic_version" not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
 def test_unknown_database_revision_is_rejected(tmp_path: Path) -> None:
     engine = create_database_engine(tmp_path / "future.sqlite")
     initialize_database(engine)
@@ -202,6 +251,7 @@ def test_migrations_emit_portable_postgresql_structure() -> None:
     with Operations.context(context):
         v0001_baseline.upgrade()
         v0002_minimize_subagents.upgrade()
+        v0003_canonical_timestamps.upgrade()
 
     ddl = output.getvalue()
     assert "CREATE TABLE conversations" in ddl
@@ -212,6 +262,7 @@ def test_migrations_emit_portable_postgresql_structure() -> None:
     assert "CREATE INDEX ix_turn_settings_service_tier" in ddl
     assert "UPDATE subagents" in ddl
     assert "DROP COLUMN agent_nickname" in ddl
+    assert "CREATE INDEX ix_conversations_ended_at" in ddl
 
 
 def test_subagent_migration_normalizes_history_and_round_trips(
@@ -276,16 +327,129 @@ def test_subagent_migration_normalizes_history_and_round_trips(
     engine.dispose()
 
 
+def test_timestamp_migration_canonicalizes_legacy_values_and_adds_index(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "timestamps.sqlite")
+    initialize_database(engine)
+    downgrade_database(engine, "0002")
+    with Session(engine) as session, session.begin():
+        conversation = _conversation("legacy-offset", "2026-01-01T00:00:00+00:00")
+        conversation.ended_at = "2026-01-01T00:00:01+00:00"
+        session.add(conversation)
+        session.add(
+            IngestionRun(
+                id="legacy-run",
+                provider="test",
+                ingested_at="2026-01-01T00:00:00+00:00",
+                conversations_received=1,
+                conversations_written=1,
+                conversations_skipped=0,
+                malformed_records=0,
+                duplicate_conversations=0,
+            )
+        )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE conversations SET started_at = :started, ended_at = :ended "
+                "WHERE id = 'legacy-offset'"
+            ),
+            {
+                "started": "2026-01-01T02:00:00+02:00",
+                "ended": "2025-12-31T16:00:01-08:00",
+            },
+        )
+
+    upgrade_database(engine)
+    upgrade_database(engine)
+
+    row = read_table(engine, "conversations")[0]
+    assert row["started_at"] == "2026-01-01T00:00:00.000000+00:00"
+    assert row["ended_at"] == "2026-01-01T00:00:01.000000+00:00"
+    assert read_table(engine, "ingestion_runs")[0]["ingested_at"] == (
+        "2026-01-01T00:00:00.000000+00:00"
+    )
+    assert "ix_conversations_ended_at" in {
+        item["name"] for item in inspect(engine).get_indexes("conversations")
+    }
+    with engine.connect() as connection:
+        plan = connection.execute(
+            text(
+                "EXPLAIN QUERY PLAN SELECT id FROM conversations "
+                "WHERE ended_at >= :bound"
+            ),
+            {"bound": "2026-01-01T00:00:00.000000+00:00"},
+        ).all()
+    assert "ix_conversations_ended_at" in str(plan)
+    engine.dispose()
+
+
+def test_timestamp_migration_fails_closed_and_rolls_back_without_leaking(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "invalid-timestamps.sqlite")
+    initialize_database(engine)
+    downgrade_database(engine, "0002")
+    with Session(engine) as session, session.begin():
+        session.add(_conversation("valid-offset", "2026-01-01T00:00:00+00:00"))
+        session.add(
+            IngestionRun(
+                id="invalid-run",
+                provider="test",
+                ingested_at="privacy canary timestamp",
+                conversations_received=0,
+                conversations_written=0,
+                conversations_skipped=0,
+                malformed_records=0,
+                duplicate_conversations=0,
+            )
+        )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE conversations SET started_at = '2026-01-01T02:00:00+02:00' "
+                "WHERE id = 'valid-offset'"
+            )
+        )
+
+    with pytest.raises(SchemaCompatibilityError) as error:
+        upgrade_database(engine)
+
+    assert str(error.value) == "Database schema migration failed"
+    assert "privacy canary" not in str(error.value)
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0002"
+        )
+        assert (
+            connection.scalar(
+                text("SELECT started_at FROM conversations WHERE id = 'valid-offset'")
+            )
+            == "2026-01-01T02:00:00+02:00"
+        )
+    assert "ix_conversations_ended_at" not in {
+        item["name"] for item in inspect(engine).get_indexes("conversations")
+    }
+    engine.dispose()
+
+
 def test_retention_previews_then_atomically_cascades_metadata(tmp_path: Path) -> None:
     engine = create_database_engine(tmp_path / "retention.sqlite")
     initialize_database(engine)
+    ended_only_old = _conversation("test:ended-only-old", None)
+    ended_only_old.ended_at = canonical_timestamp("2026-05-31T23:59:59.999999Z")
+    ended_only_boundary = _conversation("test:ended-only-boundary", None)
+    ended_only_boundary.ended_at = canonical_timestamp("2026-06-01T00:00:00Z")
     with Session(engine) as session, session.begin():
         session.add_all(
             [
                 _conversation("test:old", "2026-01-01T00:00:00+00:00"),
-                _conversation("test:offset-old", "2026-06-01T01:00:00+02:00"),
+                _conversation("test:offset-old", "2026-05-31T23:00:00+00:00"),
                 _conversation("test:boundary", "2026-06-01T00:00:00+00:00"),
                 _conversation("test:unknown", None),
+                ended_only_old,
+                ended_only_boundary,
                 _turn("test:old:turn", "test:old"),
                 Subagent(
                     id="old-edge",
@@ -314,7 +478,7 @@ def test_retention_previews_then_atomically_cascades_metadata(tmp_path: Path) ->
                 IngestionRun(
                     id="old-run",
                     provider="test",
-                    ingested_at="2026-01-01T00:00:00+00:00",
+                    ingested_at="2026-01-01T00:00:00.000000+00:00",
                     conversations_received=0,
                     conversations_written=0,
                     conversations_skipped=0,
@@ -324,7 +488,7 @@ def test_retention_previews_then_atomically_cascades_metadata(tmp_path: Path) ->
                 IngestionRun(
                     id="offset-old-run",
                     provider="test",
-                    ingested_at="2026-06-01T01:00:00+02:00",
+                    ingested_at="2026-05-31T23:00:00.000000+00:00",
                     conversations_received=0,
                     conversations_written=0,
                     conversations_skipped=0,
@@ -337,17 +501,18 @@ def test_retention_previews_then_atomically_cascades_metadata(tmp_path: Path) ->
 
     preview = retain_before(engine, cutoff)
     assert (preview.conversations, preview.subagents, preview.ingestion_runs) == (
-        2,
+        3,
         1,
         2,
     )
     assert preview.applied is False
-    assert len(read_table(engine, "conversations")) == 4
+    assert len(read_table(engine, "conversations")) == 6
 
     applied = retain_before(engine, cutoff, apply=True)
-    assert applied == preview.__class__(cutoff, 2, 1, 2, True)
+    assert applied == preview.__class__(cutoff, 3, 1, 2, True)
     assert {row["id"] for row in read_table(engine, "conversations")} == {
         "test:boundary",
+        "test:ended-only-boundary",
         "test:unknown",
     }
     assert read_table(engine, "turns") == []
@@ -399,7 +564,64 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == "0003"
+            )
+
+        downgrade_database(test_engine, "0002")
+        with Session(test_engine) as session, session.begin():
+            session.add(_conversation("postgres-legacy", "2026-01-01T00:00:00+00:00"))
+            session.add(
+                IngestionRun(
+                    id="postgres-invalid-run",
+                    provider="test",
+                    ingested_at="privacy canary timestamp",
+                    conversations_received=0,
+                    conversations_written=0,
+                    conversations_skipped=0,
+                    malformed_records=0,
+                    duplicate_conversations=0,
+                )
+            )
+        with test_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE conversations SET started_at = "
+                    "'2026-01-01T02:00:00+02:00' WHERE id = 'postgres-legacy'"
+                )
+            )
+
+        with pytest.raises(SchemaCompatibilityError) as error:
+            upgrade_database(test_engine)
+        assert str(error.value) == "Database schema migration failed"
+        assert "privacy canary" not in str(error.value)
+        with test_engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
                 == "0002"
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT started_at FROM conversations "
+                        "WHERE id = 'postgres-legacy'"
+                    )
+                )
+                == "2026-01-01T02:00:00+02:00"
+            )
+        with test_engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM ingestion_runs WHERE id = 'postgres-invalid-run'")
+            )
+        upgrade_database(test_engine)
+        assert read_table(test_engine, "conversations")[0]["started_at"] == (
+            "2026-01-01T00:00:00.000000+00:00"
+        )
+        assert "ix_conversations_ended_at" in {
+            item["name"] for item in inspect(test_engine).get_indexes("conversations")
+        }
+        with test_engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM conversations WHERE id = 'postgres-legacy'")
             )
 
         cutoff = datetime.now(UTC) + timedelta(days=1)

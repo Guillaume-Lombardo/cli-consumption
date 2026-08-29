@@ -81,13 +81,14 @@ def test_provider_json_is_deterministic_and_does_not_leak_diagnostic_errors(
     assert first.exit_code == 0, first.output
     assert first.stdout == second.stdout
     assert json.loads(first.stdout) == {
-        "schema_version": 1,
+        "schema_version": 2,
         "providers": [
             {
                 "aliases": [],
                 "name": "synthetic",
                 "status": "degraded",
                 "support": "supported",
+                "token_semantics": "unavailable",
             }
         ],
     }
@@ -204,6 +205,26 @@ def test_retention_is_a_preview_unless_apply_is_explicit(tmp_path: Path) -> None
     )
     assert applied.exit_code == 0, applied.output
     assert "Applied retention" in applied.stdout
+
+    machine = runner.invoke(
+        app,
+        [
+            "retention",
+            "--keep-days",
+            "30",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+    assert machine.exit_code == 0, machine.output
+    assert json.loads(machine.stdout) == {
+        "applied": False,
+        "conversations": 0,
+        "cutoff": json.loads(machine.stdout)["cutoff"],
+        "ingestion_runs": 0,
+        "subagents": 0,
+    }
 
 
 def test_collects_github_copilot_cli(tmp_path: Path) -> None:
@@ -1031,6 +1052,73 @@ def test_collect_and_export(tmp_path: Path, rollout_factory) -> None:
     assert "enable --dashboard or --csv" in normalized_cli_output(result.output)
 
 
+def test_collect_and_export_machine_readable_results(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout = rollout_factory(home)
+    database = tmp_path / "usage.sqlite"
+
+    collected = runner.invoke(
+        app,
+        [
+            "collect",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+    assert collected.exit_code == 0, collected.output
+    payload = json.loads(collected.stdout)
+    assert payload["ingestions"][0] | {"run_id": "ignored"} == {
+        "provider": "codex",
+        "run_id": "ignored",
+        "received": 1,
+        "written": 1,
+        "skipped": 0,
+        "malformed": 0,
+        "duplicates": 0,
+    }
+
+    reports = tmp_path / "reports"
+    exported = runner.invoke(
+        app,
+        [
+            "export",
+            "--database",
+            str(database),
+            "--output",
+            str(reports),
+            "--json",
+        ],
+    )
+    assert exported.exit_code == 0, exported.output
+    assert json.loads(exported.stdout) == {
+        "files": ["dashboard.html"],
+        "written": 1,
+    }
+
+    with rollout.open("a", encoding="utf-8") as handle:
+        handle.write("not-json\n")
+    refused_database = tmp_path / "strict.sqlite"
+    refused = runner.invoke(
+        app,
+        [
+            "collect",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(refused_database),
+            "--strict",
+        ],
+    )
+    assert refused.exit_code == 2
+    assert "malformed provider" in normalized_cli_output(refused.output)
+    assert not refused_database.exists()
+
+
 def test_export_accepts_bounded_dates_and_rejects_naive_timestamps(
     tmp_path: Path, rollout_factory
 ) -> None:
@@ -1066,8 +1154,8 @@ def test_export_accepts_bounded_dates_and_rejects_naive_timestamps(
     )
     assert result.exit_code == 0, result.output
     html = (reports / "dashboard.html").read_text(encoding="utf-8")
-    assert '"since":"2026-08-25T00:00:00+00:00"' in html
-    assert '"until":"2026-08-26T00:00:00+00:00"' in html
+    assert '"since":"2026-08-25T00:00:00.000000+00:00"' in html
+    assert '"until":"2026-08-26T00:00:00.000000+00:00"' in html
 
     invalid = runner.invoke(
         app,

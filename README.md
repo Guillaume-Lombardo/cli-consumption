@@ -254,6 +254,9 @@ plain HTTP beyond loopback unless `--allow-insecure` is passed explicitly. See
 Use `GET /health` as the process liveness probe; it never opens the database. Use
 `GET /ready` as the traffic readiness probe; it returns `200` only when the database
 is reachable and its schema is the expected revision, otherwise a generic `503`.
+The readiness path uses one fixed schema query with a two-second statement/busy
+timeout. Engine connection and PostgreSQL pool acquisition are capped at five seconds,
+so a configured PostgreSQL probe has a seven-second upper operational deadline.
 Both endpoints are intentionally unauthenticated so infrastructure probes can call
 them, and every HTTP response carries a bounded `X-Request-ID`. Put the collector
 behind a TLS-terminating reverse proxy or platform ingress. Configure request rate

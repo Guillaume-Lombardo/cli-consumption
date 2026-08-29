@@ -32,6 +32,9 @@ from cli_consumption.schema import upgrade_database
 from cli_consumption.timestamps import canonical_timestamp
 
 DEFAULT_DATABASE = "sqlite:///cli-consumption.sqlite"
+DATABASE_CONNECT_TIMEOUT_SECONDS = 5
+DATABASE_POOL_TIMEOUT_SECONDS = 5
+SQLITE_BUSY_TIMEOUT_MS = 5_000
 
 
 class MissingOptionalDependencyError(RuntimeError):
@@ -284,17 +287,27 @@ def create_database_engine(database: str | Path) -> Engine:
                 "PostgreSQL support requires optional dependencies; "
                 "install cli-consumption[postgres]"
             ) from None
-    engine = (
-        create_engine(url, poolclass=NullPool)
-        if url.startswith("sqlite:")
-        else create_engine(url)
-    )
+    if url.startswith("sqlite:"):
+        engine = create_engine(
+            url,
+            poolclass=NullPool,
+            connect_args={"timeout": DATABASE_CONNECT_TIMEOUT_SECONDS},
+        )
+    elif url.startswith("postgresql+psycopg:"):
+        engine = create_engine(
+            url,
+            connect_args={"connect_timeout": DATABASE_CONNECT_TIMEOUT_SECONDS},
+            pool_timeout=DATABASE_POOL_TIMEOUT_SECONDS,
+        )
+    else:
+        engine = create_engine(url)
     if url.startswith("sqlite:"):
 
         @event.listens_for(engine, "connect")
         def _enable_foreign_keys(dbapi_connection: Any, _: Any) -> None:
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
             cursor.close()
 
     return engine

@@ -3,16 +3,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
+import time
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import httpx
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 from starlette.types import Message, Scope
 
 from cli_consumption.adapters.codex import CodexAdapter
-from cli_consumption.api import RequestSizeLimitMiddleware, create_app
+from cli_consumption.api import (
+    RequestSizeLimitMiddleware,
+    SafeExceptionBoundary,
+    create_app,
+)
 from cli_consumption.storage import create_database_engine, read_table
 
 
@@ -152,6 +162,60 @@ async def test_request_limit_counts_streamed_chunks() -> None:
 
 
 @pytest.mark.anyio
+async def test_outer_exception_boundary_sends_only_one_response_start(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    scope: Scope = {
+        "type": "http",
+        "method": "POST",
+        "headers": [(b"x-request-id", b"boundary-test")],
+    }
+    fresh_messages: list[Message] = []
+
+    async def fail_before_start(_scope, _receive, _send) -> None:
+        raise RuntimeError("privacy-canary-before-start")
+
+    async def collect_fresh(message: Message) -> None:
+        fresh_messages.append(message)
+
+    with caplog.at_level(logging.ERROR, logger="cli_consumption.api"):
+        await SafeExceptionBoundary(fail_before_start)(scope, receive, collect_fresh)
+
+    starts = [
+        message
+        for message in fresh_messages
+        if message["type"] == "http.response.start"
+    ]
+    assert len(starts) == 1
+    assert starts[0]["status"] == 500
+    assert (b"x-request-id", b"boundary-test") in starts[0]["headers"]
+    assert b"internal_server_error" in fresh_messages[-1]["body"]
+    assert "privacy-canary-before-start" not in "\n".join(caplog.messages)
+
+    started_messages: list[Message] = []
+
+    async def fail_after_start(_scope, _receive, send) -> None:
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        raise RuntimeError("privacy-canary-after-start")
+
+    async def collect_started(message: Message) -> None:
+        started_messages.append(message)
+
+    await SafeExceptionBoundary(fail_after_start)(scope, receive, collect_started)
+
+    starts = [
+        message
+        for message in started_messages
+        if message["type"] == "http.response.start"
+    ]
+    assert len(starts) == 1
+    assert starts[0]["status"] == 204
+
+
+@pytest.mark.anyio
 async def test_internal_errors_do_not_leak_details(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -265,3 +329,77 @@ async def test_request_ids_are_bounded_and_readiness_is_concurrent(
     assert responses[22].headers["x-request-id"] != "secret/value"
     assert all(1 <= len(value) <= 64 for value in generated)
     engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_blocked_concurrent_readiness_probes_finish_within_deadline(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "blocked.sqlite"
+    engine = create_database_engine(database)
+    transport = httpx.ASGITransport(app=create_app(engine))
+    blocker = sqlite3.connect(database, isolation_level=None)
+    blocker.execute("BEGIN EXCLUSIVE")
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://collector.test"
+        ) as client:
+            live_started = time.monotonic()
+            live_response = await client.get("/health")
+            live_elapsed = time.monotonic() - live_started
+            started = time.monotonic()
+            responses = await asyncio.gather(*(client.get("/ready") for _ in range(20)))
+            elapsed = time.monotonic() - started
+    finally:
+        blocker.execute("ROLLBACK")
+        blocker.close()
+        engine.dispose()
+
+    assert live_response.status_code == 200
+    assert live_elapsed < 0.5
+    assert {response.status_code for response in responses} == {503}
+    assert elapsed < 3.5
+
+
+@pytest.mark.anyio
+async def test_postgresql_readiness_sets_local_timeouts_and_uses_one_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        def scalar_one(self) -> int:
+            return 1
+
+    class Connection:
+        dialect = SimpleNamespace(name="postgresql")
+
+        def __init__(self) -> None:
+            self.driver_statements: list[str] = []
+            self.probes = 0
+
+        def exec_driver_sql(self, statement: str) -> None:
+            self.driver_statements.append(statement)
+
+        def execute(self, _statement, _parameters) -> Result:
+            self.probes += 1
+            return Result()
+
+    connection = Connection()
+
+    class FakeEngine:
+        def connect(self):
+            return nullcontext(connection)
+
+    monkeypatch.setattr("cli_consumption.api.initialize_database", lambda _engine: None)
+    engine = cast(Engine, FakeEngine())
+    transport = httpx.ASGITransport(app=create_app(engine))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://collector.test"
+    ) as client:
+        response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert connection.driver_statements == [
+        "SET LOCAL statement_timeout = 2000",
+        "SET LOCAL lock_timeout = 1000",
+    ]
+    assert connection.probes == 1

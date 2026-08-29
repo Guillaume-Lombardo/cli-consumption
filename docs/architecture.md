@@ -70,9 +70,14 @@ explicit `--allow-insecure` override for a trusted network.
 `/health` is an unauthenticated liveness endpoint and deliberately performs no
 database work, so a database outage does not cause the orchestrator to restart a
 healthy process. `/ready` is the unauthenticated readiness endpoint. It performs a
-fixed, bounded probe of the Alembic revision and expected tables and returns only
-`{"status":"ready"}` or a generic `503` body. Route traffic only while readiness is
-successful.
+single fixed query of the Alembic revision and expected tables and returns only
+`{"status":"ready"}` or a generic `503` body. SQLite lock waiting and PostgreSQL
+statement execution are capped at two seconds; PostgreSQL lock waiting is capped at
+one second. Database connection and PostgreSQL pool acquisition use five-second
+timeouts, giving configured PostgreSQL readiness a seven-second upper operational
+deadline. Normal SQLite connections use a five-second busy timeout, while schema
+migrations retain their separate fifteen-second serialization timeout. Route traffic
+only while readiness is successful.
 
 Every response has an `X-Request-ID`. An incoming identifier is retained only when it
 matches the bounded identifier grammar; otherwise the application generates one.
@@ -81,7 +86,10 @@ containing only that identifier, a fixed event and code, a constrained method, a
 static route template, and a coarse allowlisted exception type. Exception messages,
 tracebacks, request bodies, headers, tokens, database URLs, paths, and query strings
 are never included. Uvicorn access logging is disabled by `serve` because raw request
-targets are untrusted. Operators should configure redacted access logs, TLS,
+targets are untrusted. An ASGI boundary outside FastAPI consumes the framework's
+re-raised application exception after emitting the generic response, so Uvicorn
+cannot add an exception traceback to its own error log. Operators should configure
+redacted access logs, TLS,
 connection limits, request rate limits, and trusted-forwarded-header handling at the
 reverse proxy or platform ingress. There is intentionally no application-level rate
 limiter competing with that boundary.

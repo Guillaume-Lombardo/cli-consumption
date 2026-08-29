@@ -518,6 +518,33 @@ def test_database_urls_support_paths_and_postgresql(tmp_path: Path) -> None:
     assert engine.url.drivername == "postgresql+psycopg"
     engine.dispose()
 
+    sqlite_engine = create_database_engine(tmp_path / "timeouts.sqlite")
+    with sqlite_engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 5_000
+    sqlite_engine.dispose()
+
+
+def test_postgresql_engine_has_bounded_connect_and_pool_acquisition(
+    monkeypatch,
+) -> None:
+    observed: dict[str, object] = {}
+    sentinel = object()
+
+    def capture_create_engine(url: str, **kwargs):
+        observed.update(url=url, **kwargs)
+        return sentinel
+
+    monkeypatch.setattr("cli_consumption.storage.create_engine", capture_create_engine)
+
+    engine = create_database_engine("postgresql://user:password@db/usage")
+
+    assert engine is sentinel
+    assert observed == {
+        "url": "postgresql+psycopg://user:password@db/usage",
+        "connect_args": {"connect_timeout": 5},
+        "pool_timeout": 5,
+    }
+
 
 def test_postgresql_driver_error_names_the_optional_dependency(monkeypatch) -> None:
     real_import = builtins.__import__

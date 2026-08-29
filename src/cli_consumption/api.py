@@ -5,7 +5,7 @@ import logging
 import re
 import secrets
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -42,6 +42,21 @@ READINESS_TABLES = (
     "subagent_scopes",
     "ingestion_runs",
 )
+READINESS_STATEMENT_TIMEOUT_MS = 2_000
+READINESS_LOCK_TIMEOUT_MS = 1_000
+POSTGRESQL_STATEMENT_TIMEOUT_SQL = (
+    f"SET LOCAL statement_timeout = {READINESS_STATEMENT_TIMEOUT_MS}"
+)
+POSTGRESQL_LOCK_TIMEOUT_SQL = f"SET LOCAL lock_timeout = {READINESS_LOCK_TIMEOUT_MS}"
+READINESS_SQL = text(
+    "SELECT CASE WHEN COUNT(*) = 1 AND MIN(version_num) = :revision "
+    "THEN 1 ELSE 0 END"
+    + "".join(
+        f" + 0 * (SELECT COUNT(*) FROM {table_name} WHERE 1 = 0)"
+        for table_name in READINESS_TABLES
+    )
+    + " FROM alembic_version"
+)
 SAFE_ROUTES = frozenset(
     {
         "/health",
@@ -58,6 +73,9 @@ class RequestTooLarge(Exception):
 
 
 def _request_id(scope: Scope) -> str:
+    existing = scope.get("state", {}).get("request_id")
+    if isinstance(existing, str) and REQUEST_ID_PATTERN.fullmatch(existing) is not None:
+        return existing
     for name, value in scope.get("headers", []):
         if name.lower() != REQUEST_ID_HEADER:
             continue
@@ -99,14 +117,15 @@ class RequestIdMiddleware:
         await self.app(scope, receive, send_with_request_id)
 
 
-def _safe_route(request: Request) -> str:
-    route = request.scope.get("route")
+def _safe_route(scope: Scope) -> str:
+    route = scope.get("route")
     route_path = getattr(route, "path", None)
     return route_path if route_path in SAFE_ROUTES else "unmatched"
 
 
-def _safe_method(request: Request) -> str:
-    return request.method if request.method in {"GET", "POST"} else "OTHER"
+def _safe_method(scope: Scope) -> str:
+    method = scope.get("method")
+    return method if method in {"GET", "POST"} else "OTHER"
 
 
 def _safe_exception_type(error: Exception) -> str:
@@ -123,20 +142,62 @@ def _log_event(
     level: int,
     *,
     event: str,
-    request: Request,
+    scope: Scope,
     code: str,
     error: Exception | None = None,
 ) -> None:
     payload = {
         "code": code,
         "event": event,
-        "method": _safe_method(request),
-        "request_id": request.state.request_id,
-        "route": _safe_route(request),
+        "method": _safe_method(scope),
+        "request_id": _request_id(scope),
+        "route": _safe_route(scope),
     }
     if error is not None:
         payload["exception_type"] = _safe_exception_type(error)
     logger.log(level, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+class SafeExceptionBoundary:
+    """Keep re-raised application exceptions away from the ASGI server logger."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.app, name)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request_id = _request_id(scope)
+        scope.setdefault("state", {})["request_id"] = request_id
+        response_started = False
+
+        async def tracked_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracked_send)
+        except Exception as error:
+            _log_event(
+                logging.ERROR,
+                event="request_failed",
+                scope=scope,
+                code="internal_server_error",
+                error=error,
+            )
+            if not response_started:
+                response = JSONResponse(
+                    status_code=500,
+                    content={"detail": "internal_server_error"},
+                    headers={"X-Request-ID": request_id},
+                )
+                await response(scope, receive, send)
 
 
 class RequestSizeLimitMiddleware:
@@ -180,13 +241,13 @@ class RequestSizeLimitMiddleware:
     @staticmethod
     async def _reject(scope: Scope, receive: Receive, send: Send) -> None:
         response = JSONResponse(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            status_code=413,
             content={"detail": "request_too_large"},
         )
         await response(scope, receive, send)
 
 
-def create_app(engine: Engine, api_token: str | None = None) -> FastAPI:
+def create_app(engine: Engine, api_token: str | None = None) -> SafeExceptionBoundary:
     initialize_database(engine)
     app = FastAPI(title="CLI Consumption collector", version=__version__)
     app.add_middleware(RequestSizeLimitMiddleware)
@@ -211,13 +272,6 @@ def create_app(engine: Engine, api_token: str | None = None) -> FastAPI:
 
     @app.exception_handler(Exception)
     async def internal_error(request: Request, error: Exception) -> JSONResponse:
-        _log_event(
-            logging.ERROR,
-            event="request_failed",
-            request=request,
-            code="internal_server_error",
-            error=error,
-        )
         return JSONResponse(
             status_code=500,
             content={"detail": "internal_server_error"},
@@ -247,24 +301,23 @@ def create_app(engine: Engine, api_token: str | None = None) -> FastAPI:
     def ready(request: Request) -> JSONResponse:
         try:
             with engine.connect() as connection:
-                revisions = (
-                    connection.execute(
-                        text("SELECT version_num FROM alembic_version LIMIT 2")
-                    )
-                    .scalars()
-                    .all()
-                )
-                if revisions != [CURRENT_DATABASE_REVISION]:
-                    raise RuntimeError("unexpected database revision")
-                for table_name in READINESS_TABLES:
+                if connection.dialect.name == "postgresql":
+                    connection.exec_driver_sql(POSTGRESQL_STATEMENT_TIMEOUT_SQL)
+                    connection.exec_driver_sql(POSTGRESQL_LOCK_TIMEOUT_SQL)
+                elif connection.dialect.name == "sqlite":
                     connection.exec_driver_sql(
-                        f"SELECT 1 FROM {table_name} WHERE 1 = 0"
+                        f"PRAGMA busy_timeout = {READINESS_STATEMENT_TIMEOUT_MS}"
                     )
+                ready_value = connection.execute(
+                    READINESS_SQL, {"revision": CURRENT_DATABASE_REVISION}
+                ).scalar_one()
+                if ready_value != 1:
+                    raise RuntimeError("unexpected database revision")
         except Exception as error:
             _log_event(
                 logging.WARNING,
                 event="readiness_failed",
-                request=request,
+                scope=request.scope,
                 code="database_unavailable",
                 error=error,
             )
@@ -293,4 +346,4 @@ def create_app(engine: Engine, api_token: str | None = None) -> FastAPI:
             "skipped": result.skipped,
         }
 
-    return app
+    return SafeExceptionBoundary(app)

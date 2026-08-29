@@ -56,7 +56,9 @@ static route templates, and coarse allowlisted exception types. They exclude req
 and response bodies, arbitrary headers, authentication tokens, URLs and query
 strings, database URLs, paths, exception messages, and tracebacks. Uvicorn access logs
 are disabled by the `serve` command; independently configured reverse-proxy logs stay
-outside this application's retention boundary.
+outside this application's retention boundary. A final ASGI exception boundary sits
+outside FastAPI and consumes framework-re-raised request exceptions, preventing
+Uvicorn's error logger from independently writing their messages or tracebacks.
 
 ## Threat model
 
@@ -80,10 +82,11 @@ requires HTTPS beyond loopback unless the operator uses the explicit
 `--allow-insecure` override.
 
 The unauthenticated liveness endpoint does not touch the database. The unauthenticated
-readiness endpoint reads only a bounded schema revision and fixed table probes; it
-returns generic ready/not-ready state without database values or errors. These
-endpoints expose process and database availability to callers and should be scoped by
-network policy even though they disclose no usage metadata.
+readiness endpoint reads only a bounded schema revision and fixed table probes. It
+uses one consolidated query with backend statement, lock, connection, and pool
+timeouts and returns generic ready/not-ready state without database values or errors.
+These endpoints expose process and database availability to callers and should be
+scoped by network policy even though they disclose no usage metadata.
 
 An exported database still reveals work patterns, model choices, project names, and
 activity times. Treat it as private operational data. Restrict filesystem and database

@@ -7,6 +7,8 @@ from cli_consumption.sync import send_snapshot
 
 
 class FakeResponse:
+    status_code = 200
+
     def raise_for_status(self) -> None:
         pass
 
@@ -21,7 +23,14 @@ def test_send_snapshot_posts_to_versioned_endpoint(monkeypatch) -> None:
         observed.update(url=url, **kwargs)
         return FakeResponse()
 
+    class CapabilitiesResponse(FakeResponse):
+        def json(self) -> dict[str, int | str]:
+            return {"snapshot_schema_min": 1, "snapshot_schema_max": 1}
+
     monkeypatch.setattr("cli_consumption.sync.httpx.post", fake_post)
+    monkeypatch.setattr(
+        "cli_consumption.sync.httpx.get", lambda *args, **kwargs: CapabilitiesResponse()
+    )
 
     result = send_snapshot(
         Snapshot(provider="codex"), "https://collector.test/", "token"
@@ -31,3 +40,21 @@ def test_send_snapshot_posts_to_versioned_endpoint(monkeypatch) -> None:
     assert observed["url"] == "https://collector.test/api/v1/snapshots"
     assert observed["headers"] == {"Authorization": "Bearer token"}
     assert observed["json"]["provider"] == "codex"
+    assert observed["json"]["schema_version"] == 1
+
+
+def test_send_snapshot_rejects_incompatible_collector(monkeypatch) -> None:
+    class IncompatibleResponse(FakeResponse):
+        def json(self) -> dict[str, int | str]:
+            return {"snapshot_schema_min": 2, "snapshot_schema_max": 3}
+
+    monkeypatch.setattr(
+        "cli_consumption.sync.httpx.get", lambda *args, **kwargs: IncompatibleResponse()
+    )
+
+    try:
+        send_snapshot(Snapshot(provider="codex"), "https://collector.test")
+    except ValueError as error:
+        assert str(error) == "Collector does not support this snapshot schema"
+    else:
+        raise AssertionError("incompatible schema was accepted")

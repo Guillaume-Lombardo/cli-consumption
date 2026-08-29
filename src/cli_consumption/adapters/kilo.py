@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -299,7 +300,9 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
             }
             <= part_columns
         ):
-            raise ValueError(f"Unsupported Kilo Code database schema: {path}")
+            raise UnsupportedProviderFormat(
+                f"Unsupported Kilo Code database schema: {path}"
+            )
 
         directory = "directory" if "directory" in session_columns else "NULL"
         rows = connection.execute(

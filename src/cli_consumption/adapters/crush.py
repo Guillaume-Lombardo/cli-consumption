@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -344,7 +345,9 @@ def _read_database(
             not required_session <= session_columns
             or not required_message <= message_columns
         ):
-            raise ValueError(f"Unsupported Crush database schema: {path}")
+            raise UnsupportedProviderFormat(
+                f"Unsupported Crush database schema: {path}"
+            )
 
         finished_at = "finished_at" if "finished_at" in message_columns else "NULL"
         provider = "provider" if "provider" in message_columns else "NULL"

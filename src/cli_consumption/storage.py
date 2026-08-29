@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,27 +23,14 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import NullPool
 
-from cli_consumption.models import Snapshot
+from cli_consumption.models import Snapshot, SnapshotPayload, SnapshotValidationError
+from cli_consumption.schema import upgrade_database
 
 DEFAULT_DATABASE = "sqlite:///cli-consumption.sqlite"
-MAX_BIGINT = 9_223_372_036_854_775_807
-NORMALIZED_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
-WORK_ITEM_KINDS = {
-    "agent-coordination",
-    "command",
-    "compaction",
-    "dynamic-tool",
-    "extension",
-    "file-change",
-    "mcp-tool",
-    "media",
-    "message",
-    "other",
-    "reasoning",
-    "subagent-activity",
-    "user-message",
-}
-WORK_ITEM_STATUSES = {"completed", "failed", "in-progress", "unknown"}
+
+
+class MissingOptionalDependencyError(RuntimeError):
+    """Raised when a selected database backend is not installed."""
 
 
 class Base(DeclarativeBase):
@@ -221,7 +207,6 @@ class Subagent(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     created_at_ms: Mapped[int | None] = mapped_column(BigInteger)
     updated_at_ms: Mapped[int | None] = mapped_column(BigInteger)
-    agent_nickname: Mapped[str] = mapped_column(String(255))
     agent_role: Mapped[str] = mapped_column(String(255))
     tokens_used: Mapped[int | None] = mapped_column(BigInteger)
 
@@ -272,6 +257,16 @@ def normalize_database_url(value: str | Path) -> str:
 
 def create_database_engine(database: str | Path) -> Engine:
     url = normalize_database_url(database)
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url.removeprefix("postgresql://")
+    if url.startswith("postgresql+psycopg://"):
+        try:
+            import psycopg  # noqa: F401
+        except (ImportError, ModuleNotFoundError):
+            raise MissingOptionalDependencyError(
+                "PostgreSQL support requires optional dependencies; "
+                "install cli-consumption[postgres]"
+            ) from None
     engine = (
         create_engine(url, poolclass=NullPool)
         if url.startswith("sqlite:")
@@ -289,7 +284,7 @@ def create_database_engine(database: str | Path) -> Engine:
 
 
 def initialize_database(engine: Engine) -> None:
-    Base.metadata.create_all(engine)
+    upgrade_database(engine)
 
 
 def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
@@ -383,7 +378,11 @@ def read_table(engine: Engine, table_name: str) -> list[dict[str, Any]]:
     if model is None:
         raise ValueError(f"Unknown table: {table_name}")
     with Session(engine) as session:
-        rows = session.execute(select(model)).scalars().all()
+        rows = (
+            session.execute(select(model).order_by(*model.__table__.primary_key))
+            .scalars()
+            .all()
+        )
         return [
             {
                 column.name: getattr(row, column.name)
@@ -394,122 +393,87 @@ def read_table(engine: Engine, table_name: str) -> list[dict[str, Any]]:
 
 
 def validate_snapshot(snapshot: Snapshot) -> None:
-    """Reject missing or unexpected transport fields before opening a transaction."""
-    groups: tuple[tuple[str, list[dict[str, Any]], set[str]], ...] = (
-        (
-            "conversation",
-            snapshot.conversations,
-            (set(Conversation.__table__.columns.keys()) - {"models_json"}) | {"models"},
-        ),
-        ("turn", snapshot.turns, set(Turn.__table__.columns.keys())),
-        ("model call", snapshot.model_calls, set(ModelCall.__table__.columns.keys())),
-        ("tool call", snapshot.tool_calls, set(ToolCall.__table__.columns.keys())),
-        ("work item", snapshot.work_items, set(WorkItem.__table__.columns.keys())),
-        (
-            "context sample",
-            snapshot.context_samples,
-            set(ContextSample.__table__.columns.keys()),
-        ),
-        (
-            "turn setting",
-            snapshot.turn_settings,
-            set(TurnSetting.__table__.columns.keys()),
-        ),
-        (
-            "compaction event",
-            snapshot.compaction_events,
-            set(CompactionEvent.__table__.columns.keys()),
-        ),
-        ("subagent", snapshot.subagents, set(Subagent.__table__.columns.keys())),
-    )
-    for record_type, records, expected in groups:
-        for record in records:
-            actual = set(record)
-            if actual != expected:
-                missing = sorted(expected - actual)
-                unexpected = sorted(actual - expected)
-                raise ValueError(
-                    f"Invalid {record_type} fields; missing={missing}, "
-                    f"unexpected={unexpected}"
-                )
-    _validate_analytics_values(snapshot)
-
-
-def _validate_analytics_values(snapshot: Snapshot) -> None:
-    for record in snapshot.work_items:
-        if (
-            record["kind"] not in WORK_ITEM_KINDS
-            or record["status"] not in WORK_ITEM_STATUSES
-            or not _optional_label(record["tool_name"], 512)
-            or not all(
-                _optional_nonnegative_integer(record[field])
-                for field in ("started_at_ms", "completed_at_ms", "duration_ms")
-            )
-        ):
-            raise ValueError("Invalid normalized work item values")
-    for record in snapshot.context_samples:
-        if (
-            not _optional_timestamp(record["timestamp"])
-            or not _nonnegative_integer(record["input_tokens"])
-            or not _positive_integer(record["context_window_tokens"])
-        ):
-            raise ValueError("Invalid normalized context sample values")
-    for record in snapshot.turn_settings:
-        if (
-            not _optional_label(record["model"], 255)
-            or not _optional_label(record["effort"], 64)
-            or not _optional_label(record["collaboration_mode"], 64)
-            or not _optional_label(record["service_tier"], 64)
-            or not _optional_positive_integer(record["context_window_tokens"])
-        ):
-            raise ValueError("Invalid normalized turn setting values")
-    for record in snapshot.compaction_events:
-        if not _optional_timestamp(record["timestamp"]):
-            raise ValueError("Invalid normalized compaction event values")
-
-
-def _optional_label(value: object, maximum: int) -> bool:
-    return value is None or (
-        isinstance(value, str)
-        and len(value) <= maximum
-        and NORMALIZED_LABEL.fullmatch(value) is not None
-    )
-
-
-def _optional_timestamp(value: object) -> bool:
-    if value is None:
-        return True
-    if not isinstance(value, str):
-        return False
+    """Validate values and referential integrity before opening a transaction."""
     try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    return True
+        payload = SnapshotPayload.model_validate(snapshot.to_dict())
+    except Exception as error:
+        raise SnapshotValidationError() from error
 
+    from cli_consumption.adapters.registry import resolve_adapter_spec
 
-def _optional_nonnegative_integer(value: object) -> bool:
-    return value is None or _nonnegative_integer(value)
+    if resolve_adapter_spec(payload.provider) is None:
+        raise SnapshotValidationError()
 
-
-def _optional_positive_integer(value: object) -> bool:
-    return value is None or _positive_integer(value)
-
-
-def _nonnegative_integer(value: object) -> bool:
-    return (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and 0 <= value <= MAX_BIGINT
+    groups = (
+        payload.conversations,
+        payload.turns,
+        payload.model_calls,
+        payload.tool_calls,
+        payload.work_items,
+        payload.context_samples,
+        payload.turn_settings,
+        payload.compaction_events,
+        payload.subagents,
     )
+    for records in groups:
+        identifiers = [record.id for record in records]
+        if len(identifiers) != len(set(identifiers)):
+            raise SnapshotValidationError()
 
+    conversation_ids = {record.id for record in payload.conversations}
+    turns = {record.id: record.conversation_id for record in payload.turns}
+    if any(record.provider != payload.provider for record in payload.conversations):
+        raise SnapshotValidationError()
+    if any(record.provider != payload.provider for record in payload.subagents):
+        raise SnapshotValidationError()
+    if any(record.conversation_id not in conversation_ids for record in payload.turns):
+        raise SnapshotValidationError()
 
-def _positive_integer(value: object) -> bool:
-    return (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and 0 < value <= MAX_BIGINT
+    child_groups = (
+        payload.model_calls,
+        payload.tool_calls,
+        payload.work_items,
+        payload.context_samples,
+        payload.turn_settings,
+        payload.compaction_events,
     )
+    for records in child_groups:
+        sequences: set[tuple[str, int]] = set()
+        for record in records:
+            if record.conversation_id not in conversation_ids:
+                raise SnapshotValidationError()
+            turn_id = record.turn_id
+            if turn_id is not None and turns.get(turn_id) != record.conversation_id:
+                raise SnapshotValidationError()
+            sequence = getattr(record, "sequence", None)
+            if sequence is not None:
+                key = (record.conversation_id, sequence)
+                if key in sequences:
+                    raise SnapshotValidationError()
+                sequences.add(key)
+
+    for conversation in payload.conversations:
+        if len(conversation.models) != len(set(conversation.models)):
+            raise SnapshotValidationError()
+        _validate_time_range(conversation.started_at, conversation.ended_at)
+    for turn in payload.turns:
+        _validate_time_range(turn.started_at, turn.ended_at)
+    for item in payload.work_items:
+        if (
+            item.started_at_ms is not None
+            and item.completed_at_ms is not None
+            and item.completed_at_ms < item.started_at_ms
+        ):
+            raise SnapshotValidationError()
+
+
+def _validate_time_range(started_at: str | None, ended_at: str | None) -> None:
+    if started_at is None or ended_at is None:
+        return
+    start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    end = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+    if end < start:
+        raise SnapshotValidationError()
 
 
 def _group(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

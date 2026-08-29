@@ -1,46 +1,35 @@
 from __future__ import annotations
 
+import json
 import os
 import platform
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from sqlalchemy.engine import Engine
 
 from cli_consumption import __version__
-from cli_consumption.adapters import (
-    AiderAdapter,
-    AmazonQAdapter,
-    AmpAdapter,
-    ClaudeAdapter,
-    ClineAdapter,
-    CodexAdapter,
-    ContinueAdapter,
-    CopilotAdapter,
-    CrushAdapter,
-    CursorAdapter,
-    GeminiAdapter,
-    GooseAdapter,
-    GrokAdapter,
-    KiloAdapter,
-    KimiAdapter,
-    MistralVibeAdapter,
-    OpenCodeAdapter,
-    OpenHandsAdapter,
-    PiAdapter,
-    PlandexAdapter,
-    QwenAdapter,
+from cli_consumption.adapters.registry import (
+    ADAPTER_SPECS,
+    AdapterSpec,
+    default_source_path,
+    diagnose_provider,
+    has_provider_data,
+    resolve_adapter_spec,
 )
-from cli_consumption.api import create_app
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
 from cli_consumption.models import Snapshot
+from cli_consumption.reporting import parse_export_window
+from cli_consumption.retention import retain_before
 from cli_consumption.storage import (
+    MissingOptionalDependencyError,
     create_database_engine,
     ingest_snapshot,
     initialize_database,
 )
-from cli_consumption.sync import send_snapshot
 
 app = typer.Typer(
     name="cli-consumption",
@@ -55,6 +44,13 @@ def version_callback(value: bool) -> None:
         raise typer.Exit
 
 
+def _open_database(database: str | Path) -> Engine:
+    try:
+        return create_database_engine(database)
+    except MissingOptionalDependencyError as error:
+        raise typer.BadParameter(str(error)) from None
+
+
 @app.callback()
 def main(
     version: Annotated[
@@ -66,30 +62,30 @@ def main(
 
 
 @app.command()
-def providers() -> None:
+def providers(
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Check local provider formats and emit deterministic JSON.",
+        ),
+    ] = False,
+) -> None:
     """Show implemented and planned CLI adapters."""
+    if json_output:
+        payload = {
+            "schema_version": 1,
+            "providers": [
+                diagnose_provider(spec, default_source_path(spec)).to_dict()
+                for spec in ADAPTER_SPECS
+            ],
+        }
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return
     typer.echo("all      auto-detect supported providers")
-    typer.echo("aider    supported")
-    typer.echo("amazon-q supported")
-    typer.echo("amp      supported")
-    typer.echo("codex    supported")
-    typer.echo("copilot  supported")
-    typer.echo("continue supported")
-    typer.echo("crush    supported")
-    typer.echo("cursor   supported")
-    typer.echo("gemini   supported")
-    typer.echo("goose    supported")
-    typer.echo("grok     supported")
-    typer.echo("claude   supported")
-    typer.echo("cline    supported")
-    typer.echo("kilo     supported")
-    typer.echo("kimi     supported")
-    typer.echo("mistral-vibe supported")
-    typer.echo("opencode supported")
-    typer.echo("openhands supported")
-    typer.echo("pi       supported")
-    typer.echo("plandex  supported")
-    typer.echo("qwen     supported")
+    for spec in ADAPTER_SPECS:
+        separator = " " * max(1, 9 - len(spec.name))
+        typer.echo(f"{spec.name}{separator}{spec.support}")
 
 
 @app.command()
@@ -124,7 +120,7 @@ def collect(
 ) -> None:
     """Collect one or more local/copied CLI data directories into SQL storage."""
     snapshots = _collect_snapshots(provider, source, project)
-    engine = create_database_engine(database)
+    engine = _open_database(database)
     try:
         results = [
             (snapshot, ingest_snapshot(engine, snapshot)) for snapshot in snapshots
@@ -164,6 +160,13 @@ def sync(
     ] = "CLI_CONSUMPTION_API_TOKEN",
 ) -> None:
     """Collect locally and send metadata-only records to a central collector."""
+    try:
+        from cli_consumption.sync import send_snapshot
+    except ModuleNotFoundError:
+        raise typer.BadParameter(
+            "sync requires optional dependencies; install cli-consumption[sync]"
+        ) from None
+
     snapshots = _collect_snapshots(provider, source, project)
     token = os.environ.get(token_env)
     for snapshot in snapshots:
@@ -196,6 +199,20 @@ def export_command(
             help="Write a pseudonymized dashboard and reject detailed CSV exports.",
         ),
     ] = False,
+    since: Annotated[
+        str | None,
+        typer.Option(
+            help="Include conversations overlapping this UTC date or zoned timestamp.",
+        ),
+    ] = None,
+    until: Annotated[
+        str | None,
+        typer.Option(
+            help=(
+                "Exclude conversations starting at/after this date or zoned timestamp."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Write a self-contained HTML dashboard and optional detailed CSV tables."""
     if share_safe and not dashboard:
@@ -204,6 +221,12 @@ def export_command(
         raise typer.BadParameter("--share-safe cannot be combined with --csv")
     if not dashboard and not csv_exports:
         raise typer.BadParameter("enable --dashboard or --csv")
+    try:
+        window = parse_export_window(since, until)
+    except ValueError:
+        raise typer.BadParameter(
+            "invalid export window; use UTC dates or timezone-aware timestamps"
+        ) from None
     if (
         share_safe
         and output.is_dir()
@@ -212,17 +235,58 @@ def export_command(
         raise typer.BadParameter(
             "--share-safe output directory must be empty or contain only dashboard.html"
         )
-    engine = create_database_engine(database)
+    engine = _open_database(database)
     try:
         initialize_database(engine)
-        paths = export_csv(engine, output) if csv_exports else []
+        paths = export_csv(engine, output, window=window) if csv_exports else []
         if dashboard:
             dashboard_path = output / "dashboard.html"
-            generate_dashboard(engine, dashboard_path, share_safe=share_safe)
+            generate_dashboard(
+                engine,
+                dashboard_path,
+                share_safe=share_safe,
+                window=window,
+            )
             paths.append(dashboard_path)
     finally:
         engine.dispose()
     typer.echo(f"Wrote {len(paths)} files to {output.resolve()}")
+
+
+@app.command("retention")
+def retention_command(
+    keep_days: Annotated[
+        int,
+        typer.Option(
+            min=1,
+            help="Keep normalized metadata from this many most recent days.",
+        ),
+    ],
+    database: Annotated[
+        str,
+        typer.Option("--database", "-d", envvar="CLI_CONSUMPTION_DATABASE"),
+    ] = "cli-consumption.sqlite",
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply",
+            help="Apply the deletion. Without this flag, only preview counts.",
+        ),
+    ] = False,
+) -> None:
+    """Preview or delete normalized metadata older than a retention window."""
+    cutoff = datetime.now(UTC) - timedelta(days=keep_days)
+    engine = _open_database(database)
+    try:
+        result = retain_before(engine, cutoff, apply=apply)
+    finally:
+        engine.dispose()
+    mode = "Applied" if result.applied else "Preview"
+    typer.echo(
+        f"{mode} retention before {result.cutoff.isoformat()}: "
+        f"{result.conversations} conversations, {result.subagents} subagents, "
+        f"{result.ingestion_runs} ingestion runs."
+    )
 
 
 @app.command()
@@ -239,7 +303,14 @@ def serve(
     ] = "CLI_CONSUMPTION_API_TOKEN",
 ) -> None:
     """Run the optional central HTTP collector."""
-    import uvicorn
+    try:
+        import uvicorn
+
+        from cli_consumption.api import create_app
+    except ModuleNotFoundError:
+        raise typer.BadParameter(
+            "serve requires optional dependencies; install cli-consumption[server]"
+        ) from None
 
     token = os.environ.get(token_env)
     if token is None and host not in {"127.0.0.1", "localhost", "::1"}:
@@ -250,7 +321,7 @@ def serve(
         typer.echo(
             "Warning: collector authentication is disabled on localhost.", err=True
         )
-    engine = create_database_engine(database)
+    engine = _open_database(database)
     uvicorn.run(create_app(engine, token), host=host, port=port)
 
 
@@ -259,60 +330,16 @@ def _collect_snapshots(
     source_values: list[str] | None,
     project_values: list[str] | None,
 ) -> list[Snapshot]:
-    provider = "claude" if provider == "claude-code" else provider
-    adapters = {
-        "aider": (AiderAdapter, ".aider", "analytics.jsonl"),
-        "amazon-q": (AmazonQAdapter, ".local/share/amazon-q", "data.sqlite3"),
-        "amp": (AmpAdapter, ".local/share/amp", "threads"),
-        "codex": (CodexAdapter, ".codex", "sessions"),
-        "copilot": (CopilotAdapter, ".copilot", "session-state"),
-        "continue": (ContinueAdapter, ".continue", "sessions"),
-        "crush": (
-            CrushAdapter,
-            ".local/share/crush",
-            ("projects.json", "crush.db", ".crush/crush.db"),
-        ),
-        "cursor": (
-            CursorAdapter,
-            ".cursor",
-            ("chats", "projects/*/agent-transcripts"),
-        ),
-        "gemini": (GeminiAdapter, ".gemini", "tmp"),
-        "goose": (GooseAdapter, ".local/share/goose/sessions", "sessions.db"),
-        "grok": (GrokAdapter, ".grok", "sessions/*/*/summary.json"),
-        "claude": (ClaudeAdapter, ".claude", "projects/*/*.jsonl"),
-        "cline": (ClineAdapter, ".cline/data", "sessions/sessions.db"),
-        "kilo": (KiloAdapter, ".local/share/kilo", "kilo.db"),
-        "kimi": (KimiAdapter, ".kimi", "sessions/*/*/wire.jsonl"),
-        "mistral-vibe": (
-            MistralVibeAdapter,
-            ".vibe",
-            "logs/session/*/meta.json",
-        ),
-        "opencode": (
-            OpenCodeAdapter,
-            ".local/share/opencode",
-            "opencode.db",
-        ),
-        "openhands": (
-            OpenHandsAdapter,
-            ".openhands",
-            "conversations/*/base_state.json",
-        ),
-        "pi": (PiAdapter, ".pi/agent", "sessions"),
-        "plandex": (PlandexAdapter, "/plandex-server", "orgs/*/plans/*/conversation"),
-        "qwen": (QwenAdapter, ".qwen", "projects/*/chats"),
-    }
-    if provider != "all" and provider not in adapters:
+    spec = resolve_adapter_spec(provider) if provider != "all" else None
+    if provider != "all" and spec is None:
         raise typer.BadParameter(
             f"Provider {provider!r} is not implemented yet. Run `providers` for status."
         )
     mappings = _parse_project_mappings(project_values or [])
-    if provider != "all":
-        adapter, home, markers = adapters[provider]
+    if spec is not None:
         return [
-            adapter().collect(
-                _parse_sources(source_values or [], home, markers), mappings
+            spec.adapter_type().collect(
+                _parse_sources(source_values or [], spec), mappings
             )
         ]
 
@@ -320,13 +347,13 @@ def _collect_snapshots(
     if source_values:
         sources = _parse_source_values(source_values)
         matched_labels: set[str] = set()
-        for adapter, _, markers in adapters.values():
+        for candidate in ADAPTER_SPECS:
             matched = [
-                source for source in sources if _has_provider_data(source[1], markers)
+                source for source in sources if has_provider_data(candidate, source[1])
             ]
             if matched:
                 matched_labels.update(label for label, _ in matched)
-                snapshots.append(adapter().collect(matched, mappings))
+                snapshots.append(candidate.adapter_type().collect(matched, mappings))
         unmatched = [label for label, _ in sources if label not in matched_labels]
         if unmatched:
             raise typer.BadParameter(
@@ -335,10 +362,12 @@ def _collect_snapshots(
             )
     else:
         machine = platform.node()
-        for adapter, home, markers in adapters.values():
-            path = (Path.home() / home).resolve()
-            if _has_provider_data(path, markers):
-                snapshots.append(adapter().collect([(machine, path)], mappings))
+        for candidate in ADAPTER_SPECS:
+            path = default_source_path(candidate)
+            if has_provider_data(candidate, path):
+                snapshots.append(
+                    candidate.adapter_type().collect([(machine, path)], mappings)
+                )
     if not snapshots:
         raise typer.BadParameter("No supported provider data detected.")
     return snapshots
@@ -346,30 +375,18 @@ def _collect_snapshots(
 
 def _parse_sources(
     values: list[str],
-    home: str = ".codex",
-    markers: str | tuple[str, ...] = "sessions",
+    spec: AdapterSpec,
 ) -> list[tuple[str, Path]]:
     if not values:
-        values = [f"{platform.node()}={Path.home() / home}"]
+        values = [f"{platform.node()}={default_source_path(spec)}"]
     result = _parse_source_values(values)
     for _, path in result:
-        if not _has_provider_data(path, markers):
-            expected = ", ".join(_markers(markers))
+        if not has_provider_data(spec, path):
+            expected = ", ".join(spec.markers)
             raise typer.BadParameter(
                 f"Missing provider data ({expected}) under: {path}"
             )
     return result
-
-
-def _markers(value: str | tuple[str, ...]) -> tuple[str, ...]:
-    return (value,) if isinstance(value, str) else value
-
-
-def _has_provider_data(path: Path, markers: str | tuple[str, ...]) -> bool:
-    return any(
-        any(path.glob(marker)) if "*" in marker else (path / marker).exists()
-        for marker in _markers(markers)
-    )
 
 
 def _parse_source_values(values: list[str]) -> list[tuple[str, Path]]:

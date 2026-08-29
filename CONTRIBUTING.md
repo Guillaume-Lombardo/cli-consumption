@@ -6,7 +6,7 @@
 git switch main
 git pull --ff-only
 git switch -c feat/short-description
-uv sync --all-groups
+uv sync --all-extras --all-groups
 uv run pre-commit install
 ```
 
@@ -16,11 +16,19 @@ file manually.
 ## Make a change
 
 Keep provider parsing behind the adapter interface and normalized persistence behind
-the storage module. A new field must have a documented meaning across providers or be
-explicitly namespaced as provider-specific.
+the storage module. Register providers once in the adapter registry rather than adding
+parallel CLI or detection lists. A new field must have a documented meaning across
+providers or be explicitly namespaced as provider-specific.
 
 Do not add telemetry. Test fixtures must be synthetic and must not contain copied user
 conversations or credentials.
+
+Schema changes require a forward Alembic migration for both SQLite and PostgreSQL, an
+explicit downgrade boundary, legacy-adoption tests, and mixed-version deployment notes.
+Snapshot protocol changes must preserve strict validation, bounded payloads, generic
+errors, and the documented server-first upgrade sequence. Export changes must preserve
+deterministic ordering, bounded-memory CSV streaming, complete selected conversation
+graphs, and spreadsheet-formula neutralization.
 
 ## Validate and review
 

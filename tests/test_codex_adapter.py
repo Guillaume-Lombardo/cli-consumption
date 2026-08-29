@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+import pytest
+
 from cli_consumption.adapters.codex import (
     MAX_BIGINT,
     CodexAdapter,
+    _agent_role,
     _integer_or_none,
+    _subagent_status,
     _work_item_status,
     infer_project,
 )
@@ -31,6 +36,7 @@ def test_collects_and_deduplicates_copied_rollouts(
     conversation = snapshot.conversations[0]
     assert conversation["source_machine"] == "laptop"
     assert conversation["project"] == "acme"
+    assert conversation["source"] == "local-jsonl"
     assert conversation["models"] == ["gpt-5.6"]
     assert conversation["uncached_input_tokens"] == 50
     assert conversation["visible_output_tokens"] == 15
@@ -110,7 +116,8 @@ def test_subagent_metadata_excludes_agent_paths(
             );
             INSERT INTO thread_spawn_edges VALUES ('parent', 'child', 'done');
             INSERT INTO threads VALUES (
-                'child', 1, 2, 'worker', 'tester', '/private/agent/path', 42
+                'child', 1, 2, 'private nickname', 'tester',
+                '/private/agent/path', 42
             );
             """
         )
@@ -120,8 +127,51 @@ def test_subagent_metadata_excludes_agent_paths(
 
     assert snapshot.subagents[0]["child_thread_id"] == "child"
     assert snapshot.subagents[0]["tokens_used"] == 42
+    assert snapshot.subagents[0]["status"] == "completed"
+    assert snapshot.subagents[0]["agent_role"] == "test"
+    assert "agent_nickname" not in snapshot.subagents[0]
+    assert "private nickname" not in str(snapshot.to_dict())
     assert "agent_path" not in snapshot.subagents[0]
     assert "/private/agent/path" not in str(snapshot.to_dict())
+
+
+def test_subagent_dimensions_and_rollout_source_discard_arbitrary_values(
+    tmp_path: Path, rollout_factory
+) -> None:
+    canary = "PRIVACY_CANARY_DO_NOT_PERSIST"
+    home = tmp_path / "codex"
+    rollout = rollout_factory(home)
+    events = [
+        json.loads(line) for line in rollout.read_text(encoding="utf-8").splitlines()
+    ]
+    events[0]["payload"]["source"] = canary
+    rollout.write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    with closing(sqlite3.connect(home / "state_5.sqlite")) as connection:
+        connection.executescript(
+            f"""
+            CREATE TABLE thread_spawn_edges (
+                parent_thread_id, child_thread_id, status
+            );
+            CREATE TABLE threads (
+                id, created_at_ms, updated_at_ms, agent_nickname,
+                agent_role, agent_path, tokens_used
+            );
+            INSERT INTO thread_spawn_edges VALUES ('parent', 'child', '{canary}');
+            INSERT INTO threads VALUES (
+                'child', 1, 2, '{canary}', '{canary}', '{canary}', 42
+            );
+            """
+        )
+        connection.commit()
+
+    snapshot = CodexAdapter().collect([("desktop", home)])
+
+    assert snapshot.conversations[0]["source"] == "local-jsonl"
+    assert snapshot.subagents[0]["status"] == "unknown"
+    assert snapshot.subagents[0]["agent_role"] == "other"
+    assert canary not in str(snapshot.to_dict())
 
 
 def test_work_items_normalize_failures_and_reject_arbitrary_dimensions(
@@ -172,3 +222,35 @@ def test_numeric_and_work_status_normalizers_are_bounded() -> None:
     assert _work_item_status({"status": "running"}) == "in-progress"
     assert _work_item_status({"status": "unexpected"}) == "unknown"
     assert _work_item_status({"success": False}) == "failed"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("done", "completed"),
+        ("error", "failed"),
+        ("cancelled", "aborted"),
+        ("in_progress", "in-progress"),
+        ("privacy-canary", "unknown"),
+        (None, "unknown"),
+    ],
+)
+def test_subagent_status_normalizer_is_closed(value: object, expected: str) -> None:
+    assert _subagent_status(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("worker", "worker"),
+        ("explorer", "research"),
+        ("reviewer", "review"),
+        ("tester", "test"),
+        ("planner", "planning"),
+        ("privacy-canary", "other"),
+        ("", "unspecified"),
+        (None, "unspecified"),
+    ],
+)
+def test_agent_role_normalizer_is_closed(value: object, expected: str) -> None:
+    assert _agent_role(value) == expected

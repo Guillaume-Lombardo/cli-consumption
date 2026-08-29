@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
+from sqlalchemy import select
 from sqlalchemy.engine import Connection, Engine
 
 from cli_consumption.adapters.registry import ADAPTER_SPECS
@@ -20,6 +21,7 @@ from cli_consumption.reporting import (
     ReportEstimate,
     estimate_report,
     iter_report_rows,
+    report_statement,
 )
 from cli_consumption.storage import initialize_database
 
@@ -38,6 +40,14 @@ MAX_DASHBOARD_RECORDS = 250_000
 MAX_DASHBOARD_ESTIMATED_BYTES = 128 * 1024 * 1024
 MAX_DASHBOARD_HTML_BYTES = 128 * 1024 * 1024
 MAX_DASHBOARD_INDEX_BYTES = 128 * 1024 * 1024
+PY_OBJECT_ALIGNMENT = 8
+PY_STRING_BASE_BYTES = 72
+PY_INTEGER_BYTES = 32
+PY_TUPLE_3_BYTES = 88
+PY_MAPPING_ENTRY_BYTES = 160
+PY_SET_ENTRY_BYTES = 128
+PY_SORTED_REFERENCE_BYTES = 16
+PY_CONTEXT_BASE_BYTES = 1_024
 DASHBOARD_SECTIONS = (
     ("conversations", "conversations"),
     ("turns", "turns"),
@@ -119,6 +129,7 @@ def _atomic_write(output: Path, writer: Callable[[Any], None]) -> None:
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
+            newline="",
             dir=output.parent,
             prefix=f".{output.name}.",
             suffix=".tmp",
@@ -178,12 +189,55 @@ class _DashboardContext:
 
 class _IndexBudget:
     def __init__(self) -> None:
-        self.used = 0
+        self.used = PY_CONTEXT_BASE_BYTES
 
-    def charge(self, *values: str, overhead: int = 64) -> None:
-        self.used += overhead + sum(len(value.encode("utf-8")) for value in values)
+    def _add(self, size: int) -> None:
+        self.used += size
         if self.used > MAX_DASHBOARD_INDEX_BYTES:
             raise DashboardLimitError("dashboard_index_limit_exceeded")
+
+    def charge_conversation(
+        self,
+        identifier: str,
+        external: tuple[str, str, str],
+    ) -> None:
+        self._add(
+            PY_MAPPING_ENTRY_BYTES
+            + _python_string_size(identifier)
+            + PY_INTEGER_BYTES
+            + PY_MAPPING_ENTRY_BYTES
+            + PY_TUPLE_3_BYTES
+            + sum(_python_string_size(value) for value in external)
+        )
+
+    def charge_turn(self, identifier: str) -> None:
+        self._add(
+            PY_MAPPING_ENTRY_BYTES + _python_string_size(identifier) + PY_INTEGER_BYTES
+        )
+
+    def charge_alias(self, source: str, alias: str) -> None:
+        self._add(
+            PY_MAPPING_ENTRY_BYTES
+            + _python_string_size(source)
+            + _python_string_size(alias)
+        )
+
+    def charge_model_candidate(self, value: str) -> None:
+        self._add(PY_SET_ENTRY_BYTES + _python_string_size(value))
+
+    def charge_model_sort(self, entries: int) -> None:
+        self._add(entries * PY_SORTED_REFERENCE_BYTES)
+
+    def charge_model_alias(self, alias: str) -> None:
+        self._add(PY_MAPPING_ENTRY_BYTES + _python_string_size(alias))
+
+    def charge_token_semantics(self, entries: int) -> None:
+        self._add(entries * PY_MAPPING_ENTRY_BYTES)
+
+
+def _python_string_size(value: str) -> int:
+    raw = PY_STRING_BASE_BYTES + len(value.encode("utf-8"))
+    return (raw + PY_OBJECT_ALIGNMENT - 1) // PY_OBJECT_ALIGNMENT * PY_OBJECT_ALIGNMENT
 
 
 def _dashboard_context(
@@ -196,10 +250,7 @@ def _dashboard_context(
     conversation_keys: dict[str, int] = {}
     external_keys: dict[tuple[str, str, str], int] = {}
     turn_keys: dict[str, int] = {}
-    project_names: set[str] = set()
-    machine_names: set[str] = set()
     model_names: set[str] = set()
-    role_names: set[str] = set()
 
     for index, row in enumerate(iter_report_rows(connection, "conversations", window)):
         identifier = str(row["id"])
@@ -208,49 +259,125 @@ def _dashboard_context(
             str(row["source_machine"]),
             str(row["external_id"]),
         )
-        budget.charge(identifier)
-        budget.charge(*external, overhead=96)
+        budget.charge_conversation(identifier, external)
         conversation_keys[identifier] = index
         external_keys[external] = index
         if share_safe:
-            _add_bounded(project_names, str(row["project"]), budget)
-            _add_bounded(machine_names, str(row["source_machine"]), budget)
             for model in json.loads(row["models_json"]):
-                _add_bounded(model_names, str(model), budget)
+                _add_bounded_model(model_names, str(model), budget)
     for index, row in enumerate(iter_report_rows(connection, "turns", window)):
         identifier = str(row["id"])
-        budget.charge(identifier)
+        budget.charge_turn(identifier)
         turn_keys[identifier] = index
     if share_safe:
-        for row in iter_report_rows(connection, "model_calls", window):
-            _add_bounded(model_names, str(row["model"]), budget)
-        for row in iter_report_rows(connection, "turn_settings", window):
-            if row["model"]:
-                _add_bounded(model_names, str(row["model"]), budget)
-        for row in iter_report_rows(connection, "subagents", window):
-            _add_bounded(
-                role_names,
-                str(row["agent_role"] or "unspecified"),
-                budget,
-            )
+        for model in _distinct_report_values(
+            connection, "model_calls", "model", window
+        ):
+            _add_bounded_model(model_names, model, budget)
+        for model in _distinct_report_values(
+            connection, "turn_settings", "model", window
+        ):
+            _add_bounded_model(model_names, model, budget)
+    token_semantics: dict[str, str] = {
+        spec.name: spec.token_semantics for spec in ADAPTER_SPECS
+    }
+    budget.charge_token_semantics(len(token_semantics))
     return _DashboardContext(
         window=window,
         share_safe=share_safe,
         conversation_keys=conversation_keys,
         external_keys=external_keys,
         turn_keys=turn_keys,
-        projects=_aliases(project_names, "project", share_safe),
-        machines=_aliases(machine_names, "machine", share_safe),
-        models=_aliases(model_names, "model", share_safe),
-        roles=_aliases(role_names, "role", share_safe),
-        token_semantics={spec.name: spec.token_semantics for spec in ADAPTER_SPECS},
+        projects=(
+            _distinct_aliases(
+                connection, "conversations", "project", "project", window, budget
+            )
+            if share_safe
+            else {}
+        ),
+        machines=(
+            _distinct_aliases(
+                connection,
+                "conversations",
+                "source_machine",
+                "machine",
+                window,
+                budget,
+            )
+            if share_safe
+            else {}
+        ),
+        models=_model_aliases(model_names, budget) if share_safe else {},
+        roles=(
+            _distinct_aliases(
+                connection,
+                "subagents",
+                "agent_role",
+                "role",
+                window,
+                budget,
+                normalize_empty="unspecified",
+            )
+            if share_safe
+            else {}
+        ),
+        token_semantics=token_semantics,
     )
 
 
-def _add_bounded(values: set[str], value: str, budget: _IndexBudget) -> None:
+def _add_bounded_model(values: set[str], value: str, budget: _IndexBudget) -> None:
     if value not in values:
-        budget.charge(value)
+        budget.charge_model_candidate(value)
         values.add(value)
+
+
+def _distinct_report_values(
+    connection: Connection,
+    table_name: str,
+    column_name: str,
+    window: ExportWindow,
+) -> Iterator[str]:
+    selected = (
+        report_statement(connection, table_name, window).order_by(None).subquery()
+    )
+    column = selected.c[column_name]
+    statement = select(column).where(column.is_not(None)).distinct().order_by(column)
+    result = connection.execution_options(stream_results=True, yield_per=1_000).execute(
+        statement
+    )
+    for value in result.scalars().yield_per(1_000):
+        yield str(value)
+
+
+def _distinct_aliases(
+    connection: Connection,
+    table_name: str,
+    column_name: str,
+    prefix: str,
+    window: ExportWindow,
+    budget: _IndexBudget,
+    *,
+    normalize_empty: str | None = None,
+) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for source in _distinct_report_values(connection, table_name, column_name, window):
+        normalized = source or normalize_empty
+        if normalized is None or normalized in aliases:
+            continue
+        alias = f"{prefix}-{len(aliases) + 1}"
+        budget.charge_alias(normalized, alias)
+        aliases[normalized] = alias
+    return aliases
+
+
+def _model_aliases(values: set[str], budget: _IndexBudget) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    budget.charge_model_sort(len(values))
+    for source in sorted(values):
+        alias = f"model-{len(aliases) + 1}"
+        budget.charge_model_alias(alias)
+        aliases[source] = alias
+    return aliases
 
 
 def _dashboard_payload(
@@ -493,13 +620,6 @@ def _transform_row(
             "duplicates": row["duplicate_conversations"],
         }
     raise ValueError("unknown_dashboard_table")
-
-
-def _aliases(values: Any, prefix: str, enabled: bool) -> dict[str, str]:
-    unique = sorted(set(values))
-    if not enabled:
-        return {value: value for value in unique}
-    return {value: f"{prefix}-{index}" for index, value in enumerate(unique, 1)}
 
 
 def _round_timestamp(value: Any) -> Any:

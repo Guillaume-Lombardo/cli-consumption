@@ -162,6 +162,84 @@ def test_required_relationship_indexes_have_a_separate_memory_budget(
     engine.dispose()
 
 
+def test_conservative_budget_rejects_200k_unique_conversation_keys_early() -> None:
+    budget = dashboard_module._IndexBudget()
+    rejected_at = None
+    for index in range(200_000):
+        identifier = f"conversation-{index}"
+        try:
+            budget.charge_conversation(
+                identifier,
+                ("provider", "machine", identifier),
+            )
+        except DashboardLimitError:
+            rejected_at = index
+            break
+
+    assert rejected_at is not None
+    assert rejected_at < 180_000
+
+
+def test_many_unique_labels_are_rejected_before_alias_population(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = [
+        {
+            **_conversation(
+                f"conversation-{index}",
+                "2026-08-01T00:00:00.000000+00:00",
+            ),
+            "project": f"unique-project-{index:04d}",
+        }
+        for index in range(500)
+    ]
+    engine = _database(tmp_path, *rows)
+
+    projected = dashboard_module._IndexBudget()
+    for row in rows:
+        projected.charge_conversation(
+            str(row["id"]),
+            (
+                str(row["provider"]),
+                str(row["source_machine"]),
+                str(row["external_id"]),
+            ),
+        )
+    projected.charge_token_semantics(len(dashboard_module.ADAPTER_SPECS))
+    for index, source in enumerate(sorted(str(row["project"]) for row in rows)[:5], 1):
+        projected.charge_alias(source, f"project-{index}")
+    monkeypatch.setattr(
+        dashboard_module,
+        "MAX_DASHBOARD_INDEX_BYTES",
+        projected.used,
+    )
+    alias_attempts = 0
+    real_charge_alias = dashboard_module._IndexBudget.charge_alias
+
+    def tracking_charge_alias(self, source: str, alias: str) -> None:
+        nonlocal alias_attempts
+        alias_attempts += 1
+        real_charge_alias(self, source, alias)
+
+    monkeypatch.setattr(
+        dashboard_module._IndexBudget,
+        "charge_alias",
+        tracking_charge_alias,
+    )
+
+    with pytest.raises(DashboardLimitError, match="dashboard_index_limit_exceeded"):
+        generate_dashboard(
+            engine,
+            tmp_path / "dashboard.html",
+            share_safe=True,
+        )
+
+    assert alias_attempts == 6
+    assert alias_attempts < len(rows)
+    assert not (tmp_path / "dashboard.html").exists()
+    engine.dispose()
+
+
 def test_preflight_rejects_estimated_size_before_payload_materialization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -373,6 +451,35 @@ def test_atomic_write_fsyncs_file_then_replaces_then_fsyncs_directory(
     _atomic_write_text(tmp_path / "dashboard.html", "dashboard")
 
     assert events == ["file-fsync", "replace", "directory-fsync"]
+
+
+def test_atomic_writer_counter_matches_tell_and_file_bytes_without_newline_translation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_temporary_file = dashboard_module.tempfile.NamedTemporaryFile
+    counted: list[tuple[int, int]] = []
+
+    def temporary_file(*args, **kwargs):
+        assert kwargs["newline"] == ""
+        return real_temporary_file(*args, **kwargs)
+
+    def write(handle) -> None:
+        writer = dashboard_module._BudgetedWriter(handle)
+        writer.write("café\nsecond line\n")
+        handle.flush()
+        counted.append((writer.written, handle.tell()))
+
+    monkeypatch.setattr(
+        dashboard_module.tempfile,
+        "NamedTemporaryFile",
+        temporary_file,
+    )
+    output = tmp_path / "dashboard.html"
+
+    dashboard_module._atomic_write(output, write)
+
+    assert counted == [(output.stat().st_size, output.stat().st_size)]
+    assert output.read_bytes() == "café\nsecond line\n".encode()
 
 
 def test_directory_fsync_has_explicit_unsupported_platform_fallback(

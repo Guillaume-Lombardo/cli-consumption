@@ -139,7 +139,14 @@ key/alias prepasses, and streamed row reads then share a transaction. SQLite exe
 an explicit `BEGIN DEFERRED` before the preflight, and PostgreSQL uses repeatable-read
 isolation. Generation is refused above 250,000 selected rows or 128 MiB of selected
 scalar values. Conversation, turn, external-key, and share-safe alias indexes have a
-separate conservative 128 MiB in-memory budget.
+separate conservative 128 MiB allocation budget. Entries are charged before insertion
+for dictionary/set capacity, aligned string storage, tuples, integers, and alias
+values. Project, machine, and role aliases stream from ordered SQL `DISTINCT` results,
+so they never coexist as a Python set, sorted list, and dictionary. Model names found
+inside `models_json` still require a set; its entries plus the peak sorted-reference
+list, alias dictionary, and alias strings are all charged concurrently. This is a
+portable upper-bound model for the supported 64-bit CPython versions, not a claim that
+process RSS exactly equals the counter.
 
 Rows are transformed and JSON-encoded one at a time directly into the temporary HTML;
 the production path never materializes all SQL rows, the full dashboard payload, the
@@ -157,6 +164,8 @@ intact and removes only the temporary file owned by that generation attempt; unr
 stale temporary files are not deleted.
 CSV files retain their independent streaming behavior, so `export --csv` plus a
 dashboard is not an atomic transaction for the entire output directory.
+The temporary text stream disables newline translation, so the encoded-byte counter,
+file position, and bytes written remain identical on Windows as well as POSIX systems.
 
 ## Adapter qualification
 

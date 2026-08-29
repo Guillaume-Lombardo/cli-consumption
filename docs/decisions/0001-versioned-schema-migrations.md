@@ -31,7 +31,10 @@ Revision `0004` adds internal subagent-scope coordination rows and seeds them fr
 existing conversation and relationship scopes. New and old application versions must
 not write concurrently: older writers do not take the scope lock or apply the
 conservative graph-freshness policy. Downgrade removes only this internal table and
-does not alter normalized conversations or relationships.
+does not alter normalized conversations or relationships. An unversioned database
+whose complete `0004` layout passes the strict adoption preflight retains its validated
+scope rows and is stamped directly at head. Older recognized layouts still replay the
+required forward migrations.
 
 ## Deployment and rollback
 

@@ -42,6 +42,9 @@ relationships. The table is internal: it is absent from snapshot, API, CSV, dash
 and reporting surfaces. Retention deliberately preserves these replay guards; deleting
 them would let an old graph-only copy become first-seen again. Their fields contain no
 content beyond labels already allowed in normalized storage and an operational counter.
+When strict legacy adoption recognizes an unversioned database already at the `0004`
+layout, the revision preserves its validated scope rows instead of recreating or
+reseeding the table; adoption stamps that exact current layout directly at head.
 
 ## Downgrade and deployment
 

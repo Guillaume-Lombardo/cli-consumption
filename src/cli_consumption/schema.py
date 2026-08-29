@@ -264,6 +264,39 @@ def _preflight_unversioned(connection: Connection) -> None:
             _reject_unpublished_schema()
 
 
+def _matches_current_head_layout(connection: Connection) -> bool:
+    from cli_consumption.storage import SCHEMA_TABLES
+
+    inspector = inspect(connection)
+    if not set(SCHEMA_TABLES).issubset(inspector.get_table_names()):
+        return False
+    for table_name, model in SCHEMA_TABLES.items():
+        declared = cast(Table, model.__table__)
+        if {column["name"] for column in inspector.get_columns(table_name)} != {
+            column.name for column in declared.columns
+        }:
+            return False
+        expected_indexes = {
+            (
+                index.name,
+                tuple(column.name for column in index.columns),
+                bool(index.unique),
+            )
+            for index in declared.indexes
+        }
+        actual_indexes = {
+            (
+                index["name"],
+                tuple(index["column_names"]),
+                bool(index["unique"]),
+            )
+            for index in inspector.get_indexes(table_name)
+        }
+        if actual_indexes != expected_indexes:
+            return False
+    return True
+
+
 def _matching_type(actual: object, expected: object) -> bool:
     actual_generic = getattr(actual, "as_generic", lambda: actual)()
     expected_generic = getattr(expected, "as_generic", lambda: expected)()
@@ -298,8 +331,10 @@ def upgrade_database(engine: Engine) -> None:
             known_revisions = {item.revision for item in script.walk_revisions()}
             context = MigrationContext.configure(connection)
             current_heads = tuple(context.get_current_heads())
+            adopt_current_head = False
             if not current_heads:
                 _preflight_unversioned(connection)
+                adopt_current_head = _matches_current_head_layout(connection)
             elif any(head not in known_revisions for head in current_heads):
                 raise SchemaCompatibilityError(
                     "The database schema is newer than or unknown to this package"
@@ -307,7 +342,10 @@ def upgrade_database(engine: Engine) -> None:
             elif current_heads == expected_heads:
                 return
             connection.commit()
-            command.upgrade(config, "head")
+            if adopt_current_head:
+                command.stamp(config, "head")
+            else:
+                command.upgrade(config, "head")
             connection.commit()
             migrated_heads = tuple(
                 MigrationContext.configure(connection).get_current_heads()

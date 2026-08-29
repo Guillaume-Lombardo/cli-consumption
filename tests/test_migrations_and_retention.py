@@ -162,6 +162,60 @@ def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> No
     engine.dispose()
 
 
+def test_unversioned_head_database_preserves_validated_scope_state(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "unversioned-head.sqlite")
+    initialize_database(engine)
+    with Session(engine) as session, session.begin():
+        session.add(_conversation("test:head", "2026-01-01T00:00:00+00:00"))
+        session.add(
+            Subagent(
+                id="test:machine:child",
+                provider="test",
+                source_machine="machine",
+                parent_thread_id="head",
+                child_thread_id="child",
+                status="completed",
+                created_at_ms=1,
+                updated_at_ms=2,
+                agent_role="worker",
+                tokens_used=3,
+            )
+        )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO subagent_scopes "
+                "(provider, source_machine, lock_version) "
+                "VALUES ('test', 'machine', 41)"
+            )
+        )
+        connection.execute(text("DROP TABLE alembic_version"))
+
+    initialize_database(engine)
+    initialize_database(engine)
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0004"
+        )
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT lock_version FROM subagent_scopes "
+                    "WHERE provider = 'test' AND source_machine = 'machine'"
+                )
+            )
+            == 41
+        )
+    assert [row["id"] for row in read_table(engine, "conversations")] == ["test:head"]
+    assert [row["id"] for row in read_table(engine, "subagents")] == [
+        "test:machine:child"
+    ]
+    engine.dispose()
+
+
 def test_partial_legacy_database_gains_missing_additive_table(tmp_path: Path) -> None:
     engine = create_database_engine(tmp_path / "partial.sqlite")
     initialize_database(engine)
@@ -613,6 +667,32 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
                 == "0004"
+            )
+
+        with test_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO subagent_scopes "
+                    "(provider, source_machine, lock_version) "
+                    "VALUES ('codex', 'adoption', 41)"
+                )
+            )
+            connection.execute(text("DROP TABLE alembic_version"))
+        upgrade_database(test_engine)
+        upgrade_database(test_engine)
+        with test_engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == "0004"
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT lock_version FROM subagent_scopes "
+                        "WHERE provider = 'codex' AND source_machine = 'adoption'"
+                    )
+                )
+                == 41
             )
 
         downgrade_database(test_engine, "0002")

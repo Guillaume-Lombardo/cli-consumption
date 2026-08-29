@@ -47,6 +47,17 @@ counters, unconstrained analytics labels, broken relationships, snapshots above
 use generic codes and do not echo rejected values. Snapshot schema v1 is advertised by
 the collector capabilities endpoint so an incompatible client can stop before upload.
 
+The collector transiently reads an optional `X-Request-ID` only when it matches a
+bounded identifier grammar and otherwise replaces it with a generated identifier.
+The identifier is returned as a response header and may appear in structured
+application error events, but it is never persisted in the usage database or exports.
+Those events contain only fixed event and error codes, constrained HTTP methods,
+static route templates, and coarse allowlisted exception types. They exclude request
+and response bodies, arbitrary headers, authentication tokens, URLs and query
+strings, database URLs, paths, exception messages, and tracebacks. Uvicorn access logs
+are disabled by the `serve` command; independently configured reverse-proxy logs stay
+outside this application's retention boundary.
+
 ## Threat model
 
 Provider files and incoming API payloads are untrusted. Parsers must tolerate malformed
@@ -67,6 +78,12 @@ normalized snapshot remains capped at 250,000 records during construction. Limit
 failures expose only generic codes, never paths or record content. The sync client
 requires HTTPS beyond loopback unless the operator uses the explicit
 `--allow-insecure` override.
+
+The unauthenticated liveness endpoint does not touch the database. The unauthenticated
+readiness endpoint reads only a bounded schema revision and fixed table probes; it
+returns generic ready/not-ready state without database values or errors. These
+endpoints expose process and database availability to callers and should be scoped by
+network policy even though they disclose no usage metadata.
 
 An exported database still reveals work patterns, model choices, project names, and
 activity times. Treat it as private operational data. Restrict filesystem and database

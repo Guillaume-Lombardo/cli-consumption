@@ -20,6 +20,7 @@ class SchemaCompatibilityError(RuntimeError):
 # Stable signed-bigint advisory-lock namespace for ``b"cli-cons"``.
 POSTGRESQL_MIGRATION_LOCK = 7_164_216_750_902_308_467
 SQLITE_MIGRATION_LOCK_TIMEOUT_MS = 15_000
+CURRENT_DATABASE_REVISION = "0004"
 
 
 BASELINE_COLUMNS: dict[str, frozenset[str]] = {

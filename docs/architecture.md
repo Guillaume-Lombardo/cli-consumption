@@ -67,6 +67,25 @@ schema range so clients can fail before uploading incompatible data.
 The sync client refuses plain HTTP beyond loopback unless the operator passes the
 explicit `--allow-insecure` override for a trusted network.
 
+`/health` is an unauthenticated liveness endpoint and deliberately performs no
+database work, so a database outage does not cause the orchestrator to restart a
+healthy process. `/ready` is the unauthenticated readiness endpoint. It performs a
+fixed, bounded probe of the Alembic revision and expected tables and returns only
+`{"status":"ready"}` or a generic `503` body. Route traffic only while readiness is
+successful.
+
+Every response has an `X-Request-ID`. An incoming identifier is retained only when it
+matches the bounded identifier grammar; otherwise the application generates one.
+Internal failures and failed readiness probes produce structured application events
+containing only that identifier, a fixed event and code, a constrained method, a
+static route template, and a coarse allowlisted exception type. Exception messages,
+tracebacks, request bodies, headers, tokens, database URLs, paths, and query strings
+are never included. Uvicorn access logging is disabled by `serve` because raw request
+targets are untrusted. Operators should configure redacted access logs, TLS,
+connection limits, request rate limits, and trusted-forwarded-header handling at the
+reverse proxy or platform ingress. There is intentionally no application-level rate
+limiter competing with that boundary.
+
 ## Storage
 
 SQLite is the zero-configuration default. PostgreSQL is selected by passing a

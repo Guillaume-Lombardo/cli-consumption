@@ -426,7 +426,10 @@ def serve(
             "Warning: collector authentication is disabled on localhost.", err=True
         )
     engine = _open_database(database)
-    uvicorn.run(create_app(engine, token), host=host, port=port)
+    try:
+        uvicorn.run(create_app(engine, token), host=host, port=port, access_log=False)
+    finally:
+        engine.dispose()
 
 
 def _collect_snapshots(

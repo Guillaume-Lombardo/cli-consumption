@@ -138,6 +138,57 @@ def test_empty_database_upgrades_to_packaged_head(tmp_path: Path) -> None:
     engine.dispose()
 
 
+def test_concurrent_sqlite_initialization_reaches_one_packaged_head(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "concurrent-empty.sqlite")
+    barrier = Barrier(4)
+
+    def initialize() -> None:
+        barrier.wait()
+        initialize_database(engine)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(initialize) for _ in range(4)]
+        for future in futures:
+            future.result()
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0004"
+        )
+    assert set(inspect(engine).get_table_names()) == {
+        *BASELINE_COLUMNS,
+        "alembic_version",
+    }
+    engine.dispose()
+
+
+def test_concurrent_sqlite_migration_is_idempotent(tmp_path: Path) -> None:
+    engine = create_database_engine(tmp_path / "concurrent-migration.sqlite")
+    initialize_database(engine)
+    downgrade_database(engine, "0002")
+    barrier = Barrier(3)
+
+    def migrate() -> None:
+        barrier.wait()
+        upgrade_database(engine)
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(migrate) for _ in range(3)]
+        for future in futures:
+            future.result()
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0004"
+        )
+    assert "ix_conversations_ended_at" in {
+        item["name"] for item in inspect(engine).get_indexes("conversations")
+    }
+    engine.dispose()
+
+
 def test_legacy_type_comparison_distinguishes_widths_and_text_kinds() -> None:
     assert _matching_type(BigInteger(), BigInteger())
     assert _matching_type(String(64), String(64))
@@ -660,7 +711,16 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
         )
         test_engine = create_engine(scoped_url)
 
-        upgrade_database(test_engine)
+        initialization_barrier = Barrier(4)
+
+        def initialize_concurrently() -> None:
+            initialization_barrier.wait()
+            upgrade_database(test_engine)
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(initialize_concurrently) for _ in range(4)]
+            for future in futures:
+                future.result()
         inspector = inspect(test_engine)
         assert "agent_nickname" not in {
             column["name"] for column in inspector.get_columns("subagents")
@@ -689,7 +749,16 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
                 )
             )
             connection.execute(text("DROP TABLE alembic_version"))
-        upgrade_database(test_engine)
+        migration_barrier = Barrier(3)
+
+        def migrate_concurrently() -> None:
+            migration_barrier.wait()
+            upgrade_database(test_engine)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(migrate_concurrently) for _ in range(3)]
+            for future in futures:
+                future.result()
         upgrade_database(test_engine)
         with test_engine.connect() as connection:
             assert (
@@ -751,7 +820,18 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
             connection.execute(
                 text("DELETE FROM ingestion_runs WHERE id = 'postgres-invalid-run'")
             )
-        upgrade_database(test_engine)
+        migration_barrier = Barrier(3)
+
+        def migrate_valid_database_concurrently() -> None:
+            migration_barrier.wait()
+            upgrade_database(test_engine)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(migrate_valid_database_concurrently) for _ in range(3)
+            ]
+            for future in futures:
+                future.result()
         assert read_table(test_engine, "conversations")[0]["started_at"] == (
             "2026-01-01T00:00:00.000000+00:00"
         )
@@ -912,7 +992,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [
-                executor.submit(concurrent_ingest, concurrent_version(2, "older")),
+                executor.submit(concurrent_ingest, concurrent_version(0, "stale")),
                 executor.submit(concurrent_ingest, concurrent_version(3, "newest")),
             ]
             for future in futures:

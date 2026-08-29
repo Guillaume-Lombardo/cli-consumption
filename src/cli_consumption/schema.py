@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
@@ -8,12 +9,16 @@ from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Double, Float, String, Table, inspect
+from sqlalchemy import Double, Float, String, Table, inspect, text
 from sqlalchemy.engine import Connection, Engine
 
 
 class SchemaCompatibilityError(RuntimeError):
     """The database cannot be safely adopted or migrated by this release."""
+
+
+# Stable signed-bigint advisory-lock namespace for ``b"cli-cons"``.
+POSTGRESQL_MIGRATION_LOCK = 7_164_216_750_902_308_467
 
 
 BASELINE_COLUMNS: dict[str, frozenset[str]] = {
@@ -324,10 +329,35 @@ def _reject_unpublished_schema() -> None:
     )
 
 
+@contextmanager
+def _migration_lock(connection: Connection):
+    """Serialize schema inspection and migration for one supported database."""
+    dialect = connection.dialect.name
+    if dialect == "sqlite":
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+    elif dialect == "postgresql":
+        connection.execute(
+            text("SELECT pg_advisory_lock(:key)"),
+            {"key": POSTGRESQL_MIGRATION_LOCK},
+        )
+        connection.commit()
+    try:
+        yield
+    finally:
+        if connection.in_transaction():
+            connection.rollback()
+        if dialect == "postgresql":
+            connection.execute(
+                text("SELECT pg_advisory_unlock(:key)"),
+                {"key": POSTGRESQL_MIGRATION_LOCK},
+            )
+            connection.commit()
+
+
 def upgrade_database(engine: Engine) -> None:
     """Adopt a legacy database and migrate it to this package's schema head."""
     try:
-        with engine.connect() as connection:
+        with engine.connect() as connection, _migration_lock(connection):
             config = _config(connection)
             script = ScriptDirectory.from_config(config)
             expected_heads = tuple(script.get_heads())
@@ -344,7 +374,6 @@ def upgrade_database(engine: Engine) -> None:
                 )
             elif current_heads == expected_heads:
                 return
-            connection.commit()
             if adopt_current_head:
                 command.stamp(config, "head")
             else:
@@ -366,7 +395,7 @@ def upgrade_database(engine: Engine) -> None:
 def downgrade_database(engine: Engine, revision: str = "0001") -> None:
     """Downgrade to a known revision, never below the adopted baseline."""
     try:
-        with engine.connect() as connection:
+        with engine.connect() as connection, _migration_lock(connection):
             config = _config(connection)
             script = ScriptDirectory.from_config(config)
             known_revisions = {item.revision for item in script.walk_revisions()}
@@ -383,7 +412,6 @@ def downgrade_database(engine: Engine, revision: str = "0001") -> None:
                 raise SchemaCompatibilityError(
                     "The current database schema revision is unknown"
                 )
-            connection.commit()
             command.downgrade(config, revision)
             connection.commit()
             migrated_heads = tuple(

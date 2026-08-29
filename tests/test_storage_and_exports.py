@@ -293,6 +293,51 @@ def test_subagent_scope_is_replaced_when_edges_disappear(
     engine.dispose()
 
 
+def test_older_copy_cannot_regress_subagent_scope_and_newer_deletion_wins(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    older = CodexAdapter().collect([("desktop", home)])
+    rollout_factory(home, extra_event=True)
+    recent = CodexAdapter().collect([("desktop", home)])
+    recent.subagents.append(
+        {
+            "id": "codex:desktop:recent-child",
+            "provider": "codex",
+            "source_machine": "desktop",
+            "parent_thread_id": "conversation-1",
+            "child_thread_id": "recent-child",
+            "status": "completed",
+            "created_at_ms": 1,
+            "updated_at_ms": 2,
+            "agent_role": "worker",
+            "tokens_used": 3,
+        }
+    )
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+
+    ingest_snapshot(engine, recent)
+    first_old = ingest_snapshot(engine, older)
+    second_old = ingest_snapshot(engine, older)
+
+    assert (first_old.written, first_old.skipped) == (0, 1)
+    assert (second_old.written, second_old.skipped) == (0, 1)
+    assert {row["id"] for row in read_table(engine, "subagents")} == {
+        "codex:desktop:recent-child"
+    }
+
+    newer_without_edges = Snapshot.from_dict(recent.to_dict())
+    newer_without_edges.subagents.clear()
+    newer_without_edges.conversations[0]["event_count"] += 1
+    newer_without_edges.conversations[0]["content_hash"] = "f" * 64
+    deletion = ingest_snapshot(engine, newer_without_edges)
+
+    assert (deletion.written, deletion.skipped) == (1, 0)
+    assert read_table(engine, "subagents") == []
+    engine.dispose()
+
+
 def test_invalid_analytics_values_are_rejected_without_echoing_content(
     tmp_path: Path, rollout_factory
 ) -> None:

@@ -712,6 +712,17 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
         assert (ingestion.received, ingestion.written, ingestion.skipped) == (1, 1, 0)
         assert len(read_table(test_engine, "turns")) == 1
 
+        older = Snapshot.from_dict(snapshot.to_dict())
+        older.conversations[0]["event_count"] = 0
+        older.conversations[0]["content_hash"] = "f" * 64
+        older.subagents.clear()
+        skipped = ingest_snapshot(test_engine, older)
+        assert (skipped.received, skipped.written, skipped.skipped) == (1, 0, 1)
+        assert {row["id"] for row in read_table(test_engine, "subagents")} == {
+            "codex:ci:old-child",
+            "codex:ci:recent-child",
+        }
+
         retention = retain_before(test_engine, cutoff, apply=True)
         assert (
             retention.conversations,

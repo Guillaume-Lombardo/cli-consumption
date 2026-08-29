@@ -84,8 +84,11 @@ identical or less complete record. A more complete copy atomically replaces the
 conversation and its child records.
 
 Subagent relationships have a provider-and-source-machine lifecycle. Every represented
-scope is replaced atomically on ingestion, including when its latest snapshot contains
-no edges, so deleted provider relationships do not remain indefinitely.
+scope whose conversations are identical or more complete than their stored copies is
+replaced atomically on ingestion, including when that snapshot contains no edges, so
+deleted provider relationships do not remain indefinitely. A scope containing any
+less-complete conversation is treated as an older copy: its conversations and its
+relationship graph are both prevented from regressing.
 
 Workflow analytics use additive child tables: `work_items`, `context_samples`,
 `turn_settings`, and `compaction_events`. Snapshot schema v1 validates every record,

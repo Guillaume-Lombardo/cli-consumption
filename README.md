@@ -106,7 +106,9 @@ uv run cli-consumption collect --provider codex \
 
 Copy only the required provider data. For Codex, copy the `sessions/` directory but
 never `auth.json` or other credentials. Globally identical conversation IDs are
-deduplicated, and the most complete copy wins.
+deduplicated, and the most complete copy wins. Subagent relationships follow the same
+freshness rule per provider and source machine, so collecting an older copy cannot
+erase a newer graph.
 
 Provider files are untrusted. Monolithic JSON files are limited to 64 MiB, JSONL files
 to 256 MiB with an 8 MiB per-line limit, and a snapshot to 250,000 normalized records

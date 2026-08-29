@@ -305,19 +305,16 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
         (snapshot.provider, str(record["source_machine"]))
         for record in (*snapshot.conversations, *snapshot.subagents)
     }
+    stale_subagent_scopes: set[tuple[str, str]] = set()
     with Session(engine) as session, session.begin():
-        for provider, source_machine in subagent_scopes:
-            session.execute(
-                delete(Subagent).where(
-                    Subagent.provider == provider,
-                    Subagent.source_machine == source_machine,
-                )
-            )
-        for subagent in snapshot.subagents:
-            session.add(Subagent(**subagent))
         for record in snapshot.conversations:
             conversation_id = str(record["id"])
             existing = session.get(Conversation, conversation_id)
+            scope = (snapshot.provider, str(record["source_machine"]))
+            if existing is not None and existing.event_count > int(
+                record["event_count"]
+            ):
+                stale_subagent_scopes.add(scope)
             if existing is not None and (
                 existing.event_count > int(record["event_count"])
                 or (
@@ -369,6 +366,18 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
             for compaction in compactions_by_conversation.get(conversation_id, []):
                 session.add(CompactionEvent(**compaction))
             written += 1
+        authoritative_scopes = subagent_scopes - stale_subagent_scopes
+        for provider, source_machine in authoritative_scopes:
+            session.execute(
+                delete(Subagent).where(
+                    Subagent.provider == provider,
+                    Subagent.source_machine == source_machine,
+                )
+            )
+        for subagent in snapshot.subagents:
+            scope = (snapshot.provider, str(subagent["source_machine"]))
+            if scope in authoritative_scopes:
+                session.add(Subagent(**subagent))
         session.add(
             IngestionRun(
                 id=run_id,

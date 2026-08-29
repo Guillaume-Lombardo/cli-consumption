@@ -8,7 +8,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import String, Table, inspect
+from sqlalchemy import Double, Float, String, Table, inspect
 from sqlalchemy.engine import Connection, Engine
 
 
@@ -187,6 +187,9 @@ def _preflight_unversioned(connection: Connection) -> None:
     existing = set(inspector.get_table_names())
     for table_name in existing & BASELINE_COLUMNS.keys():
         columns = inspector.get_columns(table_name)
+        primary_key_columns = set(
+            inspector.get_pk_constraint(table_name).get("constrained_columns") or ()
+        )
         actual = frozenset(column["name"] for column in columns)
         accepted = {BASELINE_COLUMNS[table_name]}
         if table_name == "subagents":
@@ -204,7 +207,7 @@ def _preflight_unversioned(connection: Connection) -> None:
                 continue
             expected = declared_columns[name]
             if (
-                bool(column.get("primary_key")) != expected.primary_key
+                (name in primary_key_columns) != expected.primary_key
                 or bool(column["nullable"]) != expected.nullable
                 or not _matching_type(column["type"], expected.type)
                 or column.get("default") is not None
@@ -301,7 +304,7 @@ def _matching_type(actual: object, expected: object) -> bool:
     actual_generic = getattr(actual, "as_generic", lambda: actual)()
     expected_generic = getattr(expected, "as_generic", lambda: expected)()
     if type(actual_generic) is not type(expected_generic):
-        return False
+        return isinstance(actual_generic, Double) and type(expected_generic) is Float
     if isinstance(expected_generic, String):
         return getattr(actual_generic, "length", None) == expected_generic.length
     return True

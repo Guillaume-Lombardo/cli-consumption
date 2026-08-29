@@ -11,7 +11,17 @@ from threading import Barrier
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import BigInteger, Integer, String, Text, create_engine, inspect, text
+from sqlalchemy import (
+    BigInteger,
+    Float,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    inspect,
+    text,
+)
+from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -134,6 +144,7 @@ def test_legacy_type_comparison_distinguishes_widths_and_text_kinds() -> None:
     assert not _matching_type(Integer(), BigInteger())
     assert not _matching_type(Text(), String(64))
     assert not _matching_type(String(255), String(64))
+    assert _matching_type(DOUBLE_PRECISION(precision=53), Float())
 
 
 def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> None:

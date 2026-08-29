@@ -23,7 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import URL, Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import NullPool
 
@@ -298,6 +298,29 @@ def create_database_engine(database: str | Path) -> Engine:
             cursor.close()
 
     return engine
+
+
+def create_postgresql_readiness_engine(
+    database_url: URL,
+    *,
+    connect_timeout_seconds: int,
+    statement_timeout_ms: int,
+    lock_timeout_ms: int,
+) -> Engine:
+    """Create an isolated, unpooled PostgreSQL engine for readiness only."""
+    if database_url.drivername != "postgresql+psycopg":
+        raise ValueError("Readiness engine requires PostgreSQL")
+    options = (
+        f"-c statement_timeout={statement_timeout_ms} -c lock_timeout={lock_timeout_ms}"
+    )
+    return create_engine(
+        database_url,
+        poolclass=NullPool,
+        connect_args={
+            "connect_timeout": connect_timeout_seconds,
+            "options": options,
+        },
+    )
 
 
 def initialize_database(engine: Engine) -> None:

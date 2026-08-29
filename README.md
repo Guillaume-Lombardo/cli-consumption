@@ -251,6 +251,23 @@ deployments also need TLS and standard operational controls. The sync client ref
 plain HTTP beyond loopback unless `--allow-insecure` is passed explicitly. See
 [Architecture](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/architecture.md) for the trade-offs.
 
+Use `GET /health` as the process liveness probe; it never opens the database. Use
+`GET /ready` as the traffic readiness probe; it returns `200` only when the database
+is reachable and its schema is the expected revision, otherwise a generic `503`.
+The readiness path uses one fixed schema query and returns within a two-second
+application deadline. PostgreSQL uses a separate unpooled engine with connection and
+server-side timeouts configured at startup; SQLite lock waiting is capped at 1.5
+seconds. If a network stack ignores its connection timeout, the single daemon probe
+may continue after the response, but no second probe or connection starts until it
+finishes. Configure the orchestrator probe timeout slightly above two seconds as an
+independent safeguard.
+Both endpoints are intentionally unauthenticated so infrastructure probes can call
+them, and every HTTP response carries a bounded `X-Request-ID`. Put the collector
+behind a TLS-terminating reverse proxy or platform ingress. Configure request rate
+limits, connection limits, trusted proxy headers, and access-log redaction there; the
+application does not implement a second rate limiter and disables Uvicorn access logs
+to avoid recording untrusted URLs or query strings.
+
 Snapshots use strict schema version 1. The collector rejects request bodies larger
 than 32 MiB and snapshots containing more than 250,000 normalized records. A sync
 client checks `/api/v1/capabilities` before sending when the endpoint exposes it.

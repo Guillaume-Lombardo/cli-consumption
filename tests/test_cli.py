@@ -146,6 +146,36 @@ def test_serve_reports_missing_optional_dependencies_without_a_traceback(
     assert "Traceback" not in result.output
 
 
+def test_serve_disposes_engine_when_server_stops_or_fails(monkeypatch) -> None:
+    class FakeEngine:
+        disposed = False
+
+        def dispose(self) -> None:
+            self.disposed = True
+
+    engine = FakeEngine()
+    observed: dict[str, object] = {}
+
+    def run(app, **kwargs) -> None:
+        observed.update(app=app, **kwargs)
+        raise RuntimeError("server stopped")
+
+    monkeypatch.setattr(cli_module, "_open_database", lambda _database: engine)
+    monkeypatch.setattr("cli_consumption.api.create_app", lambda _engine, _token: "app")
+    monkeypatch.setattr("uvicorn.run", run)
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 1
+    assert engine.disposed is True
+    assert observed == {
+        "app": "app",
+        "host": "127.0.0.1",
+        "port": 8765,
+        "access_log": False,
+    }
+
+
 def test_postgres_reports_missing_optional_dependencies_without_a_traceback(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -67,6 +67,40 @@ schema range so clients can fail before uploading incompatible data.
 The sync client refuses plain HTTP beyond loopback unless the operator passes the
 explicit `--allow-insecure` override for a trusted network.
 
+`/health` is an unauthenticated liveness endpoint and deliberately performs no
+database work, so a database outage does not cause the orchestrator to restart a
+healthy process. `/ready` is the unauthenticated readiness endpoint. It performs a
+single fixed query of the Alembic revision and expected tables and returns only
+`{"status":"ready"}` or a generic `503` body within a two-second application
+deadline. PostgreSQL readiness uses a dedicated `NullPool` engine rather than changing
+the primary ingestion engine. Its handshake configures a two-second connection
+timeout, 1.5-second statement timeout, and one-second lock timeout before the probe
+query. SQLite applies a 1.5-second busy timeout only to its probe connection.
+
+Only one daemon probe can be active. Concurrent calls return `503` without creating
+more threads or database connections. If a driver, proxy, DNS resolver, or kernel
+network path ignores the connection timeout, that one abandoned probe may outlive the
+HTTP response and retains the only probe slot until it finishes. Shutdown marks the
+runner closed and disposes the dedicated unpooled engine without waiting for the
+daemon. Operators must still set an orchestrator timeout slightly above two seconds;
+the application deadline is a response bound, not a promise that every underlying
+network operation has stopped. Route traffic only while readiness is successful.
+
+Every response has an `X-Request-ID`. An incoming identifier is retained only when it
+matches the bounded identifier grammar; otherwise the application generates one.
+Internal failures and failed readiness probes produce structured application events
+containing only that identifier, a fixed event and code, a constrained method, a
+static route template, and a coarse allowlisted exception type. Exception messages,
+tracebacks, request bodies, headers, tokens, database URLs, paths, and query strings
+are never included. Uvicorn access logging is disabled by `serve` because raw request
+targets are untrusted. An ASGI boundary outside FastAPI consumes the framework's
+re-raised application exception after emitting the generic response, so Uvicorn
+cannot add an exception traceback to its own error log. Operators should configure
+redacted access logs, TLS, connection limits, request rate limits, and
+trusted-forwarded-header handling at the
+reverse proxy or platform ingress. There is intentionally no application-level rate
+limiter competing with that boundary.
+
 ## Storage
 
 SQLite is the zero-configuration default. PostgreSQL is selected by passing a

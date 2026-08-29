@@ -1,14 +1,31 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import sqlite3
+import threading
+import time
 from collections.abc import Iterator
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import httpx
 import pytest
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
 from starlette.types import Message, Scope
 
 from cli_consumption.adapters.codex import CodexAdapter
-from cli_consumption.api import RequestSizeLimitMiddleware, create_app
+from cli_consumption.api import (
+    ReadinessOutcome,
+    ReadinessProbeRunner,
+    RequestSizeLimitMiddleware,
+    SafeExceptionBoundary,
+    create_app,
+)
 from cli_consumption.storage import create_database_engine, read_table
 
 
@@ -30,6 +47,10 @@ async def test_collector_requires_token_and_ingests_snapshot(
         health = (await client.get("/health")).json()
         assert health["snapshot_schema_min"] == 1
         assert health["snapshot_schema_max"] == 1
+        readiness = await client.get("/ready")
+        assert readiness.status_code == 200
+        assert readiness.json() == {"status": "ready"}
+        assert readiness.headers["x-request-id"]
         capabilities = (await client.get("/api/v1/capabilities")).json()
         assert capabilities["max_request_bytes"] == 32 * 1024 * 1024
         assert capabilities["max_snapshot_records"] == 250_000
@@ -111,6 +132,7 @@ async def test_collector_requires_token_and_ingests_snapshot(
         )
         assert response.status_code == 413
         assert response.json() == {"detail": "request_too_large"}
+        assert response.headers["x-request-id"]
     engine.dispose()
 
 
@@ -143,8 +165,62 @@ async def test_request_limit_counts_streamed_chunks() -> None:
 
 
 @pytest.mark.anyio
+async def test_outer_exception_boundary_sends_only_one_response_start(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    scope: Scope = {
+        "type": "http",
+        "method": "POST",
+        "headers": [(b"x-request-id", b"boundary-test")],
+    }
+    fresh_messages: list[Message] = []
+
+    async def fail_before_start(_scope, _receive, _send) -> None:
+        raise RuntimeError("privacy-canary-before-start")
+
+    async def collect_fresh(message: Message) -> None:
+        fresh_messages.append(message)
+
+    with caplog.at_level(logging.ERROR, logger="cli_consumption.api"):
+        await SafeExceptionBoundary(fail_before_start)(scope, receive, collect_fresh)
+
+    starts = [
+        message
+        for message in fresh_messages
+        if message["type"] == "http.response.start"
+    ]
+    assert len(starts) == 1
+    assert starts[0]["status"] == 500
+    assert (b"x-request-id", b"boundary-test") in starts[0]["headers"]
+    assert b"internal_server_error" in fresh_messages[-1]["body"]
+    assert "privacy-canary-before-start" not in "\n".join(caplog.messages)
+
+    started_messages: list[Message] = []
+
+    async def fail_after_start(_scope, _receive, send) -> None:
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        raise RuntimeError("privacy-canary-after-start")
+
+    async def collect_started(message: Message) -> None:
+        started_messages.append(message)
+
+    await SafeExceptionBoundary(fail_after_start)(scope, receive, collect_started)
+
+    starts = [
+        message
+        for message in started_messages
+        if message["type"] == "http.response.start"
+    ]
+    assert len(starts) == 1
+    assert starts[0]["status"] == 204
+
+
+@pytest.mark.anyio
 async def test_internal_errors_do_not_leak_details(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     engine = create_database_engine(tmp_path / "central.sqlite")
 
@@ -152,13 +228,300 @@ async def test_internal_errors_do_not_leak_details(
         raise RuntimeError("privacy canary SQL detail")
 
     monkeypatch.setattr("cli_consumption.api.ingest_snapshot", fail)
-    transport = httpx.ASGITransport(app=create_app(engine), raise_app_exceptions=False)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://collector.test"
-    ) as client:
-        response = await client.post("/api/v1/snapshots", json={"provider": "codex"})
+    with caplog.at_level(logging.ERROR, logger="cli_consumption.api"):
+        transport = httpx.ASGITransport(
+            app=create_app(engine), raise_app_exceptions=False
+        )
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://collector.test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/snapshots?secret=privacy-canary-query",
+                json={"provider": "privacy-canary-body"},
+                headers={
+                    "X-Request-ID": "safe-request-id",
+                    "Authorization": "Bearer privacy-canary-token",
+                },
+            )
 
     assert response.status_code == 500
     assert response.json() == {"detail": "internal_server_error"}
-    assert "privacy canary" not in response.text
+    assert response.headers["x-request-id"] == "safe-request-id"
+    log = json.loads(caplog.messages[-1])
+    assert log == {
+        "code": "internal_server_error",
+        "event": "request_failed",
+        "exception_type": "RuntimeError",
+        "method": "POST",
+        "request_id": "safe-request-id",
+        "route": "/api/v1/snapshots",
+    }
+    combined = response.text + "\n".join(caplog.messages)
+    assert "privacy-canary-query" not in combined
+    assert "privacy-canary-body" not in combined
+    assert "privacy-canary-token" not in combined
+    assert "privacy canary SQL detail" not in combined
     engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_readiness_is_generic_when_database_or_schema_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    engine = create_database_engine(tmp_path / "central.sqlite")
+    transport = httpx.ASGITransport(app=create_app(engine), raise_app_exceptions=False)
+    with caplog.at_level(logging.WARNING, logger="cli_consumption.api"):
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://collector.test"
+        ) as client:
+            with engine.begin() as connection:
+                connection.execute(text("DROP TABLE conversations"))
+            schema_response = await client.get(
+                "/ready?detail=privacy-canary-schema",
+                headers={"X-Request-ID": "schema-check"},
+            )
+
+            def unavailable() -> None:
+                raise ConnectionError("privacy-canary-database-url")
+
+            monkeypatch.setattr(engine, "connect", unavailable)
+            down_response = await client.get(
+                "/ready", headers={"X-Request-ID": "database-check"}
+            )
+            live_response = await client.get("/health")
+
+    assert schema_response.status_code == 503
+    assert schema_response.json() == {"status": "not_ready"}
+    assert schema_response.headers["x-request-id"] == "schema-check"
+    assert down_response.status_code == 503
+    assert down_response.json() == {"status": "not_ready"}
+    assert down_response.headers["x-request-id"] == "database-check"
+    assert live_response.status_code == 200
+    assert live_response.json()["status"] == "ok"
+    logs = [json.loads(message) for message in caplog.messages]
+    assert [log["exception_type"] for log in logs] == [
+        "Exception",
+        "ConnectionError",
+    ]
+    assert {log["route"] for log in logs} == {"/ready"}
+    assert "privacy-canary" not in "\n".join(caplog.messages)
+    engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_request_ids_are_bounded_and_readiness_is_concurrent(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "central.sqlite")
+    application = create_app(engine)
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://collector.test"
+    ) as client:
+        responses = await asyncio.gather(
+            *(client.get("/ready") for _ in range(20)),
+            client.get("/health", headers={"X-Request-ID": "valid.id-_1"}),
+            client.get("/health", headers={"X-Request-ID": "x" * 65}),
+            client.get("/health", headers={"X-Request-ID": "secret/value"}),
+        )
+
+    assert {response.status_code for response in responses[:20]} <= {200, 503}
+    assert any(response.status_code == 200 for response in responses[:20])
+    assert application.state.readiness.max_active_probes == 1
+    generated = [response.headers["x-request-id"] for response in responses[:20]]
+    assert len(set(generated)) == 20
+    assert responses[20].headers["x-request-id"] == "valid.id-_1"
+    assert responses[21].headers["x-request-id"] != "x" * 65
+    assert responses[22].headers["x-request-id"] != "secret/value"
+    assert all(1 <= len(value) <= 64 for value in generated)
+    engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_blocked_concurrent_readiness_probes_finish_within_deadline(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "blocked.sqlite"
+    engine = create_database_engine(database)
+    application = create_app(engine)
+    transport = httpx.ASGITransport(app=application)
+    blocker = sqlite3.connect(database, isolation_level=None)
+    blocker.execute("BEGIN EXCLUSIVE")
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://collector.test"
+        ) as client:
+            live_started = time.monotonic()
+            live_response = await client.get("/health")
+            live_elapsed = time.monotonic() - live_started
+            started = time.monotonic()
+            responses = await asyncio.gather(*(client.get("/ready") for _ in range(20)))
+            elapsed = time.monotonic() - started
+    finally:
+        blocker.execute("ROLLBACK")
+        blocker.close()
+        engine.dispose()
+
+    assert live_response.status_code == 200
+    assert live_elapsed < 0.5
+    assert {response.status_code for response in responses} == {503}
+    assert elapsed < 2.5
+    assert application.state.readiness.max_active_probes == 1
+
+
+@pytest.mark.anyio
+async def test_postgresql_readiness_uses_isolated_startup_timeouts_and_one_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        def scalar_one(self) -> int:
+            return 1
+
+    class Connection:
+        dialect = SimpleNamespace(name="postgresql")
+
+        def __init__(self) -> None:
+            self.probes = 0
+
+        def execute(self, _statement, _parameters) -> Result:
+            self.probes += 1
+            return Result()
+
+    connection = Connection()
+
+    class ProbeEngine:
+        disposed = False
+
+        def connect(self):
+            return nullcontext(connection)
+
+        def dispose(self) -> None:
+            self.disposed = True
+
+    class MainEngine:
+        dialect = SimpleNamespace(name="postgresql")
+        url = object()
+
+    observed: dict[str, object] = {}
+
+    probe_engine = ProbeEngine()
+
+    def create_probe_engine(url, **kwargs):
+        observed.update(url=url, **kwargs)
+        return cast(Engine, probe_engine)
+
+    monkeypatch.setattr("cli_consumption.api.initialize_database", lambda _engine: None)
+    monkeypatch.setattr(
+        "cli_consumption.api.create_postgresql_readiness_engine",
+        create_probe_engine,
+    )
+    engine = cast(Engine, MainEngine())
+    application = create_app(engine)
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://collector.test"
+    ) as client:
+        response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert observed == {
+        "url": MainEngine.url,
+        "connect_timeout_seconds": 2,
+        "statement_timeout_ms": 1_500,
+        "lock_timeout_ms": 1_000,
+    }
+    assert connection.probes == 1
+    application.state.readiness.close()
+    assert probe_engine.disposed is True
+
+
+@pytest.mark.anyio
+async def test_application_deadline_allows_only_one_abandoned_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = create_database_engine(tmp_path / "deadline.sqlite")
+    app = create_app(engine)
+    started = threading.Event()
+    release = threading.Event()
+    counter_lock = threading.Lock()
+    active = 0
+    maximum = 0
+
+    def blocked_probe(_engine: Engine) -> ReadinessOutcome:
+        nonlocal active, maximum
+        with counter_lock:
+            active += 1
+            maximum = max(maximum, active)
+        started.set()
+        release.wait(timeout=5)
+        with counter_lock:
+            active -= 1
+        return ReadinessOutcome(True)
+
+    monkeypatch.setattr("cli_consumption.api._probe_database_readiness", blocked_probe)
+    monkeypatch.setattr("cli_consumption.api.READINESS_RESPONSE_TIMEOUT_SECONDS", 0.1)
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://collector.test"
+        ) as client:
+            began = time.monotonic()
+            first = asyncio.create_task(client.get("/ready"))
+            assert await asyncio.to_thread(started.wait, 1)
+            others = await asyncio.gather(*(client.get("/ready") for _ in range(19)))
+            first_response = await first
+            elapsed = time.monotonic() - began
+
+        close_started = time.monotonic()
+        app.state.readiness.close()
+        close_elapsed = time.monotonic() - close_started
+    finally:
+        release.set()
+        await asyncio.sleep(0.05)
+        engine.dispose()
+
+    responses = [first_response, *others]
+    assert {response.status_code for response in responses} == {503}
+    assert elapsed < 0.5
+    assert close_elapsed < 0.1
+    assert maximum == 1
+    assert app.state.readiness.max_active_probes == 1
+
+
+@pytest.mark.anyio
+async def test_owned_readiness_engine_shutdown_does_not_wait_for_abandoned_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    started = threading.Event()
+
+    class OwnedEngine:
+        disposed = False
+
+        def dispose(self) -> None:
+            self.disposed = True
+
+    owned_engine = OwnedEngine()
+
+    def blocked_probe(_engine: Engine) -> ReadinessOutcome:
+        started.set()
+        release.wait(timeout=5)
+        return ReadinessOutcome(True)
+
+    monkeypatch.setattr("cli_consumption.api._probe_database_readiness", blocked_probe)
+    monkeypatch.setattr("cli_consumption.api.READINESS_RESPONSE_TIMEOUT_SECONDS", 0.1)
+    runner = ReadinessProbeRunner(cast(Engine, owned_engine), owns_engine=True)
+    try:
+        task = asyncio.create_task(runner.run())
+        assert await asyncio.to_thread(started.wait, 1)
+        outcome = await task
+        began = time.monotonic()
+        runner.close()
+        elapsed = time.monotonic() - began
+    finally:
+        release.set()
+        await asyncio.sleep(0.05)
+
+    assert outcome == ReadinessOutcome(False, "TimeoutError")
+    assert elapsed < 0.1
+    assert owned_engine.disposed is True

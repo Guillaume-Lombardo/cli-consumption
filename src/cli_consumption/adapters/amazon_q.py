@@ -15,6 +15,7 @@ from cli_consumption.adapters._shared import (
     project,
     timestamp,
 )
+from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
 
@@ -71,7 +72,7 @@ def _read_database(path: Path) -> tuple[list[tuple[str, dict[str, Any]]], int]:
             for row in connection.execute('PRAGMA table_info("conversations")')
         }
         if not {"key", "value"} <= columns:
-            raise ValueError(
+            raise UnsupportedProviderFormat(
                 f"Unsupported Amazon Q Developer CLI database schema: {path}"
             )
         for row in connection.execute(

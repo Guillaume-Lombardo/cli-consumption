@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import sqlite3
 from pathlib import Path
@@ -7,8 +8,15 @@ from pathlib import Path
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
+import cli_consumption.cli as cli_module
+from cli_consumption.adapters.registry import AdapterSpec
 from cli_consumption.cli import app
-from cli_consumption.storage import create_database_engine, read_table
+from cli_consumption.models import Snapshot
+from cli_consumption.storage import (
+    create_database_engine,
+    initialize_database,
+    read_table,
+)
 
 runner = CliRunner()
 
@@ -45,6 +53,49 @@ def test_provider_status_is_explicit() -> None:
     assert "qwen     supported" in result.stdout
 
 
+def test_provider_json_is_deterministic_and_does_not_leak_diagnostic_errors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    canary = "PROMPT_SECRET_CANARY"
+    marker = tmp_path / "marker"
+    marker.write_text(canary, encoding="utf-8")
+
+    class LeakyAdapter:
+        name = "synthetic"
+
+        def collect(
+            self,
+            sources: list[tuple[str, Path]],
+            project_mappings: list[tuple[str, str]],
+        ) -> Snapshot:
+            content = (sources[0][1] / "marker").read_text(encoding="utf-8")
+            raise ValueError(f"{sources[0][1]}: {content}")
+
+    spec = AdapterSpec("synthetic", LeakyAdapter, ".synthetic", ("marker",))
+    monkeypatch.setattr(cli_module, "ADAPTER_SPECS", (spec,))
+    monkeypatch.setattr(cli_module, "default_source_path", lambda _: tmp_path)
+
+    first = runner.invoke(app, ["providers", "--json"])
+    second = runner.invoke(app, ["providers", "--json"])
+
+    assert first.exit_code == 0, first.output
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "schema_version": 1,
+        "providers": [
+            {
+                "aliases": [],
+                "name": "synthetic",
+                "status": "degraded",
+                "support": "supported",
+            }
+        ],
+    }
+    assert canary not in first.stdout
+    assert str(tmp_path) not in first.stdout
+    assert first.stderr == ""
+
+
 def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
@@ -56,6 +107,103 @@ def test_version_and_unsupported_provider_are_explicit(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "not implemented yet" in result.output
+
+
+def test_sync_reports_missing_optional_dependencies_without_a_traceback(
+    monkeypatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def import_without_sync(name, *args, **kwargs):
+        if name == "cli_consumption.sync":
+            raise ModuleNotFoundError("No module named 'httpx'", name="httpx")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_sync)
+    result = runner.invoke(app, ["sync", "--endpoint", "https://collector.test"])
+
+    assert result.exit_code == 2
+    assert "cli-consumption[sync]" in normalized_cli_output(result.output)
+    assert "Traceback" not in result.output
+
+
+def test_serve_reports_missing_optional_dependencies_without_a_traceback(
+    monkeypatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def import_without_server(name, *args, **kwargs):
+        if name == "uvicorn":
+            raise ModuleNotFoundError("No module named 'uvicorn'", name="uvicorn")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_server)
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 2
+    assert "cli-consumption[server]" in normalized_cli_output(result.output)
+    assert "Traceback" not in result.output
+
+
+def test_postgres_reports_missing_optional_dependencies_without_a_traceback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    real_import = builtins.__import__
+
+    def import_without_postgres(name, *args, **kwargs):
+        if name == "psycopg":
+            raise ModuleNotFoundError("No module named 'psycopg'", name="psycopg")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_postgres)
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "--database",
+            "postgresql+psycopg://usage@db/cli_consumption",
+            "--output",
+            str(tmp_path / "reports"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "cli-consumption[postgres]" in normalized_cli_output(result.output)
+    assert "Traceback" not in result.output
+
+
+def test_retention_is_a_preview_unless_apply_is_explicit(tmp_path: Path) -> None:
+    database = tmp_path / "retention.sqlite"
+    engine = create_database_engine(database)
+    initialize_database(engine)
+    engine.dispose()
+
+    preview = runner.invoke(
+        app,
+        [
+            "retention",
+            "--keep-days",
+            "30",
+            "--database",
+            str(database),
+        ],
+    )
+    assert preview.exit_code == 0, preview.output
+    assert "Preview retention" in preview.stdout
+
+    applied = runner.invoke(
+        app,
+        [
+            "retention",
+            "--keep-days",
+            "30",
+            "--database",
+            str(database),
+            "--apply",
+        ],
+    )
+    assert applied.exit_code == 0, applied.output
+    assert "Applied retention" in applied.stdout
 
 
 def test_collects_github_copilot_cli(tmp_path: Path) -> None:
@@ -881,3 +1029,55 @@ def test_collect_and_export(tmp_path: Path, rollout_factory) -> None:
     )
     assert result.exit_code == 2
     assert "enable --dashboard or --csv" in normalized_cli_output(result.output)
+
+
+def test_export_accepts_bounded_dates_and_rejects_naive_timestamps(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    database = tmp_path / "usage.sqlite"
+    collected = runner.invoke(
+        app,
+        [
+            "collect",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(database),
+        ],
+    )
+    assert collected.exit_code == 0, collected.output
+
+    reports = tmp_path / "bounded"
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "--database",
+            str(database),
+            "--output",
+            str(reports),
+            "--since",
+            "2026-08-25",
+            "--until",
+            "2026-08-25",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    html = (reports / "dashboard.html").read_text(encoding="utf-8")
+    assert '"since":"2026-08-25T00:00:00+00:00"' in html
+    assert '"until":"2026-08-26T00:00:00+00:00"' in html
+
+    invalid = runner.invoke(
+        app,
+        [
+            "export",
+            "--database",
+            str(database),
+            "--since",
+            "2026-08-25T10:00:00",
+        ],
+    )
+    assert invalid.exit_code == 2
+    assert "invalid export window" in normalized_cli_output(invalid.output)

@@ -10,16 +10,19 @@
 - Metadata-only central collection API
 - Opt-in CSV exports, a self-contained dashboard, and a share-safe dashboard profile
 - Context-pressure, work-item reliability, configuration-cohort, and delegation views
+- Strict snapshot schema v1 with bounded API ingestion and capability negotiation
+- Versioned SQLite/PostgreSQL migrations, safe legacy adoption, and retention previews
+- Central provider registry with privacy-minimized compatibility diagnostics
+- Deterministic, streamed, time-bounded exports with spreadsheet-safe CSV cells
 
 ## Next provider increments
 
 1. Extend existing adapters only where local metadata has reliable, testable semantics.
-2. Add provider-format health checks and compatibility reporting.
+2. Deepen provider-format diagnostics without exposing provider contents or paths.
 3. Expand cross-provider comparisons without treating unavailable dimensions as zero.
 
 ## Later operational work
 
-- Versioned database migrations and retention commands
 - Signed/compressed offline snapshot files
 - Server deployment examples and read-only reporting API
 - Cost estimates driven by explicit, versioned pricing inputs

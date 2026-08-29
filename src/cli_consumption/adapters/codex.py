@@ -43,6 +43,39 @@ WORK_ITEM_KINDS = {
     "SubAgentActivity": "subagent-activity",
     "UserMessage": "user-message",
 }
+SUBAGENT_STATUS_ALIASES = {
+    "aborted": "aborted",
+    "active": "in-progress",
+    "canceled": "aborted",
+    "cancelled": "aborted",
+    "complete": "completed",
+    "completed": "completed",
+    "done": "completed",
+    "error": "failed",
+    "errored": "failed",
+    "failed": "failed",
+    "failure": "failed",
+    "in-progress": "in-progress",
+    "interrupted": "aborted",
+    "pending": "in-progress",
+    "running": "in-progress",
+    "succeeded": "completed",
+    "success": "completed",
+    "unknown": "unknown",
+}
+AGENT_ROLE_ALIASES = {
+    "explorer": "research",
+    "implementer": "worker",
+    "planner": "planning",
+    "planning": "planning",
+    "research": "research",
+    "researcher": "research",
+    "review": "review",
+    "reviewer": "review",
+    "test": "test",
+    "tester": "test",
+    "worker": "worker",
+}
 SAFE_DIMENSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 MAX_BIGINT = 9_223_372_036_854_775_807
 
@@ -129,8 +162,8 @@ class CodexAdapter:
             rows = connection.execute(
                 """
                 SELECT e.parent_thread_id, e.child_thread_id, e.status,
-                       t.created_at_ms, t.updated_at_ms, t.agent_nickname,
-                       t.agent_role, t.tokens_used
+                       t.created_at_ms, t.updated_at_ms, t.agent_role,
+                       t.tokens_used
                 FROM thread_spawn_edges e
                 LEFT JOIN threads t ON t.id = e.child_thread_id
                 ORDER BY t.created_at_ms, e.child_thread_id
@@ -147,11 +180,10 @@ class CodexAdapter:
                 "source_machine": source_machine,
                 "parent_thread_id": str(row["parent_thread_id"]),
                 "child_thread_id": str(row["child_thread_id"]),
-                "status": str(row["status"] or "unknown"),
+                "status": _subagent_status(row["status"]),
                 "created_at_ms": _integer_or_none(row["created_at_ms"]),
                 "updated_at_ms": _integer_or_none(row["updated_at_ms"]),
-                "agent_nickname": str(row["agent_nickname"] or ""),
-                "agent_role": str(row["agent_role"] or ""),
+                "agent_role": _agent_role(row["agent_role"]),
                 "tokens_used": _integer_or_none(row["tokens_used"]),
             }
             for row in rows
@@ -488,7 +520,7 @@ class CodexAdapter:
                     if started_at is not None and ended_at is not None
                     else None
                 ),
-                "source": str(metadata.get("source") or ""),
+                "source": "local-jsonl",
                 "models": sorted(models),
                 "iterations": len(turns),
                 "model_calls": call_sequence,
@@ -526,6 +558,22 @@ def _safe_dimension(value: object, maximum: int) -> str | None:
     if not normalized or len(normalized) > maximum:
         return None
     return normalized if SAFE_DIMENSION.fullmatch(normalized) else None
+
+
+def _subagent_status(value: object) -> str:
+    if not isinstance(value, str):
+        return "unknown"
+    normalized = value.strip().casefold().replace("_", "-")
+    return SUBAGENT_STATUS_ALIASES.get(normalized, "unknown")
+
+
+def _agent_role(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "unspecified"
+    normalized = value.strip().casefold().replace("_", "-")
+    if normalized in {"unknown", "unspecified"}:
+        return "unspecified"
+    return AGENT_ROLE_ALIASES.get(normalized, "other")
 
 
 def _merge_present(

@@ -22,16 +22,24 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
   OpenHands CLI, Pi, Plandex, and Qwen Code expose the reliable subset available in
   each local store. The exact differences are maintained in
   [Provider support](provider-support.md).
-- `models`: define the transport boundary shared by offline and API ingestion.
-- `storage`: owns the normalized schema, idempotent replacement rules, SQLite, and
+- `models`: define the strict, versioned transport boundary shared by offline and API
+  ingestion.
+- `storage`, `schema`, and `migrations`: own the normalized schema, idempotent
+  replacement rules, automatic Alembic upgrades, legacy adoption, SQLite, and
   PostgreSQL engine creation.
 - `api` and `sync`: offer an optional push workflow for recurring multi-machine use.
-- `dashboard` and `exporting`: provide an offline HTML view by default and portable CSV
-  tables when explicitly requested.
+- `dashboard`, `reporting`, and `exporting`: select complete conversation graphs,
+  provide an offline HTML view by default, and stream deterministic portable CSV tables
+  when explicitly requested.
+- `adapters.registry`: is the single source for canonical names, aliases, adapter
+  classes, default homes, detection markers, and support state.
 - `cli`: exposes the same capabilities through one executable.
 
 When Codex exposes its local thread graph, the adapter also records metadata-only
-subagent relationships. Agent filesystem paths are intentionally discarded.
+subagent relationships. Agent filesystem paths and nicknames are intentionally
+discarded. Roles and statuses are reduced to fixed provider-neutral vocabularies, and
+the stored conversation `source` is a normalized format label rather than an arbitrary
+provider value.
 
 ## Multi-machine alternatives
 
@@ -51,27 +59,44 @@ machine, so raw provider files do not cross the network. This works well for rec
 collection and several workstations.
 
 The API is intentionally small. A bearer token protects ingestion; a production
-deployment still needs TLS, token rotation, backups, request-size limits, monitoring,
-and a reverse proxy or platform ingress. Read access is not exposed in the initial API.
+deployment still needs TLS, token rotation, backups, monitoring, and a reverse proxy
+or platform ingress. Read access is not exposed. The collector limits bodies to 32 MiB
+including chunked requests, accepts snapshot schema v1, and caps a snapshot at 250,000
+normalized records. `/api/v1/capabilities` publishes these limits and the supported
+schema range so clients can fail before uploading incompatible data.
 
 ## Storage
 
 SQLite is the zero-configuration default. PostgreSQL is selected by passing a
-`postgresql+psycopg://` URL. SQLAlchemy keeps the first schema portable. Schema
-migrations will be introduced before a released version needs an in-place incompatible
-change.
+`postgresql+psycopg://` URL. Every database open upgrades through packaged Alembic
+migrations. An unversioned database is adopted only when its tables exactly match a
+published schema; an unknown, newer, or locally modified schema is refused. Migration
+revisions support SQLite and PostgreSQL and define a bounded downgrade, but application
+rollback can still require restoring a pre-upgrade backup. Operators must upgrade the
+server first and avoid mixed-version access during migration. The detailed policy is
+recorded in [ADR 0001](decisions/0001-versioned-schema-migrations.md).
 
 Conversation records use a provider-qualified stable ID. Repeated ingestion skips an
 identical or less complete record. A more complete copy atomically replaces the
 conversation and its child records.
 
 Workflow analytics use additive child tables: `work_items`, `context_samples`,
-`turn_settings`, and `compaction_events`. Existing SQLite and PostgreSQL databases gain
-these tables through SQLAlchemy `create_all`; no existing table is altered. Older
-snapshots omit the new lists and remain valid on a newer collector. A newer client sent
-to an older strict API is rejected before ingestion, so central deployments must
-upgrade the server first. Downgrading a writer after rich metadata has been ingested is
-not supported because old writers do not know how to replace the new child rows.
+`turn_settings`, and `compaction_events`. Snapshot schema v1 validates every record,
+rejects unknown fields, enforces normalized labels and relationships, and exposes only
+generic validation errors. A newer client sent to an older strict API is rejected
+before ingestion, so central deployments must upgrade the server first.
+
+Retention is an explicit two-step operation: `retention --keep-days N` reports what
+would be deleted, while `--apply` deletes old conversations (with cascading children),
+subagent relationships, and ingestion runs in one transaction.
+
+Time-bounded reporting selects conversations whose recorded activity overlaps the
+half-open `[since, until)` window. Once selected, the complete conversation and all its
+children are included; this is graph consistency, not timestamp-level redaction.
+Related subagent edges are included when either endpoint belongs to a selected
+conversation, while ingestion runs are filtered by their own timestamp. All tables are
+ordered by primary key. CSV output consumes streamed batches rather than materializing
+each table, and neutralizes text that spreadsheet software could execute as a formula.
 
 ## Adapter qualification
 

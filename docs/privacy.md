@@ -11,7 +11,8 @@ CLI Consumption measures activity; it does not archive conversations.
 - Whitelisted work-item categories, normalized technical status, and timing
 - Model input-to-context-window samples and bounded provider configuration labels
 - Timestamped compaction counts without replacement content or window identifiers
-- Metadata-only subagent relationships, roles, status, timing, and token counters
+- Metadata-only subagent relationships, normalized roles and status, timing, and token
+  counters; provider nicknames are not retained
 - Content hashes and event counts used only for deduplication
 
 ## Prohibited data
@@ -24,6 +25,7 @@ CLI Consumption measures activity; it does not archive conversations.
 - Commands, exit output, file-change details, MCP arguments/results, and item content
 - Raw rate-limit, credit, plan, or spend-control payloads
 - Original working directories and rollout paths in shared exports
+- Provider-supplied subagent nicknames and arbitrary role, status, or source labels
 
 Adapters may inspect a working directory transiently to apply an explicit project
 mapping, but persistence records only the resulting project label and mapping source.
@@ -36,8 +38,12 @@ objects, exit output, commands, paths, patches, messages, and item-specific payl
 discarded. Context samples persist only the latest model-call input-token count and the
 reported context-window size; cumulative payloads and rate-limit metadata are ignored.
 Turn configuration labels accept only bounded identifier-like values. Snapshot
-validation rejects unknown work categories, arbitrary statuses, malformed timestamps,
-out-of-range counters, and unconstrained analytics labels before opening a transaction.
+validation rejects unknown fields, unknown work categories, arbitrary roles or
+statuses, malformed timestamps, inconsistent token compositions, out-of-range
+counters, unconstrained analytics labels, broken relationships, snapshots above
+250,000 records, and API requests above 32 MiB before opening a transaction. Errors
+use generic codes and do not echo rejected values. Snapshot schema v1 is advertised by
+the collector capabilities endpoint so an incompatible client can stop before upload.
 
 ## Threat model
 
@@ -68,3 +74,22 @@ pseudonymized per-turn rows remain embedded so local filtering works. Provider n
 daily activity, durations, counts, token counters, configuration labels, statuses, and
 aggregate work patterns remain disclosed. Share-safe is a minimization profile, not
 anonymization.
+
+Time filters select complete conversations that overlap the requested window. They do
+not redact child records whose individual timestamps fall outside it; related subagent
+edges can also reveal activity around the boundary. Ingestion-run rows are selected by
+their own timestamp. CSV output neutralizes leading spreadsheet formula and control
+prefixes with an apostrophe, but still contains detailed normalized operational data.
+
+Provider diagnostics inspect local stores transiently and emit only provider name,
+documented aliases, support state, and one coarse compatibility status. They do not
+persist snapshots or reveal paths, conversation identifiers, record counts, malformed
+values, or exception text.
+
+Retention removes normalized rows, not provider source files, existing exports,
+database backups, database engine logs, reverse-proxy logs, or snapshots already sent
+elsewhere. A dry run reports aggregate deletion counts; `--apply` is required to
+delete. Operators remain responsible for retention and secure disposal of those
+residual copies. Project names, machine labels, model/tool names, stable IDs,
+timestamps, and activity aggregates remain sensitive wherever normalized databases or
+detailed CSV files survive.

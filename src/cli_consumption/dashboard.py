@@ -8,7 +8,8 @@ from typing import Any
 
 from sqlalchemy.engine import Engine
 
-from cli_consumption.storage import read_table
+from cli_consumption.reporting import ExportWindow, iter_report_rows
+from cli_consumption.storage import initialize_database
 
 TOKEN_FIELDS = (
     "input_tokens",
@@ -24,10 +25,14 @@ TOKEN_FIELDS = (
 
 
 def generate_dashboard(
-    engine: Engine, output: Path, *, share_safe: bool = False
+    engine: Engine,
+    output: Path,
+    *,
+    share_safe: bool = False,
+    window: ExportWindow | None = None,
 ) -> None:
     encoded = json.dumps(
-        _dashboard_payload(engine, share_safe=share_safe),
+        _dashboard_payload(engine, share_safe=share_safe, window=window),
         separators=(",", ":"),
         ensure_ascii=True,
     )
@@ -38,18 +43,41 @@ def generate_dashboard(
     output.write_text(_document(encoded), encoding="utf-8")
 
 
-def _dashboard_payload(engine: Engine, *, share_safe: bool = False) -> dict[str, Any]:
+def _dashboard_payload(
+    engine: Engine,
+    *,
+    share_safe: bool = False,
+    window: ExportWindow | None = None,
+) -> dict[str, Any]:
     """Return only metadata needed by the dashboard, with local relationship keys."""
-    conversations = read_table(engine, "conversations")
-    turns = read_table(engine, "turns")
-    model_calls = read_table(engine, "model_calls")
-    tool_calls = read_table(engine, "tool_calls")
-    work_items = read_table(engine, "work_items")
-    context_samples = read_table(engine, "context_samples")
-    turn_settings = read_table(engine, "turn_settings")
-    compaction_events = read_table(engine, "compaction_events")
-    subagents = read_table(engine, "subagents")
-    ingestion_runs = read_table(engine, "ingestion_runs")
+    initialize_database(engine)
+    active_window = window or ExportWindow()
+    with engine.connect() as connection:
+        rows = {
+            table_name: list(iter_report_rows(connection, table_name, active_window))
+            for table_name in (
+                "conversations",
+                "turns",
+                "model_calls",
+                "tool_calls",
+                "work_items",
+                "context_samples",
+                "turn_settings",
+                "compaction_events",
+                "subagents",
+                "ingestion_runs",
+            )
+        }
+    conversations = rows["conversations"]
+    turns = rows["turns"]
+    model_calls = rows["model_calls"]
+    tool_calls = rows["tool_calls"]
+    work_items = rows["work_items"]
+    context_samples = rows["context_samples"]
+    turn_settings = rows["turn_settings"]
+    compaction_events = rows["compaction_events"]
+    subagents = rows["subagents"]
+    ingestion_runs = rows["ingestion_runs"]
 
     conversation_keys = {
         str(row["id"]): index for index, row in enumerate(conversations)
@@ -101,8 +129,12 @@ def _dashboard_payload(engine: Engine, *, share_safe: bool = False) -> dict[str,
     def tokens(row: dict[str, Any]) -> dict[str, int]:
         return {field: int(row[field]) for field in TOKEN_FIELDS}
 
+    metadata: dict[str, Any] = {"shareSafe": share_safe}
+    if active_window.bounded:
+        metadata["exportWindow"] = active_window.metadata(day_precision=share_safe)
+
     return {
-        "meta": {"shareSafe": share_safe},
+        "meta": metadata,
         "conversations": [
             {
                 "key": index,
@@ -403,7 +435,7 @@ let currentSlice=null,tableSort={{key:'startedAt',direction:-1}};
 function options(id,values){{const e=$(id),current=e.value;e.innerHTML='<option value="">All</option>'+[...new Set(values.filter(Boolean))].sort().map(v=>`<option value="${{escapeHtml(v)}}">${{escapeHtml(v)}}</option>`).join('');e.value=current;}}
 function escapeHtml(v){{return String(v).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));}}
 function percentile(values,p){{const xs=values.map(Number).filter(Number.isFinite).sort((a,b)=>a-b);if(!xs.length)return null;const i=(xs.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);return xs[lo]+(xs[hi]-xs[lo])*(i-lo);}}
-function rangeFor(period){{const dates=[...data.conversations.map(c=>c.startedAt),...data.modelCalls.map(c=>c.timestamp)].filter(validDate).map(Date.parse);if(!dates.length)return null;const max=new Date(Math.max(...dates));max.setUTCHours(23,59,59,999);let start=null,end=max;if(period==='custom'){{const f=$('from').value,t=$('to').value;start=f?new Date(`${{f}}T00:00:00Z`):null;end=t?new Date(`${{t}}T23:59:59.999Z`):max;}}else if(period!=='all'){{start=new Date(max);start.setUTCDate(start.getUTCDate()-Number(period)+1);start.setUTCHours(0,0,0,0);}}if(!start)return{{start:null,end,previous:null}};const width=end-start;return{{start,end,previous:{{start:new Date(start-width-1),end:new Date(start-1)}}}};}}
+function rangeFor(period){{const dates=[...data.conversations.map(c=>c.startedAt),...data.modelCalls.map(c=>c.timestamp)].filter(validDate).map(Date.parse);if(!dates.length)return null;const exportStart=validDate(data.meta.exportWindow?.since)?new Date(data.meta.exportWindow.since):null,exclusiveEnd=validDate(data.meta.exportWindow?.until)?new Date(data.meta.exportWindow.until):null,exportEnd=exclusiveEnd?new Date(exclusiveEnd-1):null;let max=new Date(Math.max(...dates));max.setUTCHours(23,59,59,999);if(exportEnd&&exportEnd<max)max=exportEnd;let start=period==='all'?exportStart:null,end=max;if(period==='custom'){{const f=$('from').value,t=$('to').value;start=f?new Date(`${{f}}T00:00:00Z`):exportStart;end=t?new Date(`${{t}}T23:59:59.999Z`):max;}}else if(period!=='all'){{start=new Date(max);start.setUTCDate(start.getUTCDate()-Number(period)+1);start.setUTCHours(0,0,0,0);}}if(exportStart&&(!start||start<exportStart))start=exportStart;if(exportEnd&&end>exportEnd)end=exportEnd;if(!start)return{{start:null,end,previous:null}};const width=end-start,previous={{start:new Date(start-width-1),end:new Date(start-1)}};return{{start,end,previous:exportStart&&previous.start<exportStart?null:previous}};}}
 function inRange(value,range){{if(!range||!validDate(value))return !range||!range.start;const time=Date.parse(value);return(!range.start||time>=range.start)&&time<=range.end;}}
 function selected(){{return{{provider:$('provider').value,machine:$('machine').value,project:$('project').value,model:$('model').value,range:rangeFor($('period').value)}};}}
 function baseConversations(f){{return data.conversations.filter(c=>(!f.provider||c.provider===f.provider)&&(!f.machine||c.machine===f.machine)&&(!f.project||c.project===f.project)&&(!f.model||c.models.includes(f.model)));}}
@@ -435,7 +467,7 @@ function showConversation(key){{if(!currentSlice)return;const c=convByKey[key],t
 function formatDuration(ms){{if(ms===null||ms===undefined||!Number.isFinite(Number(ms)))return'—';const seconds=Number(ms)/1000;if(seconds<60)return`${{seconds.toFixed(1)}}s`;if(seconds<3600)return`${{(seconds/60).toFixed(1)}}m`;return`${{(seconds/3600).toFixed(1)}}h`;}}
 function render(){{const f=selected(),s=slice(f),m=metrics(s),previous=f.range?.previous?metrics(slice(f,f.range.previous)):null,closed=s.turns.filter(t=>t.status==='completed'||t.status==='aborted'),delegation=delegationStats(s),peak=maxConcurrent(closed),compacted=new Set(s.compactions.map(c=>c.conversationKey)).size,delegated=new Set(s.subagents.map(x=>x.conversationKey)).size,subTokens=total(s.subagents,'tokens'),activeLabel=data.meta.shareSafe?'Summed turn time':'Active time',activeHelp=data.meta.shareSafe?'Sum of provider-reported durations for closed turns; exact overlap cannot be recovered from day-rounded timestamps.':'Union of provider-reported closed-turn intervals per machine, so overlapping turns are counted once.';currentSlice=s;$('cards').innerHTML=card('Closed turns',fmt(m.completed+m.aborted),m.completed+m.aborted,previous?previous.completed+previous.aborted:null,'Turns whose provider status is completed or aborted in the selected range.')+card('Active days',fmt(m.activeDays),m.activeDays,previous?.activeDays,'Distinct UTC calendar days containing at least one turn in the selected range.','higher')+card('Total tokens',short(m.tokens),m.tokens,previous?.tokens,'Provider-reported total tokens from model usage events attributed to closed turns; this is not billing data.')+card('Median tokens / turn',short(m.tokensPerTurn),m.tokensPerTurn,previous?.tokensPerTurn,'Median provider-reported total-token count across completed and aborted turns.')+card('Median TTFT',formatDuration(m.ttftP50),m.ttftP50,previous?.ttftP50,'Median provider-reported time to first token across closed turns with TTFT data.','lower')+card('Median duration',formatDuration(m.durationP50),m.durationP50,previous?.durationP50,'Median provider-reported elapsed duration across completed and aborted turns with duration data.','lower')+card('Technical throughput',m.throughput.toFixed(1)+'/h',m.throughput,previous?.throughput,'Completed and aborted turns divided by active hours. This is a technical activity rate, not a productivity score.','higher')+card('Context pressure p95',pct(m.pressureP95),m.pressureP95,previous?.pressureP95,'95th percentile of latest model-call input tokens divided by the reported context-window size.','lower')+card(activeLabel,formatDuration(m.activeMs),m.activeMs,previous?.activeMs,activeHelp);drawActivity(s.calls,f.range);renderPerformance(m);renderModels(s.calls);drawBars('tools',group(s.tools,'tool'));drawBars('toolCategories',group(s.tools.map(t=>({{category:toolCategory(t.tool)}})),'category'));drawBars('toolTransitions',toolTransitions(s.tools));$('workflow').innerHTML=stat('Turns using tools',pct(ratio(s.turns.filter(t=>t.toolCalls>0).length,s.turns.length)))+stat('Compacted conversations',pct(ratio(compacted,s.conversations.length)))+stat('Delegating conversations',pct(ratio(delegated,s.conversations.length)),`${{fmt(s.subagents.length)}} edges`)+stat('Mapped child threads',fmt(delegation.mapped),`${{fmt(delegation.closed)}} technically closed`)+stat('Max delegation fan-out',fmt(delegation.maxFanout))+stat('Max delegation depth',fmt(delegation.maxDepth))+stat('Reported subagent tokens',short(subTokens),'may overlap parent totals')+stat('Peak concurrent turns',peak===null?'Hidden':fmt(peak),data.meta.shareSafe?'exact times rounded':'per-machine peak');drawBars('agentRoles',group(s.subagents,'role'));renderOutcomes(s.turns);renderContext(s,m);renderWork(s);renderCohorts(s);renderQuality(s,f);renderTable(s.conversations,s.turns);}}
 options('provider',data.conversations.map(c=>c.provider));options('machine',data.conversations.map(c=>c.machine));options('project',data.conversations.map(c=>c.project));options('model',data.modelCalls.map(c=>c.model));
-const dates=data.conversations.map(c=>c.startedAt).filter(validDate).sort();if(dates.length){{$('from').value=dates[0].slice(0,10);$('to').value=dates.at(-1).slice(0,10);}}
+const dates=data.conversations.map(c=>c.startedAt).filter(validDate).sort(),exportSince=data.meta.exportWindow?.since,exportUntil=data.meta.exportWindow?.until;if(exportSince)$('from').value=exportSince.slice(0,10);else if(dates.length)$('from').value=dates[0].slice(0,10);if(exportUntil){{$('to').value=new Date(Date.parse(exportUntil)-1).toISOString().slice(0,10);}}else if(dates.length)$('to').value=dates.at(-1).slice(0,10);
 if(data.meta.shareSafe)$('privacyBadge').classList.add('visible');
 const themeButton=$('themeToggle');let savedTheme=null;try{{savedTheme=localStorage.getItem('cli-consumption-theme');}}catch{{}}if(savedTheme==='light'||savedTheme==='dark')document.documentElement.dataset.theme=savedTheme;function currentTheme(){{return document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');}}function updateThemeButton(){{const theme=currentTheme(),next=theme==='dark'?'light':'dark';themeButton.textContent=theme==='dark'?'Light mode':'Dark mode';themeButton.setAttribute('aria-label',`Switch to ${{next}} mode`);}}themeButton.addEventListener('click',()=>{{const next=currentTheme()==='dark'?'light':'dark';document.documentElement.dataset.theme=next;try{{localStorage.setItem('cli-consumption-theme',next);}}catch{{}}updateThemeButton();}});updateThemeButton();
 document.querySelectorAll('select,input').forEach(e=>e.addEventListener('change',()=>{{$('customDates').classList.toggle('visible',$('period').value==='custom');render();}}));render();

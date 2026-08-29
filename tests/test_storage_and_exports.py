@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import csv
 from pathlib import Path
 from typing import cast
@@ -218,7 +219,7 @@ def test_existing_database_gains_additive_analytics_tables(tmp_path: Path) -> No
     assert "work_items" not in inspect(engine).get_table_names()
     initialize_database(engine)
 
-    assert set(TABLES) == set(inspect(engine).get_table_names())
+    assert set(TABLES) | {"alembic_version"} == set(inspect(engine).get_table_names())
     engine.dispose()
 
 
@@ -244,7 +245,7 @@ def test_richer_replacement_is_atomic_and_older_copy_cannot_regress_it(
 
     invalid = Snapshot.from_dict(richer.to_dict())
     invalid.work_items[0]["raw_item"] = "privacy canary"
-    with pytest.raises(ValueError, match="unexpected=\\['raw_item'\\]"):
+    with pytest.raises(ValueError, match="invalid_snapshot"):
         ingest_snapshot(engine, invalid)
     assert len(read_table(engine, "compaction_events")) == 1
     assert "privacy canary" not in str(read_table(engine, "work_items"))
@@ -281,3 +282,20 @@ def test_database_urls_support_paths_and_postgresql(tmp_path: Path) -> None:
     assert normalize_database_url(tmp_path / "usage.sqlite").startswith("sqlite:///")
     postgres = "postgresql+psycopg://user:password@db/usage"
     assert normalize_database_url(postgres) == postgres
+    engine = create_database_engine("postgresql://user:password@db/usage")
+    assert engine.url.drivername == "postgresql+psycopg"
+    engine.dispose()
+
+
+def test_postgresql_driver_error_names_the_optional_dependency(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def import_without_psycopg(name, *args, **kwargs):
+        if name == "psycopg":
+            raise ModuleNotFoundError("No module named 'psycopg'", name="psycopg")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_psycopg)
+
+    with pytest.raises(RuntimeError, match=r"cli-consumption\[postgres\]"):
+        create_database_engine("postgresql+psycopg://user:password@db/usage")

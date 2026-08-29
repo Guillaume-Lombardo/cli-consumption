@@ -32,6 +32,21 @@ It does not mean that token counters are equivalent to invoices.
 ingests each metadata-only snapshot independently. With no explicit source it checks
 the local default homes; repeated `--source` paths are filtered by detected format.
 
+Provider metadata is maintained in one registry: canonical name, aliases, adapter,
+default home, detection markers, and support state. `providers --json` uses that same
+registry to check default local stores and emits deterministic schema-v1 JSON. Its
+compatibility status is one of:
+
+- `no-data`: no registered detection marker was found;
+- `detected`: a store was recognized but contained no supported conversation;
+- `compatible`: supported conversations parsed without malformed records;
+- `degraded`: inspection failed safely or some records were malformed;
+- `unsupported-schema`: the provider format was recognized but its schema is outside
+  the adapter's supported range.
+
+The diagnostic is deliberately coarse: it does not persist collected records or emit
+local paths, provider identifiers, record counts, malformed values, or parser errors.
+
 ## Mistral Vibe CLI
 
 Mistral Vibe CLI reads top-level session directories under
@@ -61,6 +76,8 @@ Codex additionally exposes provider-reported turn duration and TTFT, model conte
 window samples, bounded reasoning/collaboration/service-tier labels, timestamped
 compactions, technical work-item categories and durations, and local thread-spawn
 relationships. Work-item content and rate-limit payloads are deliberately excluded.
+Provider-supplied nicknames are discarded, while subagent roles and statuses are
+mapped to closed vocabularies and the source label is fixed to `local-jsonl`.
 Subagent state can remain `open` after a child thread is technically closed; reporting
 therefore derives closure from collected child turns when they are available.
 

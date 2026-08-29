@@ -1,0 +1,1 @@
+"""CLI Consumption schema revisions."""

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
 MAX_BIGINT = 9_223_372_036_854_775_807
@@ -305,7 +306,9 @@ def _read_database(path: Path, machine: str) -> tuple[list[_Conversation], int]:
             }
             <= usage_columns
         ):
-            raise ValueError(f"Unsupported Goose database schema: {path}")
+            raise UnsupportedProviderFormat(
+                f"Unsupported Goose database schema: {path}"
+            )
 
         rows = connection.execute(
             "SELECT id, working_dir, created_at, updated_at, provider_name, "

@@ -6,6 +6,10 @@ from typing import Protocol
 from cli_consumption.models import Snapshot
 
 
+class UnsupportedProviderFormat(ValueError):
+    """Raised when a detected provider store has an incompatible schema."""
+
+
 class Adapter(Protocol):
     """Contract implemented by every supported AI CLI."""
 

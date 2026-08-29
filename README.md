@@ -10,14 +10,17 @@ events. Local token counters are usage metadata, not billing records. Read the
 
 ## Quick start
 
-CLI Consumption requires Python 3.14 or newer and uses
+CLI Consumption requires Python 3.12 or newer and uses
 [`uv`](https://docs.astral.sh/uv/).
+Supporting 3.12–3.14 keeps the package usable on more existing development and CI
+images without changing its architecture; the compatibility matrix exercises all
+three versions.
 
 From a checkout, collect every supported CLI detected on the machine and generate a
 self-contained dashboard:
 
 ```bash
-uv sync
+uv sync --all-extras
 uv run cli-consumption collect --provider all
 uv run cli-consumption export --output reports
 ```
@@ -37,6 +40,12 @@ From PyPI, no permanent installation is required:
 uv tool run cli-consumption collect --provider all
 uv tool run cli-consumption export --output reports
 ```
+
+The default installation covers local collection, SQLite storage, and exports. Install
+only the optional runtime capabilities you use: `cli-consumption[sync]` for the sync
+client, `cli-consumption[server]` for the collector service, and
+`cli-consumption[postgres]` for PostgreSQL. Extras can be combined, for example
+`cli-consumption[server,postgres]` on a central collector.
 
 To run the latest unreleased GitHub source:
 
@@ -134,6 +143,19 @@ Share-safe reports still disclose aggregate work patterns and remain private
 operational data. A technically completed turn is not a measure of task quality or
 productivity.
 
+Limit an export to conversations whose activity overlaps a half-open UTC window:
+
+```bash
+uv run cli-consumption export --output reports \
+  --since 2026-08-01 --until 2026-08-31
+```
+
+Dates denote UTC calendar boundaries; timestamps must include a timezone. An included
+conversation is exported with its complete child graph rather than partially redacted
+to the window. CSV rows are streamed in stable primary-key order. Spreadsheet formula
+prefixes in text cells are neutralized with a leading apostrophe; CSV remains a
+detailed operational-data export, not a share-safe format.
+
 ## SQLite and PostgreSQL
 
 A file path selects SQLite. A SQLAlchemy URL selects PostgreSQL:
@@ -146,6 +168,24 @@ uv run cli-consumption collect --provider all \
 
 Pass credentials through environment variables or a secret manager rather than shell
 history. `CLI_CONSUMPTION_DATABASE` can provide the database setting.
+
+Database schemas are upgraded automatically when a command opens them. Existing
+unversioned databases that exactly match a published schema are adopted before the
+upgrade; unknown or modified schemas are refused. Back up production databases before
+upgrading and do not run mixed application versions against one database while a
+migration is in progress. See the
+[migration decision](docs/decisions/0001-versioned-schema-migrations.md) for rollback
+and compatibility rules.
+
+Preview retention before deleting normalized metadata:
+
+```bash
+uv run cli-consumption retention --keep-days 90 --database usage.sqlite
+uv run cli-consumption retention --keep-days 90 --database usage.sqlite --apply
+```
+
+The first command is a dry run. `--apply` deletes old conversations and their child
+rows, old subagent relationships, and old ingestion-run records.
 
 ## Central collector API
 
@@ -171,6 +211,25 @@ The application refuses to bind beyond localhost without a token. Production
 deployments also need TLS and standard operational controls. See
 [Architecture](docs/architecture.md) for the trade-offs.
 
+Snapshots use strict schema version 1. The collector rejects request bodies larger
+than 32 MiB and snapshots containing more than 250,000 normalized records. A sync
+client checks `/api/v1/capabilities` before sending when the endpoint exposes it.
+Upgrade the server before clients whenever supported snapshot schemas change.
+
+## Provider diagnostics
+
+`providers` reads the central adapter registry. Its machine-readable mode checks local
+default stores and emits deterministic JSON:
+
+```bash
+uv run cli-consumption providers --json
+```
+
+Each provider reports one of `no-data`, `detected`, `compatible`, `degraded`, or
+`unsupported-schema`. Diagnostics parse enough metadata to assess compatibility but do
+not persist it and never include paths, identifiers, record contents, counts, or parser
+errors in their output.
+
 ## Commands
 
 | Command | Purpose |
@@ -180,13 +239,14 @@ deployments also need TLS and standard operational controls. See
 | `serve` | Run the central collection API. |
 | `export` | Write the HTML dashboard and optional CSV tables. |
 | `providers` | List provider names and support status. |
+| `retention` | Preview or apply deletion of metadata outside a retention window. |
 
 Run `uv run cli-consumption COMMAND --help` for all options.
 
 ## Development
 
 ```bash
-uv sync --all-groups
+uv sync --all-extras --all-groups
 uv run pre-commit install
 uv run pre-commit run --all-files
 uv run ruff format --check .

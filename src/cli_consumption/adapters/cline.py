@@ -17,6 +17,7 @@ from cli_consumption.adapters._shared import (
     timestamp,
     tokens,
 )
+from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
 
 
@@ -83,7 +84,9 @@ def _read_database(
             "metadata_json",
         }
         if not required <= columns:
-            raise ValueError(f"Unsupported Cline CLI database schema: {path}")
+            raise UnsupportedProviderFormat(
+                f"Unsupported Cline CLI database schema: {path}"
+            )
         optional = [
             name
             for name in ("ended_at", "updated_at", "workspace_root", "messages_path")

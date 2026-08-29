@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
-    ProviderDataLimitError,
     ProviderInputBudget,
     add_tokens,
     digest_records,
+    ensure_provider_sqlite_fields,
     finish_turn,
     iso,
     label,
@@ -90,6 +90,7 @@ def _read_database(
             raise UnsupportedProviderFormat(
                 f"Unsupported Cline CLI database schema: {path}"
             )
+        ensure_provider_sqlite_fields(connection, [("sessions", "metadata_json")])
         optional = [
             name
             for name in ("ended_at", "updated_at", "workspace_root", "messages_path")
@@ -149,8 +150,6 @@ def _read_database(
                     malformed += 1
             result.append((row, messages))
         return result, malformed
-    except sqlite3.DataError:
-        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except sqlite3.DatabaseError:
         raise ValueError(f"Could not read Cline CLI database: {path}") from None
     finally:

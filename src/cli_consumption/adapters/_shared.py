@@ -65,6 +65,9 @@ class ProviderInputBudget:
         if self.file_bytes > MAX_PROVIDER_READ_BYTES:
             raise ProviderDataLimitError("provider_read_limit_exceeded")
 
+    def remaining_file_bytes(self) -> int:
+        return max(0, MAX_PROVIDER_READ_BYTES - self.file_bytes)
+
     def sqlite_files(self, size: int) -> None:
         self.sqlite_file_bytes += size
         if self.sqlite_file_bytes > MAX_PROVIDER_SQLITE_BYTES:
@@ -228,7 +231,7 @@ def read_bounded_bytes(
 ) -> bytes:
     active_budget = budget or ProviderInputBudget()
     with _open_provider_file(path) as handle:
-        payload = handle.read(maximum + 1)
+        payload = handle.read(min(maximum, active_budget.remaining_file_bytes()) + 1)
     active_budget.file_data(len(payload))
     if len(payload) > maximum:
         raise ProviderDataLimitError("provider_file_too_large")
@@ -244,10 +247,16 @@ def iter_bounded_jsonl_bytes(
     active_budget = budget or ProviderInputBudget()
     total = 0
     with _open_provider_file(path) as handle:
-        for line in handle:
+        while True:
+            collection_remaining = active_budget.remaining_file_bytes()
+            file_remaining = max(0, maximum_file - total)
+            limit = min(maximum_line, file_remaining, collection_remaining)
+            line = handle.readline(limit + 1)
+            if not line:
+                break
             total += len(line)
             active_budget.file_data(len(line))
-            if total > maximum_file:
+            if len(line) > file_remaining:
                 raise ProviderDataLimitError("provider_file_too_large")
             if len(line) > maximum_line:
                 raise ProviderDataLimitError("provider_line_too_large")
@@ -330,11 +339,9 @@ def open_provider_sqlite(
             held[candidate] = item
             budget.sqlite_files(item.charged_size)
         connection = sqlite3.connect(f"{path.absolute().as_uri()}?mode=ro", uri=True)
-        connection.setlimit(
-            sqlite3.SQLITE_LIMIT_LENGTH, MAX_PROVIDER_SQLITE_FIELD_BYTES
-        )
         connection.execute("PRAGMA trusted_schema=OFF")
         connection.execute("PRAGMA query_only=ON")
+        connection.execute("BEGIN")
         _verify_sqlite_files(path, held, budget)
         yield connection
     except sqlite3.DataError:
@@ -371,3 +378,19 @@ def _verify_sqlite_files(
         if metadata.st_size > item.charged_size:
             budget.sqlite_files(metadata.st_size - item.charged_size)
             item.charged_size = metadata.st_size
+
+
+def ensure_provider_sqlite_fields(
+    connection: sqlite3.Connection, fields: Iterable[tuple[str, str]]
+) -> None:
+    identifier = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+    for table, field in fields:
+        if not identifier.fullmatch(table) or not identifier.fullmatch(field):
+            raise ValueError("invalid_sqlite_field_check")
+        oversized = connection.execute(
+            f'SELECT 1 FROM "{table}" '
+            f'WHERE length(CAST("{field}" AS BLOB)) > ? LIMIT 1',
+            (MAX_PROVIDER_SQLITE_FIELD_BYTES,),
+        ).fetchone()
+        if oversized is not None:
+            raise ProviderDataLimitError("provider_sqlite_field_too_large")

@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
-    ProviderDataLimitError,
     ProviderInputBudget,
+    ensure_provider_sqlite_fields,
     open_provider_sqlite,
 )
 from cli_consumption.adapters.base import UnsupportedProviderFormat
@@ -296,6 +296,7 @@ def _read_database(
             raise UnsupportedProviderFormat(
                 f"Unsupported OpenCode database schema: {path}"
             )
+        ensure_provider_sqlite_fields(connection, [("session_message", "data")])
 
         directory = "directory" if "directory" in session_columns else "NULL"
         rows = budget.rows(
@@ -358,8 +359,6 @@ def _read_database(
                 )
             )
         return conversations, malformed
-    except sqlite3.DataError:
-        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except sqlite3.DatabaseError:
         raise ValueError(f"Could not read OpenCode database: {path}") from None
     finally:

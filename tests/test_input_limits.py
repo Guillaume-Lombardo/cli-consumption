@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from cli_consumption.adapters._shared import (
     ProviderDataLimitError,
     ProviderInputBudget,
+    ensure_provider_sqlite_fields,
     iter_bounded_jsonl_bytes,
     open_provider_sqlite,
     read_bounded_bytes,
@@ -43,6 +45,57 @@ def test_jsonl_counts_growth_and_the_final_line(tmp_path: Path) -> None:
     with pytest.raises(ProviderDataLimitError) as error:
         next(lines)
     assert str(error.value) == "provider_file_too_large"
+
+    exact = tmp_path / "exact.jsonl"
+    exact.write_bytes(b"1234")
+    assert list(iter_bounded_jsonl_bytes(exact, maximum_line=4, maximum_file=4)) == [
+        b"1234"
+    ]
+
+
+def test_provider_reads_are_bounded_by_the_remaining_collection_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class RecordingStream:
+        def __init__(self) -> None:
+            self.read_sizes: list[int] = []
+            self.readline_sizes: list[int] = []
+
+        def read(self, size: int) -> bytes:
+            self.read_sizes.append(size)
+            return b"x" * size
+
+        def readline(self, size: int) -> bytes:
+            self.readline_sizes.append(size)
+            return b"x" * size
+
+    monkeypatch.setattr("cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES", 10)
+
+    stream = RecordingStream()
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared._open_provider_file",
+        lambda _path: nullcontext(stream),
+    )
+    budget = ProviderInputBudget()
+    budget.file_data(7)
+    with pytest.raises(ProviderDataLimitError, match="provider_read_limit_exceeded"):
+        read_bounded_bytes(tmp_path / "ignored", budget, maximum=100)
+    assert stream.read_sizes == [4]
+
+    stream = RecordingStream()
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared._open_provider_file",
+        lambda _path: nullcontext(stream),
+    )
+    budget = ProviderInputBudget()
+    budget.file_data(7)
+    with pytest.raises(ProviderDataLimitError, match="provider_read_limit_exceeded"):
+        next(
+            iter_bounded_jsonl_bytes(
+                tmp_path / "ignored", budget, maximum_line=100, maximum_file=100
+            )
+        )
+    assert stream.readline_sizes == [4]
 
 
 def test_candidate_budget_is_generic_and_shared(
@@ -132,10 +185,32 @@ def test_sqlite_limit_rejects_large_fields_and_closes_on_error(
         pytest.raises(ProviderDataLimitError) as error,
         open_provider_sqlite(database, ProviderInputBudget()) as connection,
     ):
-        connection.execute("SELECT payload FROM records").fetchone()
+        ensure_provider_sqlite_fields(connection, [("records", "payload")])
     assert str(error.value) == "provider_sqlite_field_too_large"
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")
+
+
+def test_sqlite_field_limit_applies_to_each_field_not_the_whole_row(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "two-fields.sqlite"
+    value = "x" * (5 * 1024 * 1024)
+    writer = sqlite3.connect(database)
+    writer.execute("CREATE TABLE records (first TEXT, second TEXT)")
+    writer.execute("INSERT INTO records VALUES (?, ?)", (value, value))
+    writer.commit()
+    writer.close()
+
+    budget = ProviderInputBudget()
+    with open_provider_sqlite(database, budget) as connection:
+        ensure_provider_sqlite_fields(
+            connection, [("records", "first"), ("records", "second")]
+        )
+        row = connection.execute("SELECT first, second FROM records").fetchone()
+        assert row is not None
+        assert len(budget.json_field(row[0])) == 5 * 1024 * 1024
+        assert len(budget.json_field(row[1])) == 5 * 1024 * 1024
 
 
 def test_sqlite_budget_includes_live_wal_and_shm(

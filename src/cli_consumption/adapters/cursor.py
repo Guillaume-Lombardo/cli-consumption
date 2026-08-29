@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
-    ProviderDataLimitError,
     ProviderInputBudget,
+    ensure_provider_sqlite_fields,
     iter_bounded_jsonl_bytes,
     open_provider_sqlite,
 )
@@ -348,13 +348,12 @@ def _read_meta(path: Path, budget: ProviderInputBudget) -> _Meta | None:
             }
             if not {"key", "value"}.issubset(columns):
                 return None
+            ensure_provider_sqlite_fields(connection, [("meta", "value")])
             row = connection.execute(
                 "SELECT value FROM meta WHERE key = ? LIMIT 1", ("0",)
             ).fetchone()
         finally:
             manager.__exit__(None, None, None)
-    except sqlite3.DataError:
-        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except (OSError, sqlite3.DatabaseError):
         return None
     if row is None or not isinstance(row[0], str):

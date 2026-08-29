@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
-    ProviderDataLimitError,
     ProviderInputBudget,
     digest_records,
+    ensure_provider_sqlite_fields,
     finish_turn,
     iso,
     label,
@@ -80,6 +80,7 @@ def _read_database(
             raise UnsupportedProviderFormat(
                 f"Unsupported Amazon Q Developer CLI database schema: {path}"
             )
+        ensure_provider_sqlite_fields(connection, [("conversations", "value")])
         for row in budget.rows(
             connection.execute("SELECT key, value FROM conversations ORDER BY key")
         ):
@@ -93,8 +94,6 @@ def _read_database(
                 continue
             result.append((row["key"], value))
         return result, malformed
-    except sqlite3.DataError:
-        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except sqlite3.DatabaseError:
         raise ValueError(
             f"Could not read Amazon Q Developer CLI database: {path}"

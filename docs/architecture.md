@@ -104,18 +104,19 @@ sorting. JSON and JSONL readers open a descriptor without following symlinks, ve
 its identity, and count bytes as they stream, so later path substitution or growth
 cannot redirect or bypass the cap. Provider SQLite readers share 512 MiB across every
 database and its active WAL, SHM, or rollback-journal sidecars, 250,000 selected rows,
-8 MiB per structured field, and 256 MiB of structured fields in total. SQLite's engine
-length limit rejects oversized text and blobs before Python materializes them. The
-complete in-memory normalized snapshot remains capped at 250,000 records. These limits
-use generic error codes and apply to local collection as well as snapshots later sent
-to the API.
+8 MiB per structured field, and 256 MiB of structured fields in total. SQLite length
+preflights reject oversized structured text and blobs before Python materializes them.
+The complete in-memory normalized snapshot remains capped at 250,000 records. These
+limits use generic error codes and apply to local collection as well as snapshots later
+sent to the API.
 
 SQLite databases remain opened by their original path so live WAL contents are not
 lost. The reader simultaneously holds no-follow descriptors for the database and
 visible sidecars, verifies device/inode identity before and after extraction, and
-charges observed growth. A malicious replace-and-restore entirely between identity
-checks is the residual portable race; reading SQLite through a pinned descriptor would
-remove it but would also hide path-relative live WAL state.
+charges observed growth. Any transient mutation entirely between identity checks,
+including an in-place overwrite or growth followed by truncation, is the residual
+portable race; reading SQLite through a pinned descriptor would remove it but would
+also hide path-relative live WAL state.
 
 Retention is an explicit two-step operation: `retention --keep-days N` reports what
 would be deleted, while `--apply` deletes old conversations (with cascading children),

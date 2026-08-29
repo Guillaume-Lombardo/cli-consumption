@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
-    ProviderDataLimitError,
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
     open_provider_sqlite,
@@ -186,8 +185,6 @@ class CodexAdapter:
                     )
                 )
             )
-        except sqlite3.DataError:
-            raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
         except sqlite3.OperationalError:
             return []
         finally:

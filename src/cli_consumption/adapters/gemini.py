@@ -255,14 +255,11 @@ def _read_session(
     path: Path, budget: ProviderInputBudget
 ) -> tuple[dict[str, Any], list[dict[str, Any]], int, int, str]:
     digest_builder = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest_builder.update(chunk)
-    digest = digest_builder.hexdigest()
     records: list[dict[str, Any]] = []
     malformed = 0
     if path.suffix == ".jsonl":
         for line in iter_bounded_jsonl_bytes(path, budget):
+            digest_builder.update(line)
             if not line.strip():
                 continue
             try:
@@ -275,12 +272,14 @@ def _read_session(
             else:
                 malformed += 1
     else:
+        payload = read_bounded_bytes(path, budget)
+        digest_builder.update(payload)
         try:
-            record = json.loads(read_bounded_bytes(path, budget))
+            record = json.loads(payload)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return {}, [], 1, 0, digest
+            return {}, [], 1, 0, digest_builder.hexdigest()
         if not isinstance(record, dict):
-            return {}, [], 1, 0, digest
+            return {}, [], 1, 0, digest_builder.hexdigest()
         records.append(record)
 
     metadata: dict[str, Any] = {}
@@ -329,7 +328,13 @@ def _read_session(
                         identifier := _label(message.get("id"), 512)
                     ):
                         messages[identifier] = message
-    return metadata, list(messages.values()), malformed, len(records), digest
+    return (
+        metadata,
+        list(messages.values()),
+        malformed,
+        len(records),
+        digest_builder.hexdigest(),
+    )
 
 
 def _usage(value: object) -> dict[str, int]:

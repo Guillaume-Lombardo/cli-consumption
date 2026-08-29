@@ -60,9 +60,9 @@ Local parsing caps monolithic JSON files at 64 MiB, JSONL files at 256 MiB with 
 verify file identity, and count bytes during reading. Untrusted provider SQLite inputs
 share 512 MiB cumulatively across databases and active WAL, SHM, or rollback-journal
 sidecars, 250,000 selected rows, 8 MiB per structured field, and 256 MiB for structured
-fields. SQLite length limits apply before values reach Python. Database and sidecar
+fields. SQLite length preflights apply before values reach Python. Database and sidecar
 identities and growth are checked around extraction while retaining live WAL support;
-the residual replace-and-restore race is documented in the architecture. The
+the residual transient-mutation race is documented in the architecture. The
 normalized snapshot remains capped at 250,000 records during construction. Limit
 failures expose only generic codes, never paths or record content. The sync client
 requires HTTPS beyond loopback unless the operator uses the explicit

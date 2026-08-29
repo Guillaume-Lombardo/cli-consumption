@@ -5,14 +5,15 @@ import json
 import math
 import re
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
-    ProviderDataLimitError,
     ProviderInputBudget,
+    ensure_provider_sqlite_fields,
     open_provider_sqlite,
     read_json,
 )
@@ -313,17 +314,15 @@ def _discover_databases(
     return list(discovered.items()), malformed
 
 
-def _registry_entries(value: object) -> list[object]:
+def _registry_entries(value: object) -> Iterable[object]:
     if isinstance(value, list):
         return value
     if not isinstance(value, dict):
-        return []
+        return ()
     projects = value.get("projects")
     if isinstance(projects, list):
         return projects
-    if all(isinstance(entry, dict) for entry in value.values()):
-        return list(value.values())
-    return []
+    return value.values()
 
 
 def _read_database(
@@ -362,6 +361,7 @@ def _read_database(
             raise UnsupportedProviderFormat(
                 f"Unsupported Crush database schema: {path}"
             )
+        ensure_provider_sqlite_fields(connection, [("messages", "parts")])
 
         finished_at = "finished_at" if "finished_at" in message_columns else "NULL"
         provider = "provider" if "provider" in message_columns else "NULL"
@@ -414,8 +414,6 @@ def _read_database(
                 )
             )
         return conversations, malformed
-    except sqlite3.DataError:
-        raise ProviderDataLimitError("provider_sqlite_field_too_large") from None
     except sqlite3.DatabaseError:
         raise ValueError(f"Could not read Crush database: {path}") from None
     finally:

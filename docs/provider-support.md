@@ -1,28 +1,28 @@
 # Provider support
 
-| Provider | Status | Initial source |
-| --- | --- | --- |
-| Aider | Supported (core) | Opt-in local analytics JSONL |
-| Amazon Q Developer CLI | Supported (core) | Local persistent-conversation SQLite store |
-| Amp | Supported (core) | Local thread mirror JSON |
-| Cline CLI | Supported (core) | Local session SQLite index and message JSON |
-| Codex | Supported | Local rollout JSONL and optional metadata-only subagent state |
-| Continue CLI | Supported (core) | Local session JSON |
-| Crush | Supported (core) | Per-project local SQLite store |
-| Cursor CLI | Supported (core) | Local Composer 2 transcript JSONL and chat metadata SQLite |
-| Claude Code | Supported (core) | Local project transcript JSONL |
-| Gemini CLI | Supported (core) | Local automatic chat history JSON and JSONL |
-| GitHub Copilot CLI | Supported (core) | Local session event JSONL |
-| Goose | Supported (core) | Local SQLite session store v16 |
-| Grok Build | Supported (core) | Local session summary and update/event JSONL |
-| Kilo Code | Supported (core) | Local SQLite session store |
-| Kimi Code CLI | Supported (core) | Local Wire event JSONL |
-| Mistral Vibe CLI | Supported (core) | Local session metadata JSON and message JSONL |
-| OpenCode | Supported (core) | Local SQLite v2 session store |
-| OpenHands CLI | Supported (core) | Local SDK conversation state and event JSON |
-| Pi | Supported (core) | Local session JSONL v1-v3 |
-| Plandex | Supported (core) | Copied self-hosted server conversation JSON |
-| Qwen Code | Supported (core) | Local append-only transcript JSONL |
+| Provider | Provider name | Aliases | Status | Default local source | Token semantics |
+| --- | --- | --- | --- | --- | --- |
+| Aider | `aider` | — | `supported` | `~/.aider/analytics.jsonl` | `additive` |
+| Amazon Q Developer CLI | `amazon-q` | — | `supported` | `~/.local/share/amazon-q/data.sqlite3` | `unavailable` |
+| Amp | `amp` | — | `supported` | `~/.local/share/amp/threads/` | `additive` |
+| Claude Code | `claude` | `claude-code` | `supported` | `~/.claude/projects/` | `additive` |
+| Cline CLI | `cline` | — | `supported` | `~/.cline/data/sessions/sessions.db` | `additive` |
+| Codex | `codex` | — | `supported` | `~/.codex/sessions/` | `additive` |
+| Continue CLI | `continue` | — | `supported` | `~/.continue/sessions/` | `additive` |
+| Crush | `crush` | — | `supported` | `~/.local/share/crush/` | `context-snapshot` |
+| Cursor CLI | `cursor` | — | `supported` | `~/.cursor/` | `unavailable` |
+| Gemini CLI | `gemini` | — | `supported` | `~/.gemini/tmp/` | `additive` |
+| GitHub Copilot CLI | `copilot` | — | `supported` | `~/.copilot/session-state/` | `conversation-aggregate` |
+| Goose | `goose` | — | `supported` | `~/.local/share/goose/sessions/sessions.db` | `additive` |
+| Grok Build | `grok` | — | `supported` | `~/.grok/sessions/` | `additive` |
+| Kilo Code | `kilo` | — | `supported` | `~/.local/share/kilo/kilo.db` | `additive` |
+| Kimi Code CLI | `kimi` | — | `supported` | `~/.kimi/sessions/` | `additive` |
+| Mistral Vibe CLI | `mistral-vibe` | — | `supported` | `~/.vibe/logs/session/` | `conversation-aggregate` |
+| OpenCode | `opencode` | — | `supported` | `~/.local/share/opencode/opencode.db` | `additive` |
+| OpenHands CLI | `openhands` | — | `supported` | `~/.openhands/conversations/` | `additive` |
+| Pi | `pi` | — | `supported` | `~/.pi/agent/sessions/` | `additive` |
+| Plandex | `plandex` | — | `supported` | `/plandex-server` | `additive` |
+| Qwen Code | `qwen` | — | `supported` | `~/.qwen/projects/` | `additive` |
 
 “Supported” means the adapter has synthetic fixtures, extracts conversations, turns,
 models, token usage, and tool names when available, and passes privacy regression tests.

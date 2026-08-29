@@ -99,6 +99,7 @@ def test_registry_is_complete_unique_and_consistent() -> None:
     assert len({spec.name for spec in ADAPTER_SPECS}) == len(ADAPTER_SPECS)
     assert all(spec.adapter_type().name == spec.name for spec in ADAPTER_SPECS)
     assert all(spec.markers for spec in ADAPTER_SPECS)
+    assert all(spec.documented_source for spec in ADAPTER_SPECS)
     assert all(spec.support == "supported" for spec in ADAPTER_SPECS)
     assert all(
         inspect.getsource(spec.adapter_type.collect).count("ProviderInputBudget()") == 1

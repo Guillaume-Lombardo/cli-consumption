@@ -37,6 +37,7 @@ sync = ["httpx>=0.27"]
 [project.urls]
 Homepage = "https://github.com/Guillaume-Lombardo/cli-consumption"
 Documentation = "https://github.com/Guillaume-Lombardo/cli-consumption#readme"
+Changelog = "https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/CHANGELOG.md"
 Issues = "https://github.com/Guillaume-Lombardo/cli-consumption/issues"
 Repository = "https://github.com/Guillaume-Lombardo/cli-consumption.git"
 
@@ -64,6 +65,7 @@ packages = ["src/cli_consumption"]
 include = [
   "/LICENSE",
   "/NOTICE",
+  "/CHANGELOG.md",
   "/README.md",
   "/pyproject.toml",
   "/src/cli_consumption",

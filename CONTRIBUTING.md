@@ -41,6 +41,18 @@ boundary, and normalization semantics are identical. Keep provider-specific time
 thresholds, token composition, ranking, project inference, and other compatibility
 heuristics local even when their implementations look similar.
 
+Keep the provider matrices in `README.md` and `docs/provider-support.md` synchronized
+with the adapter registry. Each registered provider must have exactly one matrix row
+and one qualified narrative section in `docs/provider-support.md`; document canonical
+names, aliases, default sources, support state, and token semantics through the tested
+columns rather than adding another provider list.
+
+Add notable user-visible changes to the `[Unreleased]` section of `CHANGELOG.md` in the
+same pull request. Use release tags and merged pull requests as the source for dated
+history; do not reconstruct behavior that those references do not establish. Version
+bump pull requests move the accumulated entries under the new dated version and update
+the comparison links.
+
 ## Validate and review
 
 Run the quality gates documented in `AGENTS.md`, inspect the complete diff, then open a
@@ -51,11 +63,11 @@ checks pass and review is complete.
 ## Release
 
 The source distribution is deliberately limited to the project metadata, README,
-license notices, and complete `src/cli_consumption` package. It excludes tests and
-repository-only automation; Hatchling also carries `.gitignore` so downstream builds
-continue to exclude local artifacts. `tests/test_packaging.py` builds the sdist,
-reconstructs a wheel from it, and verifies both artifact manifests; update that
-contract when adding new runtime package data.
+changelog, license notices, and complete `src/cli_consumption` package. It excludes
+tests and repository-only automation; Hatchling also carries `.gitignore` so
+downstream builds continue to exclude local artifacts. `tests/test_packaging.py`
+builds the sdist, reconstructs a wheel from it, and verifies both artifact manifests;
+update that contract when adding new runtime package data.
 
 Update the project version with `uv version <version>` and include the resulting
 `pyproject.toml` and `uv.lock` changes in a pull request. When that version change is

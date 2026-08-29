@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import json
+import os
+import stat
+import threading
+import uuid
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import create_mock_engine, insert
+from sqlalchemy import create_engine, create_mock_engine, event, insert, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Connection
+from sqlalchemy.engine.url import make_url
+from sqlalchemy.schema import CreateSchema, DropSchema
 from typer.testing import CliRunner
 
 import cli_consumption.dashboard as dashboard_module
@@ -14,6 +21,8 @@ from cli_consumption.cli import app
 from cli_consumption.dashboard import (
     DashboardLimitError,
     _atomic_write_text,
+    _dashboard_snapshot,
+    _fsync_directory,
     _preflight_dashboard,
     generate_dashboard,
 )
@@ -21,6 +30,7 @@ from cli_consumption.reporting import (
     ExportWindow,
     ReportEstimate,
     estimate_report,
+    iter_report_rows,
     report_estimate_statement,
 )
 from cli_consumption.storage import (
@@ -104,7 +114,7 @@ def test_preflight_limits_are_inclusive_at_the_boundary(
     monkeypatch.setattr(
         dashboard_module,
         "MAX_DASHBOARD_ESTIMATED_BYTES",
-        1_000 + 5 * dashboard_module.ESTIMATED_ROW_OVERHEAD_BYTES,
+        1_000,
     )
 
     _preflight_dashboard(engine)
@@ -137,6 +147,21 @@ def test_simulated_accumulated_database_is_rejected_before_materialization(
     engine.dispose()
 
 
+def test_required_relationship_indexes_have_a_separate_memory_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _database(
+        tmp_path, _conversation("one", "2026-08-01T00:00:00.000000+00:00")
+    )
+    monkeypatch.setattr(dashboard_module, "MAX_DASHBOARD_INDEX_BYTES", 1)
+
+    with pytest.raises(DashboardLimitError, match="dashboard_index_limit_exceeded"):
+        generate_dashboard(engine, tmp_path / "dashboard.html")
+
+    assert not (tmp_path / "dashboard.html").exists()
+    engine.dispose()
+
+
 def test_preflight_rejects_estimated_size_before_payload_materialization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -146,7 +171,7 @@ def test_preflight_rejects_estimated_size_before_payload_materialization(
         "estimate_report",
         lambda *_: ReportEstimate(records=1, scalar_bytes=10),
     )
-    monkeypatch.setattr(dashboard_module, "MAX_DASHBOARD_ESTIMATED_BYTES", 201)
+    monkeypatch.setattr(dashboard_module, "MAX_DASHBOARD_ESTIMATED_BYTES", 9)
     monkeypatch.setattr(
         dashboard_module,
         "_dashboard_payload",
@@ -172,6 +197,110 @@ def test_encoded_html_limit_preserves_existing_dashboard(
         generate_dashboard(engine, output)
 
     assert output.read_text(encoding="utf-8") == "old dashboard"
+    engine.dispose()
+
+
+def test_production_path_streams_many_rows_without_materialized_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _database(
+        tmp_path,
+        *(
+            _conversation(f"narrow-{index}", "2026-08-01T00:00:00.000000+00:00")
+            for index in range(200)
+        ),
+    )
+    monkeypatch.setattr(
+        dashboard_module,
+        "_dashboard_payload",
+        lambda *_args, **_kwargs: pytest.fail("global payload was materialized"),
+    )
+
+    output = tmp_path / "streamed.html"
+    generate_dashboard(engine, output)
+
+    assert output.stat().st_size > 0
+    assert '"conversations":[' in output.read_text(encoding="utf-8")
+    engine.dispose()
+
+
+def test_streaming_json_uses_ascii_escapes_and_script_safe_unicode(
+    tmp_path: Path,
+) -> None:
+    row = _conversation("unicode", "2026-08-01T00:00:00.000000+00:00")
+    row["project"] = "café <&>"
+    engine = _database(tmp_path, row)
+
+    output = tmp_path / "unicode.html"
+    generate_dashboard(engine, output)
+    html = output.read_text(encoding="utf-8")
+
+    assert "café <&>" not in html
+    assert "caf\\u00e9 \\u003c\\u0026\\u003e" in html
+    engine.dispose()
+
+
+def test_sqlite_snapshot_begins_explicitly_before_preflight(tmp_path: Path) -> None:
+    engine = _database(
+        tmp_path, _conversation("one", "2026-08-01T00:00:00.000000+00:00")
+    )
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def record_statement(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    generate_dashboard(engine, tmp_path / "dashboard.html")
+
+    begin_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if statement == "BEGIN DEFERRED"
+    )
+    preflight_index = next(
+        index for index, statement in enumerate(statements) if "UNION ALL" in statement
+    )
+    assert begin_index < preflight_index
+    engine.dispose()
+
+
+def test_sqlite_concurrent_commit_does_not_change_dashboard_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _database(
+        tmp_path, _conversation("original", "2026-08-01T00:00:00.000000+00:00")
+    )
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+    preflight_complete = threading.Event()
+    writer_complete = threading.Event()
+    real_estimate = dashboard_module.estimate_report
+
+    def estimate_then_wait(connection, window):
+        estimate = real_estimate(connection, window)
+        preflight_complete.set()
+        assert writer_complete.wait(timeout=5)
+        return estimate
+
+    def insert_concurrently() -> None:
+        assert preflight_complete.wait(timeout=5)
+        with engine.begin() as connection:
+            connection.execute(
+                insert(Conversation),
+                _conversation("concurrent", "2026-09-01T00:00:00.000000+00:00"),
+            )
+        writer_complete.set()
+
+    monkeypatch.setattr(dashboard_module, "estimate_report", estimate_then_wait)
+    writer = threading.Thread(target=insert_concurrently)
+    writer.start()
+    output = tmp_path / "dashboard.html"
+    generate_dashboard(engine, output)
+    writer.join(timeout=5)
+
+    html = output.read_text(encoding="utf-8")
+    assert "2026-08-01" in html
+    assert "2026-09-01" not in html
     engine.dispose()
 
 
@@ -219,6 +348,46 @@ def test_atomic_replace_preserves_old_dashboard_and_removes_own_temp(
     assert list(tmp_path.glob(".dashboard.html.*.tmp")) == []
 
 
+def test_atomic_write_fsyncs_file_then_replaces_then_fsyncs_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def tracking_fsync(descriptor: int) -> None:
+        events.append(
+            "directory-fsync"
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode)
+            else "file-fsync"
+        )
+        real_fsync(descriptor)
+
+    def tracking_replace(source: Path, target: Path) -> None:
+        events.append("replace")
+        real_replace(source, target)
+
+    monkeypatch.setattr(dashboard_module.os, "fsync", tracking_fsync)
+    monkeypatch.setattr(dashboard_module.os, "replace", tracking_replace)
+
+    _atomic_write_text(tmp_path / "dashboard.html", "dashboard")
+
+    assert events == ["file-fsync", "replace", "directory-fsync"]
+
+
+def test_directory_fsync_has_explicit_unsupported_platform_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delattr(dashboard_module.os, "O_DIRECTORY", raising=False)
+    monkeypatch.setattr(
+        dashboard_module.os,
+        "open",
+        lambda *_args, **_kwargs: pytest.fail("directory was opened"),
+    )
+
+    _fsync_directory(tmp_path)
+
+
 def test_stale_temp_does_not_block_or_get_deleted(tmp_path: Path) -> None:
     output = tmp_path / "dashboard.html"
     stale = tmp_path / ".dashboard.html.stale.tmp"
@@ -257,11 +426,25 @@ def test_cli_limit_error_is_deterministic_and_does_not_leak_values(
 
     assert first.exit_code == 2
     assert first.output == second.output
-    assert "--since" in first.output
-    assert "--until" in first.output
+    assert json.loads(first.stdout) == {
+        "error": {
+            "code": "dashboard_limit_exceeded",
+            "hint": "narrow the export with --since and/or --until",
+        }
+    }
+    assert first.stderr == ""
     assert canary not in first.output
     assert str(output) not in first.output
     assert dashboard.read_text(encoding="utf-8") == "old dashboard"
+
+    text_command = [item for item in command if item != "--json"]
+    text_result = runner.invoke(app, text_command, color=True)
+    assert text_result.exit_code == 2
+    assert text_result.stdout == ""
+    assert text_result.stderr == (
+        "Dashboard exceeds safe generation limits; narrow the export with "
+        "--since and/or --until.\n"
+    )
 
 
 def test_csv_and_dashboard_export_is_not_directory_atomic(
@@ -292,3 +475,51 @@ def test_csv_and_dashboard_export_is_not_directory_atomic(
     assert result.exit_code == 2
     assert (output / "conversations.csv").is_file()
     assert dashboard.read_text(encoding="utf-8") == "old dashboard"
+
+
+def test_postgresql_runtime_preflight_uses_one_repeatable_snapshot(
+    tmp_path: Path,
+) -> None:
+    database_url = os.environ.get("TEST_POSTGRESQL_URL")
+    if database_url is None:
+        pytest.skip("TEST_POSTGRESQL_URL is not configured")
+
+    schema_name = f"dashboard_test_{uuid.uuid4().hex}"
+    admin_engine = create_engine(database_url)
+    scoped_engine = None
+    schema_created = False
+    try:
+        with admin_engine.begin() as connection:
+            connection.execute(CreateSchema(schema_name))
+        schema_created = True
+        scoped_url = make_url(database_url).update_query_dict(
+            {"options": f"-csearch_path={schema_name}"}
+        )
+        scoped_engine = create_engine(scoped_url)
+        initialize_database(scoped_engine)
+        with scoped_engine.begin() as connection:
+            connection.execute(
+                insert(Conversation),
+                _conversation("original", "2026-08-01T00:00:00.000000+00:00"),
+            )
+
+        with _dashboard_snapshot(scoped_engine) as connection:
+            assert connection.scalar(text("SHOW transaction_isolation")) == (
+                "repeatable read"
+            )
+            assert estimate_report(connection).records == 1
+            with scoped_engine.begin() as writer:
+                writer.execute(
+                    insert(Conversation),
+                    _conversation("concurrent", "2026-09-01T00:00:00.000000+00:00"),
+                )
+            assert len(list(iter_report_rows(connection, "conversations"))) == 1
+
+        generate_dashboard(scoped_engine, tmp_path / "postgres-dashboard.html")
+    finally:
+        if scoped_engine is not None:
+            scoped_engine.dispose()
+        if schema_created:
+            with admin_engine.begin() as connection:
+                connection.execute(DropSchema(schema_name, cascade=True))
+        admin_engine.dispose()

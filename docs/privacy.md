@@ -93,12 +93,15 @@ anonymization.
 
 Dashboard generation first evaluates only aggregate row counts and scalar byte
 lengths for the selected report. These internal estimates are not exported or logged.
-The command refuses selections above 250,000 rows or an estimated 128 MiB and refuses
-encoded HTML above 128 MiB. Its public limit error is generic and recommends a bounded
-time window without echoing project or machine labels, identifiers, paths, or other
-database values. Atomic replacement prevents a failed generation from truncating a
-previous dashboard. With `--csv`, CSV files remain separate detailed exports and may
-have been written before a later dashboard failure.
+The command refuses selections above 250,000 rows or 128 MiB of selected scalar values,
+bounds its required local-key and alias indexes, and charges every JSON/HTML chunk
+before writing up to 128 MiB. It never materializes the full report or document in the
+production path. Its public limit error is generic and recommends a bounded time
+window without echoing project or machine labels, identifiers, paths, or other database
+values. `--json` returns only a deterministic error code and generic hint. Atomic
+replacement prevents a failed generation from truncating a previous dashboard. With
+`--csv`, CSV files remain separate detailed exports and may have been written before a
+later dashboard failure.
 
 Time filters select complete conversations that overlap the requested window. They do
 not redact child records whose individual timestamps fall outside it; related subagent

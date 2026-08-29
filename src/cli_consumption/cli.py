@@ -301,10 +301,26 @@ def export_command(
                     window=window,
                 )
             except DashboardLimitError:
-                raise typer.BadParameter(
-                    "dashboard exceeds safe generation limits; narrow the export "
-                    "with --since and/or --until"
-                ) from None
+                hint = "narrow the export with --since and/or --until"
+                if json_output:
+                    typer.echo(
+                        json.dumps(
+                            {
+                                "error": {
+                                    "code": "dashboard_limit_exceeded",
+                                    "hint": hint,
+                                }
+                            },
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                    )
+                else:
+                    typer.echo(
+                        f"Dashboard exceeds safe generation limits; {hint}.",
+                        err=True,
+                    )
+                raise typer.Exit(code=2) from None
             paths.append(dashboard_path)
     finally:
         engine.dispose()

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
 import tempfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from sqlalchemy.engine import Connection, Engine
 
 from cli_consumption.adapters.registry import ADAPTER_SPECS
 from cli_consumption.reporting import (
-    REPORT_TABLES,
     ExportWindow,
     ReportEstimate,
     estimate_report,
@@ -34,7 +37,19 @@ TOKEN_FIELDS = (
 MAX_DASHBOARD_RECORDS = 250_000
 MAX_DASHBOARD_ESTIMATED_BYTES = 128 * 1024 * 1024
 MAX_DASHBOARD_HTML_BYTES = 128 * 1024 * 1024
-ESTIMATED_ROW_OVERHEAD_BYTES = 192
+MAX_DASHBOARD_INDEX_BYTES = 128 * 1024 * 1024
+DASHBOARD_SECTIONS = (
+    ("conversations", "conversations"),
+    ("turns", "turns"),
+    ("model_calls", "modelCalls"),
+    ("tool_calls", "toolCalls"),
+    ("work_items", "workItems"),
+    ("context_samples", "contextSamples"),
+    ("turn_settings", "turnSettings"),
+    ("compaction_events", "compactions"),
+    ("subagents", "subagents"),
+    ("ingestion_runs", "ingestionRuns"),
+)
 
 
 class DashboardLimitError(RuntimeError):
@@ -49,29 +64,17 @@ def generate_dashboard(
     window: ExportWindow | None = None,
 ) -> None:
     initialize_database(engine)
-    with engine.connect() as connection:
-        if connection.dialect.name == "postgresql":
-            connection = connection.execution_options(isolation_level="REPEATABLE READ")
-        with connection.begin():
-            _enforce_estimate(estimate_report(connection, window))
-            payload = _dashboard_payload(
-                engine,
-                share_safe=share_safe,
-                window=window,
-                _connection=connection,
-            )
-    encoded = json.dumps(
-        payload,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    )
-    encoded = (
-        encoded.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
-    )
-    document_size = len(encoded) + len(_document("").encode("utf-8"))
-    if document_size > MAX_DASHBOARD_HTML_BYTES:
-        raise DashboardLimitError("dashboard_html_limit_exceeded")
-    _atomic_write_text(output, _document(encoded))
+    with _dashboard_snapshot(engine) as connection:
+        _enforce_estimate(estimate_report(connection, window))
+        context = _dashboard_context(
+            connection,
+            share_safe=share_safe,
+            window=window or ExportWindow(),
+        )
+        _atomic_write(
+            output,
+            lambda handle: _stream_dashboard(handle, connection, context),
+        )
 
 
 def _preflight_dashboard(
@@ -80,7 +83,7 @@ def _preflight_dashboard(
     window: ExportWindow | None = None,
 ) -> None:
     initialize_database(engine)
-    with engine.connect() as connection, connection.begin():
+    with _dashboard_snapshot(engine) as connection:
         estimate = estimate_report(connection, window)
     _enforce_estimate(estimate)
 
@@ -88,14 +91,28 @@ def _preflight_dashboard(
 def _enforce_estimate(estimate: ReportEstimate) -> None:
     if estimate.records > MAX_DASHBOARD_RECORDS:
         raise DashboardLimitError("dashboard_record_limit_exceeded")
-    estimated_bytes = (
-        estimate.scalar_bytes + estimate.records * ESTIMATED_ROW_OVERHEAD_BYTES
-    )
-    if estimated_bytes > MAX_DASHBOARD_ESTIMATED_BYTES:
+    if estimate.scalar_bytes > MAX_DASHBOARD_ESTIMATED_BYTES:
         raise DashboardLimitError("dashboard_estimated_size_limit_exceeded")
 
 
-def _atomic_write_text(output: Path, content: str) -> None:
+@contextmanager
+def _dashboard_snapshot(engine: Engine) -> Iterator[Connection]:
+    with engine.connect() as original_connection:
+        connection = original_connection
+        if connection.dialect.name == "postgresql":
+            connection = connection.execution_options(isolation_level="REPEATABLE READ")
+        if connection.dialect.name == "sqlite":
+            connection.exec_driver_sql("BEGIN DEFERRED")
+            try:
+                yield connection
+            finally:
+                connection.rollback()
+            return
+        with connection.begin():
+            yield connection
+
+
+def _atomic_write(output: Path, writer: Callable[[Any], None]) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -108,14 +125,132 @@ def _atomic_write_text(output: Path, content: str) -> None:
             delete=False,
         ) as handle:
             temporary_path = Path(handle.name)
-            handle.write(content)
+            writer(handle)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, output)
+        _fsync_directory(output.parent)
     except BaseException:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
         raise
+
+
+def _atomic_write_text(output: Path, content: str) -> None:
+    def write(handle: TextIO) -> None:
+        handle.write(content)
+
+    _atomic_write(output, write)
+
+
+def _fsync_directory(directory: Path) -> None:
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if directory_flag is None:
+        return
+    try:
+        descriptor = os.open(directory, os.O_RDONLY | directory_flag)
+    except OSError as error:
+        if error.errno in {errno.EINVAL, errno.ENOTSUP}:
+            return
+        raise
+    try:
+        os.fsync(descriptor)
+    except OSError as error:
+        if error.errno not in {errno.EINVAL, errno.ENOTSUP}:
+            raise
+    finally:
+        os.close(descriptor)
+
+
+@dataclass(frozen=True, slots=True)
+class _DashboardContext:
+    window: ExportWindow
+    share_safe: bool
+    conversation_keys: dict[str, int]
+    external_keys: dict[tuple[str, str, str], int]
+    turn_keys: dict[str, int]
+    projects: dict[str, str]
+    machines: dict[str, str]
+    models: dict[str, str]
+    roles: dict[str, str]
+    token_semantics: dict[str, str]
+
+
+class _IndexBudget:
+    def __init__(self) -> None:
+        self.used = 0
+
+    def charge(self, *values: str, overhead: int = 64) -> None:
+        self.used += overhead + sum(len(value.encode("utf-8")) for value in values)
+        if self.used > MAX_DASHBOARD_INDEX_BYTES:
+            raise DashboardLimitError("dashboard_index_limit_exceeded")
+
+
+def _dashboard_context(
+    connection: Connection,
+    *,
+    share_safe: bool,
+    window: ExportWindow,
+) -> _DashboardContext:
+    budget = _IndexBudget()
+    conversation_keys: dict[str, int] = {}
+    external_keys: dict[tuple[str, str, str], int] = {}
+    turn_keys: dict[str, int] = {}
+    project_names: set[str] = set()
+    machine_names: set[str] = set()
+    model_names: set[str] = set()
+    role_names: set[str] = set()
+
+    for index, row in enumerate(iter_report_rows(connection, "conversations", window)):
+        identifier = str(row["id"])
+        external = (
+            str(row["provider"]),
+            str(row["source_machine"]),
+            str(row["external_id"]),
+        )
+        budget.charge(identifier)
+        budget.charge(*external, overhead=96)
+        conversation_keys[identifier] = index
+        external_keys[external] = index
+        if share_safe:
+            _add_bounded(project_names, str(row["project"]), budget)
+            _add_bounded(machine_names, str(row["source_machine"]), budget)
+            for model in json.loads(row["models_json"]):
+                _add_bounded(model_names, str(model), budget)
+    for index, row in enumerate(iter_report_rows(connection, "turns", window)):
+        identifier = str(row["id"])
+        budget.charge(identifier)
+        turn_keys[identifier] = index
+    if share_safe:
+        for row in iter_report_rows(connection, "model_calls", window):
+            _add_bounded(model_names, str(row["model"]), budget)
+        for row in iter_report_rows(connection, "turn_settings", window):
+            if row["model"]:
+                _add_bounded(model_names, str(row["model"]), budget)
+        for row in iter_report_rows(connection, "subagents", window):
+            _add_bounded(
+                role_names,
+                str(row["agent_role"] or "unspecified"),
+                budget,
+            )
+    return _DashboardContext(
+        window=window,
+        share_safe=share_safe,
+        conversation_keys=conversation_keys,
+        external_keys=external_keys,
+        turn_keys=turn_keys,
+        projects=_aliases(project_names, "project", share_safe),
+        machines=_aliases(machine_names, "machine", share_safe),
+        models=_aliases(model_names, "model", share_safe),
+        roles=_aliases(role_names, "role", share_safe),
+        token_semantics={spec.name: spec.token_semantics for spec in ADAPTER_SPECS},
+    )
+
+
+def _add_bounded(values: set[str], value: str, budget: _IndexBudget) -> None:
+    if value not in values:
+        budget.charge(value)
+        values.add(value)
 
 
 def _dashboard_payload(
@@ -125,231 +260,239 @@ def _dashboard_payload(
     window: ExportWindow | None = None,
     _connection: Connection | None = None,
 ) -> dict[str, Any]:
-    """Return only metadata needed by the dashboard, with local relationship keys."""
+    """Materialize a small payload for tests and direct library callers."""
     active_window = window or ExportWindow()
     if _connection is None:
         initialize_database(engine)
-        with engine.connect() as connection, connection.begin():
+        with _dashboard_snapshot(engine) as connection:
             return _dashboard_payload(
                 engine,
                 share_safe=share_safe,
                 window=active_window,
                 _connection=connection,
             )
-    rows = {
-        table_name: list(iter_report_rows(_connection, table_name, active_window))
-        for table_name in REPORT_TABLES
-    }
-    conversations = rows["conversations"]
-    turns = rows["turns"]
-    model_calls = rows["model_calls"]
-    tool_calls = rows["tool_calls"]
-    work_items = rows["work_items"]
-    context_samples = rows["context_samples"]
-    turn_settings = rows["turn_settings"]
-    compaction_events = rows["compaction_events"]
-    subagents = rows["subagents"]
-    ingestion_runs = rows["ingestion_runs"]
+    context = _dashboard_context(
+        _connection,
+        share_safe=share_safe,
+        window=active_window,
+    )
+    payload: dict[str, Any] = {"meta": _dashboard_metadata(context)}
+    for table_name, section_name in DASHBOARD_SECTIONS:
+        payload[section_name] = [
+            _transform_row(table_name, row, context)
+            for row in iter_report_rows(_connection, table_name, active_window)
+        ]
+    return payload
 
-    conversation_keys = {
-        str(row["id"]): index for index, row in enumerate(conversations)
-    }
-    external_keys = {
-        (
-            str(row["provider"]),
-            str(row["source_machine"]),
-            str(row["external_id"]),
-        ): index
-        for index, row in enumerate(conversations)
-    }
-    turn_keys = {str(row["id"]): index for index, row in enumerate(turns)}
-    projects = _aliases(
-        (str(row["project"]) for row in conversations), "project", share_safe
-    )
-    machines = _aliases(
-        (str(row["source_machine"]) for row in conversations),
-        "machine",
-        share_safe,
-    )
-    model_names = {
-        *(
-            str(model)
-            for row in conversations
-            for model in json.loads(row["models_json"])
-        ),
-        *(str(row["model"]) for row in model_calls),
-        *(str(row["model"]) for row in turn_settings if row["model"]),
-    }
-    models = _aliases(model_names, "model", share_safe)
-    roles = _aliases(
-        (str(row["agent_role"] or "unspecified") for row in subagents),
-        "role",
-        share_safe,
-    )
-    token_semantics = {spec.name: spec.token_semantics for spec in ADAPTER_SPECS}
 
+class _BudgetedWriter:
+    def __init__(self, handle: TextIO) -> None:
+        self.handle = handle
+        self.written = 0
+
+    def write(self, value: str) -> None:
+        size = len(value.encode("utf-8"))
+        if self.written + size > MAX_DASHBOARD_HTML_BYTES:
+            raise DashboardLimitError("dashboard_html_limit_exceeded")
+        self.handle.write(value)
+        self.written += size
+
+
+def _stream_dashboard(
+    handle: TextIO,
+    connection: Connection,
+    context: _DashboardContext,
+) -> None:
+    prefix, suffix = _document_parts()
+    writer = _BudgetedWriter(handle)
+    writer.write(prefix)
+    writer.write("{")
+    writer.write('"meta":')
+    writer.write(_encode_json(_dashboard_metadata(context)))
+    for table_name, section_name in DASHBOARD_SECTIONS:
+        writer.write(f',"{section_name}":[')
+        first = True
+        for row in iter_report_rows(connection, table_name, context.window):
+            encoded = _encode_json(_transform_row(table_name, row, context))
+            if not first:
+                writer.write(",")
+            writer.write(encoded)
+            first = False
+        writer.write("]")
+    writer.write("}")
+    writer.write(suffix)
+
+
+def _document_parts() -> tuple[str, str]:
+    marker = "__CLI_CONSUMPTION_STREAMED_PAYLOAD__"
+    prefix, separator, suffix = _document(marker).partition(marker)
+    if not separator:
+        raise RuntimeError("dashboard_template_marker_missing")
+    return prefix, suffix
+
+
+def _encode_json(value: Any) -> str:
+    encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=True)
+    return (
+        encoded.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+    )
+
+
+def _dashboard_metadata(context: _DashboardContext) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"shareSafe": context.share_safe}
+    if context.window.bounded:
+        metadata["exportWindow"] = context.window.metadata(
+            day_precision=context.share_safe
+        )
+    return metadata
+
+
+def _transform_row(
+    table_name: str,
+    row: dict[str, Any],
+    context: _DashboardContext,
+) -> dict[str, Any]:
     def timestamp(value: Any) -> Any:
-        return _round_timestamp(value) if share_safe else value
+        return _round_timestamp(value) if context.share_safe else value
 
     def epoch(value: Any) -> Any:
-        return _round_epoch_day(value) if share_safe else value
+        return _round_epoch_day(value) if context.share_safe else value
 
     def tool(value: Any) -> Any:
-        if not share_safe or value is None:
+        if not context.share_safe or value is None:
             return value
         return _tool_category(str(value))
 
-    def tokens(row: dict[str, Any]) -> dict[str, int]:
+    def alias(mapping: dict[str, str], value: Any, prefix: str) -> str:
+        text = str(value)
+        if not context.share_safe:
+            return text
+        return mapping.get(text, f"{prefix}-unmapped")
+
+    def tokens() -> dict[str, int]:
         return {field: int(row[field]) for field in TOKEN_FIELDS}
 
-    metadata: dict[str, Any] = {"shareSafe": share_safe}
-    if active_window.bounded:
-        metadata["exportWindow"] = active_window.metadata(day_precision=share_safe)
-
-    return {
-        "meta": metadata,
-        "conversations": [
-            {
-                "key": index,
-                "provider": row["provider"],
-                "tokenSemantics": token_semantics.get(
-                    str(row["provider"]), "unavailable"
-                ),
-                "machine": machines[str(row["source_machine"])],
-                "project": projects[str(row["project"])],
-                "startedAt": timestamp(row["started_at"]),
-                "endedAt": timestamp(row["ended_at"]),
-                "durationSeconds": row["duration_seconds"],
-                "models": [
-                    models[str(model)] for model in json.loads(row["models_json"])
-                ],
-                "turns": row["iterations"],
-                "modelCalls": row["model_calls"],
-                "toolCalls": row["tool_calls"],
-                "compactions": row["compactions"],
-                **tokens(row),
-            }
-            for index, row in enumerate(conversations)
-        ],
-        "turns": [
-            {
-                "key": index,
-                "conversationKey": conversation_keys[str(row["conversation_id"])],
-                "startedAt": timestamp(row["started_at"]),
-                "endedAt": timestamp(row["ended_at"]),
-                "status": row["status"],
-                "durationMs": row["duration_ms"],
-                "ttftMs": row["time_to_first_token_ms"],
-                "modelCalls": row["model_calls"],
-                "toolCalls": row["tool_calls"],
-                **tokens(row),
-            }
-            for index, row in enumerate(turns)
-        ],
-        "modelCalls": [
-            {
-                "conversationKey": conversation_keys[str(row["conversation_id"])],
-                "turnKey": turn_keys.get(str(row["turn_id"])),
-                "timestamp": timestamp(row["timestamp"]),
-                "model": models[str(row["model"])],
-                **tokens(row),
-            }
-            for row in model_calls
-        ],
-        "toolCalls": [
-            {
-                "conversationKey": conversation_keys[str(row["conversation_id"])],
-                "turnKey": turn_keys.get(str(row["turn_id"])),
-                "sequence": row["sequence"],
-                "timestamp": timestamp(row["timestamp"]),
-                "tool": tool(row["tool_name"]),
-            }
-            for row in tool_calls
-        ],
-        "workItems": [
-            {
-                "conversationKey": conversation_keys[str(row["conversation_id"])],
-                "turnKey": turn_keys.get(str(row["turn_id"])),
-                "kind": row["kind"],
-                "tool": tool(row["tool_name"]),
-                "startedAtMs": epoch(row["started_at_ms"]),
-                "durationMs": row["duration_ms"],
-                "status": row["status"],
-            }
-            for row in work_items
-        ],
-        "contextSamples": [
-            {
-                "conversationKey": conversation_keys[str(row["conversation_id"])],
-                "turnKey": turn_keys.get(str(row["turn_id"])),
-                "timestamp": timestamp(row["timestamp"]),
-                "inputTokens": row["input_tokens"],
-                "contextWindowTokens": row["context_window_tokens"],
-            }
-            for row in context_samples
-        ],
-        "turnSettings": [
-            {
-                "conversationKey": conversation_keys[str(row["conversation_id"])],
-                "turnKey": turn_keys.get(str(row["turn_id"])),
-                "model": models[str(row["model"])] if row["model"] else None,
-                "effort": row["effort"],
-                "mode": row["collaboration_mode"],
-                "tier": row["service_tier"],
-                "contextWindowTokens": row["context_window_tokens"],
-            }
-            for row in turn_settings
-        ],
-        "compactions": [
-            {
-                "conversationKey": conversation_keys[str(row["conversation_id"])],
-                "turnKey": turn_keys.get(str(row["turn_id"])),
-                "timestamp": timestamp(row["timestamp"]),
-            }
-            for row in compaction_events
-        ],
-        "subagents": [
-            {
-                "conversationKey": external_keys.get(
-                    (
-                        str(row["provider"]),
-                        str(row["source_machine"]),
-                        str(row["parent_thread_id"]),
-                    )
-                ),
-                "childConversationKey": external_keys.get(
-                    (
-                        str(row["provider"]),
-                        str(row["source_machine"]),
-                        str(row["child_thread_id"]),
-                    )
-                ),
-                "provider": row["provider"],
-                "machine": machines.get(
-                    str(row["source_machine"]),
-                    "machine-unmapped" if share_safe else row["source_machine"],
-                ),
-                "status": row["status"],
-                "createdAtMs": epoch(row["created_at_ms"]),
-                "updatedAtMs": epoch(row["updated_at_ms"]),
-                "role": roles[str(row["agent_role"] or "unspecified")],
-                "tokens": row["tokens_used"],
-            }
-            for row in subagents
-        ],
-        "ingestionRuns": [
-            {
-                "provider": row["provider"],
-                "ingestedAt": timestamp(row["ingested_at"]),
-                "received": row["conversations_received"],
-                "written": row["conversations_written"],
-                "skipped": row["conversations_skipped"],
-                "malformed": row["malformed_records"],
-                "duplicates": row["duplicate_conversations"],
-            }
-            for row in ingestion_runs
-        ],
-    }
+    if table_name == "conversations":
+        return {
+            "key": context.conversation_keys[str(row["id"])],
+            "provider": row["provider"],
+            "tokenSemantics": context.token_semantics.get(
+                str(row["provider"]), "unavailable"
+            ),
+            "machine": alias(context.machines, row["source_machine"], "machine"),
+            "project": alias(context.projects, row["project"], "project"),
+            "startedAt": timestamp(row["started_at"]),
+            "endedAt": timestamp(row["ended_at"]),
+            "durationSeconds": row["duration_seconds"],
+            "models": [
+                alias(context.models, model, "model")
+                for model in json.loads(row["models_json"])
+            ],
+            "turns": row["iterations"],
+            "modelCalls": row["model_calls"],
+            "toolCalls": row["tool_calls"],
+            "compactions": row["compactions"],
+            **tokens(),
+        }
+    conversation_key = context.conversation_keys.get(str(row.get("conversation_id")))
+    turn_key = context.turn_keys.get(str(row.get("turn_id")))
+    if table_name == "turns":
+        return {
+            "key": context.turn_keys[str(row["id"])],
+            "conversationKey": conversation_key,
+            "startedAt": timestamp(row["started_at"]),
+            "endedAt": timestamp(row["ended_at"]),
+            "status": row["status"],
+            "durationMs": row["duration_ms"],
+            "ttftMs": row["time_to_first_token_ms"],
+            "modelCalls": row["model_calls"],
+            "toolCalls": row["tool_calls"],
+            **tokens(),
+        }
+    if table_name == "model_calls":
+        return {
+            "conversationKey": conversation_key,
+            "turnKey": turn_key,
+            "timestamp": timestamp(row["timestamp"]),
+            "model": alias(context.models, row["model"], "model"),
+            **tokens(),
+        }
+    if table_name == "tool_calls":
+        return {
+            "conversationKey": conversation_key,
+            "turnKey": turn_key,
+            "sequence": row["sequence"],
+            "timestamp": timestamp(row["timestamp"]),
+            "tool": tool(row["tool_name"]),
+        }
+    if table_name == "work_items":
+        return {
+            "conversationKey": conversation_key,
+            "turnKey": turn_key,
+            "kind": row["kind"],
+            "tool": tool(row["tool_name"]),
+            "startedAtMs": epoch(row["started_at_ms"]),
+            "durationMs": row["duration_ms"],
+            "status": row["status"],
+        }
+    if table_name == "context_samples":
+        return {
+            "conversationKey": conversation_key,
+            "turnKey": turn_key,
+            "timestamp": timestamp(row["timestamp"]),
+            "inputTokens": row["input_tokens"],
+            "contextWindowTokens": row["context_window_tokens"],
+        }
+    if table_name == "turn_settings":
+        return {
+            "conversationKey": conversation_key,
+            "turnKey": turn_key,
+            "model": (
+                alias(context.models, row["model"], "model") if row["model"] else None
+            ),
+            "effort": row["effort"],
+            "mode": row["collaboration_mode"],
+            "tier": row["service_tier"],
+            "contextWindowTokens": row["context_window_tokens"],
+        }
+    if table_name == "compaction_events":
+        return {
+            "conversationKey": conversation_key,
+            "turnKey": turn_key,
+            "timestamp": timestamp(row["timestamp"]),
+        }
+    if table_name == "subagents":
+        common = (str(row["provider"]), str(row["source_machine"]))
+        return {
+            "conversationKey": context.external_keys.get(
+                (*common, str(row["parent_thread_id"]))
+            ),
+            "childConversationKey": context.external_keys.get(
+                (*common, str(row["child_thread_id"]))
+            ),
+            "provider": row["provider"],
+            "machine": alias(context.machines, row["source_machine"], "machine"),
+            "status": row["status"],
+            "createdAtMs": epoch(row["created_at_ms"]),
+            "updatedAtMs": epoch(row["updated_at_ms"]),
+            "role": alias(
+                context.roles,
+                row["agent_role"] or "unspecified",
+                "role",
+            ),
+            "tokens": row["tokens_used"],
+        }
+    if table_name == "ingestion_runs":
+        return {
+            "provider": row["provider"],
+            "ingestedAt": timestamp(row["ingested_at"]),
+            "received": row["conversations_received"],
+            "written": row["conversations_written"],
+            "skipped": row["conversations_skipped"],
+            "malformed": row["malformed_records"],
+            "duplicates": row["duplicate_conversations"],
+        }
+    raise ValueError("unknown_dashboard_table")
 
 
 def _aliases(values: Any, prefix: str, enabled: bool) -> dict[str, str]:

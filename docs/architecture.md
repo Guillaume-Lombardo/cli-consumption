@@ -132,18 +132,29 @@ conversation, while ingestion runs are filtered by their own timestamp. All tabl
 ordered by primary key. CSV output consumes streamed batches rather than materializing
 each table, and neutralizes text that spreadsheet software could execute as a formula.
 
-Before a dashboard materializes those ten report tables, one compound SQL statement
-counts the complete selected graph and estimates its scalar byte size. Using one
-statement keeps all table estimates on one database snapshot. The preflight and row
-reads then share a transaction; PostgreSQL uses repeatable-read isolation. Generation
-is refused above 250,000 selected rows or an estimated 128 MiB, and the encoded HTML
-has a separate 128 MiB limit. Limit errors expose no labels, IDs, paths, or database
-values and direct the operator to `--since` and `--until`.
+Before a dashboard streams those ten report tables, one compound SQL statement counts
+the complete selected graph and measures its selected scalar byte size. Using one
+statement keeps all table estimates on one database snapshot. The preflight, bounded
+key/alias prepasses, and streamed row reads then share a transaction. SQLite executes
+an explicit `BEGIN DEFERRED` before the preflight, and PostgreSQL uses repeatable-read
+isolation. Generation is refused above 250,000 selected rows or 128 MiB of selected
+scalar values. Conversation, turn, external-key, and share-safe alias indexes have a
+separate conservative 128 MiB in-memory budget.
+
+Rows are transformed and JSON-encoded one at a time directly into the temporary HTML;
+the production path never materializes all SQL rows, the full dashboard payload, the
+complete JSON string, or the complete HTML document in memory. Every encoded chunk is
+charged before writing and the complete HTML has an exact 128 MiB limit. Limit errors
+expose no labels, IDs, paths, or database values and direct the operator to `--since`
+and `--until`.
 
 The HTML is written to a uniquely named temporary file in the destination directory,
-flushed and synchronized, then installed with an atomic replacement. A failure before
-replacement leaves an existing dashboard intact and removes only the temporary file
-owned by that generation attempt; unrelated stale temporary files are not deleted.
+flushed and synchronized, then installed with an atomic replacement. The destination
+directory is synchronized after replacement on platforms and filesystems that support
+directory `fsync`; unsupported directory synchronization falls back explicitly to the
+atomic rename guarantee. A failure before replacement leaves an existing dashboard
+intact and removes only the temporary file owned by that generation attempt; unrelated
+stale temporary files are not deleted.
 CSV files retain their independent streaming behavior, so `export --csv` plus a
 dashboard is not an atomic transaction for the entire output directory.
 

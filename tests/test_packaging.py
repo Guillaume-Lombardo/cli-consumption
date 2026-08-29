@@ -27,6 +27,9 @@ def test_python_support_and_optional_dependencies_are_declared() -> None:
         "server": ["fastapi>=0.115", "uvicorn>=0.34"],
         "sync": ["httpx>=0.27"],
     }
+    assert project["urls"]["Changelog"] == (
+        "https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/CHANGELOG.md"
+    )
     assert configuration["tool"]["ruff"]["target-version"] == "py312"
 
 
@@ -56,6 +59,7 @@ def test_distribution_artifact_contract(tmp_path: Path) -> None:
         # Hatchling deliberately carries the active VCS ignore file into sdists so
         # downstream rebuilds keep excluding local build and cache artifacts.
         f"{distribution_root}/.gitignore",
+        f"{distribution_root}/CHANGELOG.md",
         f"{distribution_root}/LICENSE",
         f"{distribution_root}/NOTICE",
         f"{distribution_root}/PKG-INFO",

@@ -60,29 +60,29 @@ uv tool run --from git+https://github.com/Guillaume-Lombardo/cli-consumption \
 `--provider all` detects the supported data stores found in their default locations.
 Use the provider name below with `--provider` to select one CLI explicitly.
 
-| CLI | Provider name | Default local source | Particularities and limits |
-| --- | --- | --- | --- |
-| Aider | `aider` | `~/.aider/analytics.jsonl` | Requires opt-in analytics logging; no projects, tools, cache/reasoning split, or provider-reported durations. |
-| Amazon Q Developer CLI | `amazon-q` | `~/.local/share/amazon-q/data.sqlite3` | Persistent conversations only; request timing is available, but token counters are not. |
-| Amp | `amp` | `~/.local/share/amp/threads/` | Per-inference tokens and context windows; no subthreads, compactions, reasoning split, or latency. |
-| Claude Code | `claude` | `~/.claude/projects/` | Main sessions, tokens, tools, and compactions; no subagents, context windows, or provider-reported durations. `claude-code` is accepted as an alias. |
-| Cline CLI | `cline` | `~/.cline/data/sessions/sessions.db` | Uses the session index and message artifacts; no costs or arbitrary task metadata. |
-| Codex | `codex` | `~/.codex/sessions/` | Richest support: timing, context pressure, settings, compactions, work items, and subagent relationships. |
-| Continue CLI | `continue` | `~/.continue/sessions/` | Token usage when present; session files lack reliable per-message timing and duration. |
-| Crush | `crush` | `~/.local/share/crush/` | Reads registered per-project SQLite stores; token counters are a latest-context snapshot, not additive usage. |
-| Cursor CLI | `cursor` | `~/.cursor/` | Composer 2 transcripts and chat metadata; no per-message time or tokens, and model attribution is incomplete. |
-| Gemini CLI | `gemini` | `~/.gemini/tmp/` | Replays active history and rewinds; hashed projects are not reversed and nested agents are excluded. |
-| GitHub Copilot CLI | `copilot` | `~/.copilot/session-state/` | Tokens are latest shutdown aggregates and cannot be assigned to individual turns. |
-| Goose | `goose` | `~/.local/share/goose/sessions/sessions.db` | Supports SQLite schema v16; no legacy JSONL, subagents, reasoning tokens, or latency. |
-| Grok Build | `grok` | `~/.grok/sessions/` | Per-prompt aggregates, reasoning effort, TTFT, and auto-compactions; no costs or subagent relationships. |
-| Kilo Code | `kilo` | `~/.local/share/kilo/kilo.db` | CLI SQLite store only; excludes legacy IDE tasks, cloud sessions, subagents, context windows, and costs. |
-| Kimi Code CLI | `kimi` | `~/.kimi/sessions/` | Wire v1 events, context windows, and compactions; selected model is not persisted and is reported as `unknown`. |
-| Mistral Vibe CLI | `mistral-vibe` | `~/.vibe/logs/session/` | Session-level token aggregates, user turns, tools, and compactions; no per-message timestamps or historical model attribution. |
-| OpenCode | `opencode` | `~/.local/share/opencode/opencode.db` | SQLite v2 only; no legacy storage, child sessions, context windows, or costs. |
-| OpenHands CLI | `openhands` | `~/.openhands/conversations/` | SDK persistence with context windows, reasoning effort, and condensations; excludes cloud-only conversations and delegates. |
-| Pi | `pi` | `~/.pi/agent/sessions/` | Counts all persisted branches; no branch relationships, custom-directory auto-detection, context windows, or provider-reported durations. |
-| Plandex | `plandex` | `/plandex-server` | Requires an offline copy of a self-hosted `PLANDEX_BASE_DIR`; hosted accounts are not accessed, and models/tools are unavailable. |
-| Qwen Code | `qwen` | `~/.qwen/projects/` | Follows the active branch and records context windows and compactions; excludes archived and sidechain sessions. |
+| CLI | Provider name | Aliases | Default local source | Token semantics | Particularities and limits |
+| --- | --- | --- | --- | --- | --- |
+| Aider | `aider` | — | `~/.aider/analytics.jsonl` | `additive` | Requires opt-in analytics logging; no projects, tools, cache/reasoning split, or provider-reported durations. |
+| Amazon Q Developer CLI | `amazon-q` | — | `~/.local/share/amazon-q/data.sqlite3` | `unavailable` | Persistent conversations only; request timing is available, but token counters are not. |
+| Amp | `amp` | — | `~/.local/share/amp/threads/` | `additive` | Per-inference tokens and context windows; no subthreads, compactions, reasoning split, or latency. |
+| Claude Code | `claude` | `claude-code` | `~/.claude/projects/` | `additive` | Main sessions, tokens, tools, and compactions; no subagents, context windows, or provider-reported durations. |
+| Cline CLI | `cline` | — | `~/.cline/data/sessions/sessions.db` | `additive` | Uses the session index and message artifacts; no costs or arbitrary task metadata. |
+| Codex | `codex` | — | `~/.codex/sessions/` | `additive` | Richest support: timing, context pressure, settings, compactions, work items, and subagent relationships. |
+| Continue CLI | `continue` | — | `~/.continue/sessions/` | `additive` | Token usage when present; session files lack reliable per-message timing and duration. |
+| Crush | `crush` | — | `~/.local/share/crush/` | `context-snapshot` | Reads registered per-project SQLite stores; token counters are a latest-context snapshot, not additive usage. |
+| Cursor CLI | `cursor` | — | `~/.cursor/` | `unavailable` | Composer 2 transcripts and chat metadata; no per-message time or tokens, and model attribution is incomplete. |
+| Gemini CLI | `gemini` | — | `~/.gemini/tmp/` | `additive` | Replays active history and rewinds; hashed projects are not reversed and nested agents are excluded. |
+| GitHub Copilot CLI | `copilot` | — | `~/.copilot/session-state/` | `conversation-aggregate` | Tokens are latest shutdown aggregates and cannot be assigned to individual turns. |
+| Goose | `goose` | — | `~/.local/share/goose/sessions/sessions.db` | `additive` | Supports SQLite schema v16; no legacy JSONL, subagents, reasoning tokens, or latency. |
+| Grok Build | `grok` | — | `~/.grok/sessions/` | `additive` | Per-prompt aggregates, reasoning effort, TTFT, and auto-compactions; no costs or subagent relationships. |
+| Kilo Code | `kilo` | — | `~/.local/share/kilo/kilo.db` | `additive` | CLI SQLite store only; excludes legacy IDE tasks, cloud sessions, subagents, context windows, and costs. |
+| Kimi Code CLI | `kimi` | — | `~/.kimi/sessions/` | `additive` | Wire v1 events, context windows, and compactions; selected model is not persisted and is reported as `unknown`. |
+| Mistral Vibe CLI | `mistral-vibe` | — | `~/.vibe/logs/session/` | `conversation-aggregate` | Session-level token aggregates, user turns, tools, and compactions; no per-message timestamps or historical model attribution. |
+| OpenCode | `opencode` | — | `~/.local/share/opencode/opencode.db` | `additive` | SQLite v2 only; no legacy storage, child sessions, context windows, or costs. |
+| OpenHands CLI | `openhands` | — | `~/.openhands/conversations/` | `additive` | SDK persistence with context windows, reasoning effort, and condensations; excludes cloud-only conversations and delegates. |
+| Pi | `pi` | — | `~/.pi/agent/sessions/` | `additive` | Counts all persisted branches; no branch relationships, custom-directory auto-detection, context windows, or provider-reported durations. |
+| Plandex | `plandex` | — | `/plandex-server` | `additive` | Requires an offline copy of a self-hosted `PLANDEX_BASE_DIR`; hosted accounts are not accessed, and models/tools are unavailable. |
+| Qwen Code | `qwen` | — | `~/.qwen/projects/` | `additive` | Follows the active branch and records context windows and compactions; excludes archived and sidechain sessions. |
 
 Provider formats are internal and can change without notice. The detailed extraction
 rules and qualification versions are documented in

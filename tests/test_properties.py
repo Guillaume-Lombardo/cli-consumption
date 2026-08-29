@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from hypothesis import given
@@ -25,6 +26,8 @@ INSTANTS = st.datetimes(
     timezones=st.timezones(),
     allow_imaginary=False,
 )
+# ``st.timezones()`` supplies zoneinfo-based IANA zones; deterministic transition
+# examples below ensure DST folds remain covered even if generated examples vary.
 
 
 @given(first=INSTANTS, second=INSTANTS)
@@ -63,6 +66,9 @@ TOKEN_COMPONENTS = st.tuples(
     st.integers(min_value=0, max_value=MAX_BIGINT // 9),
     st.integers(min_value=0, max_value=MAX_BIGINT // 9),
 )
+POSITIVE_TOKEN_COMPONENTS = st.tuples(
+    *(st.integers(min_value=1, max_value=MAX_BIGINT // 100) for _ in range(6))
+)
 
 
 def _tokens(components: tuple[int, int, int, int, int, int]) -> dict[str, int]:
@@ -91,15 +97,27 @@ def test_token_composition_accepts_exact_additive_components(
     )
 
 
-@given(
-    components=TOKEN_COMPONENTS,
-    total_delta=st.integers(min_value=1, max_value=MAX_BIGINT // 9),
+@pytest.mark.parametrize(
+    ("invariant", "direction"),
+    [
+        (invariant, direction)
+        for invariant in ("input_tokens", "output_tokens", "total_tokens")
+        for direction in (-1, 1)
+    ],
 )
-def test_token_composition_rejects_any_inconsistent_total(
-    components: tuple[int, int, int, int, int, int], total_delta: int
+@given(
+    components=POSITIVE_TOKEN_COMPONENTS,
+    raw_delta=st.integers(min_value=1, max_value=MAX_BIGINT // 100),
+)
+def test_token_composition_rejects_each_invariant_in_both_directions(
+    invariant: str,
+    direction: int,
+    components: tuple[int, int, int, int, int, int],
+    raw_delta: int,
 ) -> None:
     tokens = _tokens(components)
-    tokens["total_tokens"] += total_delta
+    delta = min(raw_delta, tokens[invariant]) if direction < 0 else raw_delta
+    tokens[invariant] += direction * delta
     with pytest.raises(ValidationError):
         TokenRecord.model_validate(tokens)
 
@@ -217,3 +235,61 @@ def test_conversation_record_accepts_documented_integer_boundaries() -> None:
         }
     )
     assert record.event_count == MAX_INTEGER
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        _tokens((0, 0, 0, 0, 0, 0)),
+        {
+            **_tokens((0, 0, 0, 0, 0, 0)),
+            "input_tokens": MAX_BIGINT,
+            "cached_input_tokens": MAX_BIGINT,
+            "total_tokens": MAX_BIGINT,
+        },
+        {
+            **_tokens((0, 0, 0, 0, 0, 0)),
+            "input_tokens": MAX_BIGINT,
+            "cache_write_input_tokens": MAX_BIGINT,
+            "total_tokens": MAX_BIGINT,
+        },
+        {
+            **_tokens((0, 0, 0, 0, 0, 0)),
+            "input_tokens": MAX_BIGINT,
+            "uncached_input_tokens": MAX_BIGINT,
+            "total_tokens": MAX_BIGINT,
+        },
+        {
+            **_tokens((0, 0, 0, 0, 0, 0)),
+            "output_tokens": MAX_BIGINT,
+            "reasoning_output_tokens": MAX_BIGINT,
+            "total_tokens": MAX_BIGINT,
+        },
+        {
+            **_tokens((0, 0, 0, 0, 0, 0)),
+            "output_tokens": MAX_BIGINT,
+            "visible_output_tokens": MAX_BIGINT,
+            "total_tokens": MAX_BIGINT,
+        },
+        {
+            **_tokens((0, 0, 0, 0, 0, 0)),
+            "unattributed_tokens": MAX_BIGINT,
+            "total_tokens": MAX_BIGINT,
+        },
+    ],
+)
+def test_token_composition_accepts_zero_and_actual_bigint_boundaries(
+    tokens: dict[str, int],
+) -> None:
+    assert TokenRecord.model_validate(tokens).model_dump() == tokens
+
+
+def test_canonical_timestamps_order_repeated_hour_across_dst_fold() -> None:
+    paris = ZoneInfo("Europe/Paris")
+    first_occurrence = datetime(2026, 10, 25, 2, 30, fold=0, tzinfo=paris)
+    second_occurrence = datetime(2026, 10, 25, 2, 30, fold=1, tzinfo=paris)
+
+    assert first_occurrence.utcoffset() != second_occurrence.utcoffset()
+    assert canonical_timestamp(first_occurrence) < canonical_timestamp(
+        second_occurrence
+    )

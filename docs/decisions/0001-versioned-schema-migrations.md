@@ -37,11 +37,15 @@ scope rows and is stamped directly at head. Older recognized layouts still repla
 required forward migrations.
 
 Schema inspection, adoption, and migration are serialized for concurrent processes of
-the same application version. SQLite holds a `BEGIN IMMEDIATE` transaction across the
-decision and migration. PostgreSQL holds a database-scoped session advisory lock with
-a package-defined key across the same operation. Concurrent callers re-check the
-revision only after acquiring that lock, so one migrates and the others observe the
-result. This coordination does not make mixed application versions supported.
+the same application version in one outer transaction. SQLite waits at most 15 seconds
+for `BEGIN IMMEDIATE`, then holds that transaction across the decision and migration.
+PostgreSQL takes a database-scoped `pg_advisory_xact_lock` with a package-defined key
+inside the same transaction; transaction pooling is therefore safe and commit or
+rollback releases the lock automatically. Alembic joins the already active external
+transaction and cannot expose an intermediate revision. Concurrent callers re-check
+the revision only after acquiring the lock, so one migrates and the others observe the
+result. Lock timeouts and migration failures retain the generic compatibility error.
+This coordination does not make mixed application versions supported.
 
 ## Deployment and rollback
 

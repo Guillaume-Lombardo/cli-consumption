@@ -19,6 +19,7 @@ class SchemaCompatibilityError(RuntimeError):
 
 # Stable signed-bigint advisory-lock namespace for ``b"cli-cons"``.
 POSTGRESQL_MIGRATION_LOCK = 7_164_216_750_902_308_467
+SQLITE_MIGRATION_LOCK_TIMEOUT_MS = 15_000
 
 
 BASELINE_COLUMNS: dict[str, frozenset[str]] = {
@@ -331,27 +332,33 @@ def _reject_unpublished_schema() -> None:
 
 @contextmanager
 def _migration_lock(connection: Connection):
-    """Serialize schema inspection and migration for one supported database."""
+    """Serialize one schema operation in a single database transaction."""
     dialect = connection.dialect.name
     if dialect == "sqlite":
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
-    elif dialect == "postgresql":
-        connection.execute(
-            text("SELECT pg_advisory_lock(:key)"),
-            {"key": POSTGRESQL_MIGRATION_LOCK},
+        connection.exec_driver_sql(
+            f"PRAGMA busy_timeout = {SQLITE_MIGRATION_LOCK_TIMEOUT_MS}"
         )
         connection.commit()
+        transaction = connection.begin()
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+    elif dialect == "postgresql":
+        transaction = connection.begin()
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": POSTGRESQL_MIGRATION_LOCK},
+        )
+    else:  # pragma: no cover - guarded by the supported database backends
+        raise RuntimeError("Unsupported database backend")
     try:
         yield
+    except BaseException:
+        transaction.rollback()
+        raise
+    else:
+        transaction.commit()
     finally:
-        if connection.in_transaction():
+        if transaction.is_active:
             connection.rollback()
-        if dialect == "postgresql":
-            connection.execute(
-                text("SELECT pg_advisory_unlock(:key)"),
-                {"key": POSTGRESQL_MIGRATION_LOCK},
-            )
-            connection.commit()
 
 
 def upgrade_database(engine: Engine) -> None:
@@ -378,7 +385,6 @@ def upgrade_database(engine: Engine) -> None:
                 command.stamp(config, "head")
             else:
                 command.upgrade(config, "head")
-            connection.commit()
             migrated_heads = tuple(
                 MigrationContext.configure(connection).get_current_heads()
             )
@@ -413,7 +419,6 @@ def downgrade_database(engine: Engine, revision: str = "0001") -> None:
                     "The current database schema revision is unknown"
                 )
             command.downgrade(config, revision)
-            connection.commit()
             migrated_heads = tuple(
                 MigrationContext.configure(connection).get_current_heads()
             )

@@ -51,6 +51,8 @@ class AdapterSpec:
     aliases: tuple[str, ...] = ()
     support: SupportStatus = "supported"
     token_semantics: TokenSemantics = "unavailable"
+    # Exact presentation value for maintained docs; never emitted by diagnostics.
+    documented_source: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,20 +81,38 @@ ADAPTER_SPECS = (
         AiderAdapter,
         ".aider",
         ("analytics.jsonl",),
+        documented_source="~/.aider/analytics.jsonl",
         token_semantics="additive",
     ),
-    AdapterSpec("amazon-q", AmazonQAdapter, ".local/share/amazon-q", ("data.sqlite3",)),
     AdapterSpec(
-        "amp", AmpAdapter, ".local/share/amp", ("threads",), token_semantics="additive"
+        "amazon-q",
+        AmazonQAdapter,
+        ".local/share/amazon-q",
+        ("data.sqlite3",),
+        documented_source="~/.local/share/amazon-q/data.sqlite3",
     ),
     AdapterSpec(
-        "codex", CodexAdapter, ".codex", ("sessions",), token_semantics="additive"
+        "amp",
+        AmpAdapter,
+        ".local/share/amp",
+        ("threads",),
+        documented_source="~/.local/share/amp/threads/",
+        token_semantics="additive",
+    ),
+    AdapterSpec(
+        "codex",
+        CodexAdapter,
+        ".codex",
+        ("sessions",),
+        documented_source="~/.codex/sessions/",
+        token_semantics="additive",
     ),
     AdapterSpec(
         "copilot",
         CopilotAdapter,
         ".copilot",
         ("session-state",),
+        documented_source="~/.copilot/session-state/",
         token_semantics="conversation-aggregate",
     ),
     AdapterSpec(
@@ -100,6 +120,7 @@ ADAPTER_SPECS = (
         ContinueAdapter,
         ".continue",
         ("sessions",),
+        documented_source="~/.continue/sessions/",
         token_semantics="additive",
     ),
     AdapterSpec(
@@ -107,6 +128,7 @@ ADAPTER_SPECS = (
         CrushAdapter,
         ".local/share/crush",
         ("projects.json", "crush.db", ".crush/crush.db"),
+        documented_source="~/.local/share/crush/",
         token_semantics="context-snapshot",
     ),
     AdapterSpec(
@@ -114,15 +136,22 @@ ADAPTER_SPECS = (
         CursorAdapter,
         ".cursor",
         ("chats", "projects/*/agent-transcripts"),
+        documented_source="~/.cursor/",
     ),
     AdapterSpec(
-        "gemini", GeminiAdapter, ".gemini", ("tmp",), token_semantics="additive"
+        "gemini",
+        GeminiAdapter,
+        ".gemini",
+        ("tmp",),
+        documented_source="~/.gemini/tmp/",
+        token_semantics="additive",
     ),
     AdapterSpec(
         "goose",
         GooseAdapter,
         ".local/share/goose/sessions",
         ("sessions.db",),
+        documented_source="~/.local/share/goose/sessions/sessions.db",
         token_semantics="additive",
     ),
     AdapterSpec(
@@ -130,6 +159,7 @@ ADAPTER_SPECS = (
         GrokAdapter,
         ".grok",
         ("sessions/*/*/summary.json",),
+        documented_source="~/.grok/sessions/",
         token_semantics="additive",
     ),
     AdapterSpec(
@@ -137,6 +167,7 @@ ADAPTER_SPECS = (
         ClaudeAdapter,
         ".claude",
         ("projects/*/*.jsonl",),
+        documented_source="~/.claude/projects/",
         aliases=("claude-code",),
         token_semantics="additive",
     ),
@@ -145,6 +176,7 @@ ADAPTER_SPECS = (
         ClineAdapter,
         ".cline/data",
         ("sessions/sessions.db",),
+        documented_source="~/.cline/data/sessions/sessions.db",
         token_semantics="additive",
     ),
     AdapterSpec(
@@ -152,6 +184,7 @@ ADAPTER_SPECS = (
         KiloAdapter,
         ".local/share/kilo",
         ("kilo.db",),
+        documented_source="~/.local/share/kilo/kilo.db",
         token_semantics="additive",
     ),
     AdapterSpec(
@@ -159,6 +192,7 @@ ADAPTER_SPECS = (
         KimiAdapter,
         ".kimi",
         ("sessions/*/*/wire.jsonl",),
+        documented_source="~/.kimi/sessions/",
         token_semantics="additive",
     ),
     AdapterSpec(
@@ -166,6 +200,7 @@ ADAPTER_SPECS = (
         MistralVibeAdapter,
         ".vibe",
         ("logs/session/*/meta.json",),
+        documented_source="~/.vibe/logs/session/",
         token_semantics="conversation-aggregate",
     ),
     AdapterSpec(
@@ -173,6 +208,7 @@ ADAPTER_SPECS = (
         OpenCodeAdapter,
         ".local/share/opencode",
         ("opencode.db",),
+        documented_source="~/.local/share/opencode/opencode.db",
         token_semantics="additive",
     ),
     AdapterSpec(
@@ -180,16 +216,23 @@ ADAPTER_SPECS = (
         OpenHandsAdapter,
         ".openhands",
         ("conversations/*/base_state.json",),
+        documented_source="~/.openhands/conversations/",
         token_semantics="additive",
     ),
     AdapterSpec(
-        "pi", PiAdapter, ".pi/agent", ("sessions",), token_semantics="additive"
+        "pi",
+        PiAdapter,
+        ".pi/agent",
+        ("sessions",),
+        documented_source="~/.pi/agent/sessions/",
+        token_semantics="additive",
     ),
     AdapterSpec(
         "plandex",
         PlandexAdapter,
         "/plandex-server",
         ("orgs/*/plans/*/conversation",),
+        documented_source="/plandex-server",
         token_semantics="additive",
     ),
     AdapterSpec(
@@ -197,6 +240,7 @@ ADAPTER_SPECS = (
         QwenAdapter,
         ".qwen",
         ("projects/*/chats",),
+        documented_source="~/.qwen/projects/",
         token_semantics="additive",
     ),
 )

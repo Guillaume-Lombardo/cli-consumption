@@ -10,8 +10,6 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Added privacy-safe database readiness checks and bounded request correlation for the
   collector service ([#35]).
-- Added generated timestamp, token-boundary, export-window, and concurrent migration
-  coverage across SQLite and PostgreSQL ([#34]).
 
 ### Changed
 
@@ -19,8 +17,11 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   structured-field limits across a complete collection ([#31]).
 - Dashboard generation now preflights bounded selections, streams its output, and
   atomically replaces an existing report only after a successful write ([#32]).
-- Source distributions now contain only release metadata, documentation, license
-  notices, and the runtime package ([#33]).
+- Concurrent schema initialization, upgrade, and downgrade are now serialized on
+  SQLite and PostgreSQL, with SQLite lock waits capped at 15 seconds ([#34]).
+- Published source distributions exclude repository-only tests and automation while
+  retaining release metadata, the changelog and README, license notices, the runtime
+  package, and Hatchling's rebuild `.gitignore` ([#33]).
 - Identical adapter primitives are shared while provider-specific parsing semantics
   remain isolated ([#36]).
 

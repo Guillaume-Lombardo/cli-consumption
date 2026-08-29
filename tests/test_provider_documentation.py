@@ -4,7 +4,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from cli_consumption.adapters.registry import ADAPTER_SPECS, AdapterSpec
+from cli_consumption.adapters.registry import ADAPTER_SPECS
 
 PROJECT_ROOT = Path(__file__).parents[1]
 README = PROJECT_ROOT / "README.md"
@@ -12,7 +12,32 @@ PROVIDER_SUPPORT = PROJECT_ROOT / "docs" / "provider-support.md"
 
 
 def _cells(line: str) -> list[str]:
-    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+    cells: list[str] = []
+    cell: list[str] = []
+    in_code = False
+    text = line.strip()
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character == "\\" and index + 1 < len(text):
+            cell.append(character)
+            cell.append(text[index + 1])
+            index += 2
+            continue
+        if character == "`":
+            in_code = not in_code
+        if character == "|" and not in_code:
+            cells.append("".join(cell).strip())
+            cell = []
+        else:
+            cell.append(character)
+        index += 1
+    cells.append("".join(cell).strip())
+    if cells and not cells[0]:
+        cells.pop(0)
+    if cells and not cells[-1]:
+        cells.pop()
+    return cells
 
 
 def _table(path: Path, required_columns: set[str]) -> list[dict[str, str]]:
@@ -50,15 +75,6 @@ def _single_code(cell: str) -> str:
     return values[0]
 
 
-def _assert_source_matches_default(spec: AdapterSpec, source: str) -> None:
-    default_home = spec.default_home.rstrip("/")
-    expected_root = (
-        default_home if default_home.startswith("/") else f"~/{default_home}"
-    )
-    actual = source.rstrip("/")
-    assert actual == expected_root or actual.startswith(f"{expected_root}/")
-
-
 def test_provider_matrices_match_the_canonical_registry() -> None:
     common = {
         "Provider name",
@@ -90,8 +106,28 @@ def test_provider_matrices_match_the_canonical_registry() -> None:
 
         readme_source = _single_code(readme["Default local source"])
         support_source = _single_code(support["Default local source"])
-        assert readme_source == support_source
-        _assert_source_matches_default(spec, readme_source)
+        assert readme_source == support_source == spec.documented_source
+
+
+def test_markdown_table_parser_preserves_escaped_and_inline_code_pipes(
+    tmp_path: Path,
+) -> None:
+    document = tmp_path / "table.md"
+    document.write_text(
+        """\
+| Name | Narrative |
+| --- | --- |
+| `provider` | Escaped \\| pipe and `inline|code` pipe. |
+""",
+        encoding="utf-8",
+    )
+
+    assert _table(document, {"Name", "Narrative"}) == [
+        {
+            "Name": "`provider`",
+            "Narrative": "Escaped \\| pipe and `inline|code` pipe.",
+        }
+    ]
 
 
 def test_every_provider_has_exactly_one_qualified_support_section() -> None:

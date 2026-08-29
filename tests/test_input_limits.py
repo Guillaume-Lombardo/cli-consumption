@@ -42,7 +42,7 @@ def test_jsonl_recounts_bytes_after_a_stale_initial_stat(
 
     def stale_stat(value: Path, *, follow_symlinks: bool = True) -> Any:
         result = real_stat(value, follow_symlinks=follow_symlinks)
-        if value == path:
+        if value == path and follow_symlinks:
             return type("StaleStat", (), {"st_size": 5})()
         return result
 

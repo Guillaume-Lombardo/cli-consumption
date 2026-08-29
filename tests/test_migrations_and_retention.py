@@ -2,14 +2,26 @@ from __future__ import annotations
 
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import BigInteger, Integer, String, Text, create_engine, inspect, text
+from sqlalchemy import (
+    BigInteger,
+    Float,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    inspect,
+    text,
+)
+from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -18,6 +30,7 @@ from cli_consumption.migrations.versions import (
     v0001_baseline,
     v0002_minimize_subagents,
     v0003_canonical_timestamps,
+    v0004_subagent_scope_freshness,
 )
 from cli_consumption.models import Snapshot
 from cli_consumption.retention import retain_before
@@ -106,7 +119,7 @@ def test_empty_database_upgrades_to_packaged_head(tmp_path: Path) -> None:
     assert set(inspector.get_table_names()) == {*BASELINE_COLUMNS, "alembic_version"}
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0003"
+            "0004"
         )
     for table in Base.metadata.sorted_tables:
         assert {column["name"] for column in inspector.get_columns(table.name)} == (
@@ -131,6 +144,7 @@ def test_legacy_type_comparison_distinguishes_widths_and_text_kinds() -> None:
     assert not _matching_type(Integer(), BigInteger())
     assert not _matching_type(Text(), String(64))
     assert not _matching_type(String(255), String(64))
+    assert _matching_type(DOUBLE_PRECISION(precision=53), Float())
 
 
 def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> None:
@@ -151,11 +165,65 @@ def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> No
     assert read_table(engine, "ingestion_runs")[0]["id"] == "run"
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0003"
+            "0004"
         )
     assert "agent_nickname" not in {
         column["name"] for column in inspect(engine).get_columns("subagents")
     }
+    engine.dispose()
+
+
+def test_unversioned_head_database_preserves_validated_scope_state(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "unversioned-head.sqlite")
+    initialize_database(engine)
+    with Session(engine) as session, session.begin():
+        session.add(_conversation("test:head", "2026-01-01T00:00:00+00:00"))
+        session.add(
+            Subagent(
+                id="test:machine:child",
+                provider="test",
+                source_machine="machine",
+                parent_thread_id="head",
+                child_thread_id="child",
+                status="completed",
+                created_at_ms=1,
+                updated_at_ms=2,
+                agent_role="worker",
+                tokens_used=3,
+            )
+        )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO subagent_scopes "
+                "(provider, source_machine, lock_version) "
+                "VALUES ('test', 'machine', 41)"
+            )
+        )
+        connection.execute(text("DROP TABLE alembic_version"))
+
+    initialize_database(engine)
+    initialize_database(engine)
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0004"
+        )
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT lock_version FROM subagent_scopes "
+                    "WHERE provider = 'test' AND source_machine = 'machine'"
+                )
+            )
+            == 41
+        )
+    assert [row["id"] for row in read_table(engine, "conversations")] == ["test:head"]
+    assert [row["id"] for row in read_table(engine, "subagents")] == [
+        "test:machine:child"
+    ]
     engine.dispose()
 
 
@@ -252,6 +320,7 @@ def test_migrations_emit_portable_postgresql_structure() -> None:
         v0001_baseline.upgrade()
         v0002_minimize_subagents.upgrade()
         v0003_canonical_timestamps.upgrade()
+        v0004_subagent_scope_freshness.upgrade()
 
     ddl = output.getvalue()
     assert "CREATE TABLE conversations" in ddl
@@ -263,6 +332,50 @@ def test_migrations_emit_portable_postgresql_structure() -> None:
     assert "UPDATE subagents" in ddl
     assert "DROP COLUMN agent_nickname" in ddl
     assert "CREATE INDEX ix_conversations_ended_at" in ddl
+    assert "CREATE TABLE subagent_scopes" in ddl
+    assert "INSERT INTO subagent_scopes" in ddl
+
+
+def test_subagent_scope_migration_seeds_existing_scopes_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "scope-state.sqlite")
+    initialize_database(engine)
+    downgrade_database(engine, "0003")
+    with Session(engine) as session, session.begin():
+        session.add(_conversation("codex:legacy", "2026-01-01T00:00:00+00:00"))
+        session.add(
+            Subagent(
+                id="codex:edge-only:child",
+                provider="codex",
+                source_machine="edge-only",
+                parent_thread_id="parent",
+                child_thread_id="child",
+                status="completed",
+                created_at_ms=1,
+                updated_at_ms=2,
+                agent_role="worker",
+                tokens_used=3,
+            )
+        )
+
+    upgrade_database(engine)
+
+    with engine.connect() as connection:
+        scopes = set(
+            connection.execute(
+                text(
+                    "SELECT provider, source_machine, lock_version FROM subagent_scopes"
+                )
+            ).all()
+        )
+    assert scopes == {("codex", "edge-only", 0), ("test", "machine", 0)}
+
+    downgrade_database(engine, "0003")
+    assert "subagent_scopes" not in inspect(engine).get_table_names()
+    upgrade_database(engine)
+    assert "subagent_scopes" in inspect(engine).get_table_names()
+    engine.dispose()
 
 
 def test_subagent_migration_normalizes_history_and_round_trips(
@@ -564,7 +677,33 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0003"
+                == "0004"
+            )
+
+        with test_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO subagent_scopes "
+                    "(provider, source_machine, lock_version) "
+                    "VALUES ('codex', 'adoption', 41)"
+                )
+            )
+            connection.execute(text("DROP TABLE alembic_version"))
+        upgrade_database(test_engine)
+        upgrade_database(test_engine)
+        with test_engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == "0004"
+            )
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT lock_version FROM subagent_scopes "
+                        "WHERE provider = 'codex' AND source_machine = 'adoption'"
+                    )
+                )
+                == 41
             )
 
         downgrade_database(test_engine, "0002")
@@ -712,17 +851,79 @@ def test_postgresql_runtime_migrations_ingestion_and_retention() -> None:
         assert (ingestion.received, ingestion.written, ingestion.skipped) == (1, 1, 0)
         assert len(read_table(test_engine, "turns")) == 1
 
+        older = Snapshot.from_dict(snapshot.to_dict())
+        older.conversations[0]["event_count"] = 0
+        older.conversations[0]["content_hash"] = "f" * 64
+        older.subagents.clear()
+        skipped = ingest_snapshot(test_engine, older)
+        assert (skipped.received, skipped.written, skipped.skipped) == (1, 0, 1)
+        assert {row["id"] for row in read_table(test_engine, "subagents")} == {
+            "codex:ci:old-child",
+            "codex:ci:recent-child",
+        }
+
         retention = retain_before(test_engine, cutoff, apply=True)
         assert (
             retention.conversations,
             retention.subagents,
             retention.ingestion_runs,
-        ) == (1, 1, 1)
+        ) == (1, 1, 2)
         assert read_table(test_engine, "conversations") == []
         assert read_table(test_engine, "turns") == []
         assert {row["id"] for row in read_table(test_engine, "subagents")} == {
             "codex:ci:recent-child"
         }
+
+        concurrent_base = Snapshot.from_dict(snapshot.to_dict())
+        concurrent_base.turns.clear()
+        concurrent_base.subagents.clear()
+        concurrent_base.conversations[0]["id"] = "codex:postgres-concurrent"
+        concurrent_base.conversations[0]["external_id"] = "postgres-concurrent"
+        concurrent_base.conversations[0]["source_machine"] = "concurrent"
+        concurrent_base.conversations[0]["event_count"] = 1
+        concurrent_base.conversations[0]["content_hash"] = "1" * 64
+        ingest_snapshot(test_engine, concurrent_base)
+
+        def concurrent_version(event_count: int, child: str) -> Snapshot:
+            candidate = Snapshot.from_dict(concurrent_base.to_dict())
+            candidate.conversations[0]["event_count"] = event_count
+            candidate.conversations[0]["content_hash"] = str(event_count) * 64
+            candidate.subagents.append(
+                {
+                    "id": f"codex:concurrent:{child}",
+                    "provider": "codex",
+                    "source_machine": "concurrent",
+                    "parent_thread_id": "postgres-concurrent",
+                    "child_thread_id": child,
+                    "status": "completed",
+                    "created_at_ms": event_count,
+                    "updated_at_ms": event_count,
+                    "agent_role": "worker",
+                    "tokens_used": event_count,
+                }
+            )
+            return candidate
+
+        barrier = Barrier(2)
+
+        def concurrent_ingest(candidate: Snapshot) -> None:
+            barrier.wait()
+            ingest_snapshot(test_engine, candidate)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(concurrent_ingest, concurrent_version(2, "older")),
+                executor.submit(concurrent_ingest, concurrent_version(3, "newest")),
+            ]
+            for future in futures:
+                future.result()
+
+        concurrent_rows = [
+            row
+            for row in read_table(test_engine, "subagents")
+            if row["source_machine"] == "concurrent"
+        ]
+        assert [row["id"] for row in concurrent_rows] == ["codex:concurrent:newest"]
 
         downgrade_database(test_engine)
         with test_engine.connect() as connection:

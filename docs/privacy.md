@@ -14,6 +14,8 @@ CLI Consumption measures activity; it does not archive conversations.
 - Metadata-only subagent relationships, normalized roles and status, timing, and token
   counters; provider nicknames are not retained
 - Content hashes and event counts used only for deduplication
+- Internal provider/source-machine scope rows and lock counters used only to serialize
+  subagent graph freshness decisions; these rows are not exported
 
 ## Prohibited data
 
@@ -103,4 +105,6 @@ elsewhere. A dry run reports aggregate deletion counts; `--apply` is required to
 delete. Operators remain responsible for retention and secure disposal of those
 residual copies. Project names, machine labels, model/tool names, stable IDs,
 timestamps, and activity aggregates remain sensitive wherever normalized databases or
-detailed CSV files survive.
+detailed CSV files survive. Internal subagent-scope replay guards also survive
+retention and retain provider and source-machine labels plus a lock counter; they are
+not included in reports or exports.

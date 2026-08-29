@@ -8,7 +8,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import String, Table, inspect
+from sqlalchemy import Double, Float, String, Table, inspect
 from sqlalchemy.engine import Connection, Engine
 
 
@@ -155,6 +155,7 @@ BASELINE_COLUMNS: dict[str, frozenset[str]] = {
             "tokens_used",
         }
     ),
+    "subagent_scopes": frozenset({"provider", "source_machine", "lock_version"}),
     "ingestion_runs": frozenset(
         {
             "id",
@@ -180,12 +181,15 @@ def _config(connection: Connection) -> Config:
 
 
 def _preflight_unversioned(connection: Connection) -> None:
-    from cli_consumption.storage import TABLES
+    from cli_consumption.storage import SCHEMA_TABLES
 
     inspector = inspect(connection)
     existing = set(inspector.get_table_names())
     for table_name in existing & BASELINE_COLUMNS.keys():
         columns = inspector.get_columns(table_name)
+        primary_key_columns = set(
+            inspector.get_pk_constraint(table_name).get("constrained_columns") or ()
+        )
         actual = frozenset(column["name"] for column in columns)
         accepted = {BASELINE_COLUMNS[table_name]}
         if table_name == "subagents":
@@ -193,7 +197,7 @@ def _preflight_unversioned(connection: Connection) -> None:
         if actual not in accepted:
             _reject_unpublished_schema()
 
-        declared = cast(Table, TABLES[table_name].__table__)
+        declared = cast(Table, SCHEMA_TABLES[table_name].__table__)
         declared_columns = {column.name: column for column in declared.columns}
         for column in columns:
             name = column["name"]
@@ -203,7 +207,7 @@ def _preflight_unversioned(connection: Connection) -> None:
                 continue
             expected = declared_columns[name]
             if (
-                bool(column.get("primary_key")) != expected.primary_key
+                (name in primary_key_columns) != expected.primary_key
                 or bool(column["nullable"]) != expected.nullable
                 or not _matching_type(column["type"], expected.type)
                 or column.get("default") is not None
@@ -263,11 +267,44 @@ def _preflight_unversioned(connection: Connection) -> None:
             _reject_unpublished_schema()
 
 
+def _matches_current_head_layout(connection: Connection) -> bool:
+    from cli_consumption.storage import SCHEMA_TABLES
+
+    inspector = inspect(connection)
+    if not set(SCHEMA_TABLES).issubset(inspector.get_table_names()):
+        return False
+    for table_name, model in SCHEMA_TABLES.items():
+        declared = cast(Table, model.__table__)
+        if {column["name"] for column in inspector.get_columns(table_name)} != {
+            column.name for column in declared.columns
+        }:
+            return False
+        expected_indexes = {
+            (
+                index.name,
+                tuple(column.name for column in index.columns),
+                bool(index.unique),
+            )
+            for index in declared.indexes
+        }
+        actual_indexes = {
+            (
+                index["name"],
+                tuple(index["column_names"]),
+                bool(index["unique"]),
+            )
+            for index in inspector.get_indexes(table_name)
+        }
+        if actual_indexes != expected_indexes:
+            return False
+    return True
+
+
 def _matching_type(actual: object, expected: object) -> bool:
     actual_generic = getattr(actual, "as_generic", lambda: actual)()
     expected_generic = getattr(expected, "as_generic", lambda: expected)()
     if type(actual_generic) is not type(expected_generic):
-        return False
+        return isinstance(actual_generic, Double) and type(expected_generic) is Float
     if isinstance(expected_generic, String):
         return getattr(actual_generic, "length", None) == expected_generic.length
     return True
@@ -297,14 +334,21 @@ def upgrade_database(engine: Engine) -> None:
             known_revisions = {item.revision for item in script.walk_revisions()}
             context = MigrationContext.configure(connection)
             current_heads = tuple(context.get_current_heads())
+            adopt_current_head = False
             if not current_heads:
                 _preflight_unversioned(connection)
+                adopt_current_head = _matches_current_head_layout(connection)
             elif any(head not in known_revisions for head in current_heads):
                 raise SchemaCompatibilityError(
                     "The database schema is newer than or unknown to this package"
                 )
+            elif current_heads == expected_heads:
+                return
             connection.commit()
-            command.upgrade(config, "head")
+            if adopt_current_head:
+                command.stamp(config, "head")
+            else:
+                command.upgrade(config, "head")
             connection.commit()
             migrated_heads = tuple(
                 MigrationContext.configure(connection).get_current_heads()

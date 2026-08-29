@@ -27,6 +27,15 @@ normalizes retained subagent roles and statuses and removes `agent_nickname`, wh
 no required analytical purpose. Its downgrade can recreate the column only with a
 content-free placeholder; it cannot recover discarded nicknames.
 
+Revision `0004` adds internal subagent-scope coordination rows and seeds them from
+existing conversation and relationship scopes. New and old application versions must
+not write concurrently: older writers do not take the scope lock or apply the
+conservative graph-freshness policy. Downgrade removes only this internal table and
+does not alter normalized conversations or relationships. An unversioned database
+whose complete `0004` layout passes the strict adoption preflight retains its validated
+scope rows and is stamped directly at head. Older recognized layouts still replay the
+required forward migrations.
+
 ## Deployment and rollback
 
 Back up a production database before upgrading. Stop or drain writers, deploy and

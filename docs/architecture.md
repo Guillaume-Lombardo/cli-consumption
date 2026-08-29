@@ -83,9 +83,13 @@ Conversation records use a provider-qualified stable ID. Repeated ingestion skip
 identical or less complete record. A more complete copy atomically replaces the
 conversation and its child records.
 
-Subagent relationships have a provider-and-source-machine lifecycle. Every represented
-scope is replaced atomically on ingestion, including when its latest snapshot contains
-no edges, so deleted provider relationships do not remain indefinitely.
+Subagent relationships have a provider-and-source-machine lifecycle. The first
+snapshot representing a scope can create its graph. After that, the graph is replaced
+atomically only when at least one represented conversation is strictly more complete
+than its stored copy and none is less complete. This permits a genuinely newer empty
+graph to remove deleted relationships, while identical, graph-only, mixed stale/richer,
+and wholly older snapshots cannot regress the graph. An internal scope row serializes
+this decision across concurrent writers on SQLite and PostgreSQL; it is not exported.
 
 Workflow analytics use additive child tables: `work_items`, `context_samples`,
 `turn_settings`, and `compaction_events`. Snapshot schema v1 validates every record,
@@ -101,7 +105,9 @@ later sent to the API.
 
 Retention is an explicit two-step operation: `retention --keep-days N` reports what
 would be deleted, while `--apply` deletes old conversations (with cascading children),
-subagent relationships, and ingestion runs in one transaction.
+subagent relationships, and ingestion runs in one transaction. Internal subagent-scope
+rows remain as replay guards; deleting them would let an unversioned graph-only copy
+become first-seen and recreate stale relationships.
 
 Time-bounded reporting selects conversations whose recorded activity overlaps the
 half-open `[since, until)` window. Once selected, the complete conversation and all its

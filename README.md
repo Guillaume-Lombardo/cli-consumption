@@ -106,7 +106,10 @@ uv run cli-consumption collect --provider codex \
 
 Copy only the required provider data. For Codex, copy the `sessions/` directory but
 never `auth.json` or other credentials. Globally identical conversation IDs are
-deduplicated, and the most complete copy wins.
+deduplicated, and the most complete copy wins. After a subagent scope is first seen,
+its relationship graph is replaced only when at least one conversation from that
+provider and source machine is strictly more complete and none is less complete.
+Identical, graph-only, or older copies cannot erase a newer graph.
 
 Provider files are untrusted. Monolithic JSON files are limited to 64 MiB, JSONL files
 to 256 MiB with an 8 MiB per-line limit, and a snapshot to 250,000 normalized records
@@ -189,6 +192,10 @@ conversation end-time path; see the
 [timestamp decision](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/decisions/0002-canonical-utc-timestamps.md)
 for the exact representation and downgrade boundary.
 
+Revision `0004` adds internal per-scope state that serializes subagent graph freshness
+decisions. It does not add snapshot or export fields; see the
+[subagent freshness decision](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/decisions/0003-subagent-scope-freshness.md).
+
 Preview retention before deleting normalized metadata:
 
 ```bash
@@ -198,6 +205,9 @@ uv run cli-consumption retention --keep-days 90 --database usage.sqlite --apply
 
 The first command is a dry run. `--apply` deletes old conversations and their child
 rows, old subagent relationships, and old ingestion-run records.
+Internal subagent-scope coordination rows remain as replay guards, so an older
+graph-only copy cannot recreate relationships after retention. They contain only the
+provider, source-machine label, and a lock counter and are never exported.
 
 ## Central collector API
 

@@ -132,6 +132,21 @@ conversation, while ingestion runs are filtered by their own timestamp. All tabl
 ordered by primary key. CSV output consumes streamed batches rather than materializing
 each table, and neutralizes text that spreadsheet software could execute as a formula.
 
+Before a dashboard materializes those ten report tables, one compound SQL statement
+counts the complete selected graph and estimates its scalar byte size. Using one
+statement keeps all table estimates on one database snapshot. The preflight and row
+reads then share a transaction; PostgreSQL uses repeatable-read isolation. Generation
+is refused above 250,000 selected rows or an estimated 128 MiB, and the encoded HTML
+has a separate 128 MiB limit. Limit errors expose no labels, IDs, paths, or database
+values and direct the operator to `--since` and `--until`.
+
+The HTML is written to a uniquely named temporary file in the destination directory,
+flushed and synchronized, then installed with an atomic replacement. A failure before
+replacement leaves an existing dashboard intact and removes only the temporary file
+owned by that generation attempt; unrelated stale temporary files are not deleted.
+CSV files retain their independent streaming behavior, so `export --csv` plus a
+dashboard is not an atomic transaction for the entire output directory.
+
 ## Adapter qualification
 
 Adapters are introduced one at a time because local data formats are undocumented or

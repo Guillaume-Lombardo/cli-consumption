@@ -20,7 +20,7 @@ from cli_consumption.adapters.registry import (
     has_provider_data,
     resolve_adapter_spec,
 )
-from cli_consumption.dashboard import generate_dashboard
+from cli_consumption.dashboard import DashboardLimitError, generate_dashboard
 from cli_consumption.exporting import export_csv
 from cli_consumption.models import Snapshot, SnapshotValidationError
 from cli_consumption.reporting import parse_export_window
@@ -293,12 +293,18 @@ def export_command(
         paths = export_csv(engine, output, window=window) if csv_exports else []
         if dashboard:
             dashboard_path = output / "dashboard.html"
-            generate_dashboard(
-                engine,
-                dashboard_path,
-                share_safe=share_safe,
-                window=window,
-            )
+            try:
+                generate_dashboard(
+                    engine,
+                    dashboard_path,
+                    share_safe=share_safe,
+                    window=window,
+                )
+            except DashboardLimitError:
+                raise typer.BadParameter(
+                    "dashboard exceeds safe generation limits; narrow the export "
+                    "with --since and/or --until"
+                ) from None
             paths.append(dashboard_path)
     finally:
         engine.dispose()

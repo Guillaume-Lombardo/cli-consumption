@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 from cli_consumption.adapters.registry import ADAPTER_SPECS
-from cli_consumption.reporting import ExportWindow, iter_report_rows
+from cli_consumption.reporting import (
+    REPORT_TABLES,
+    ExportWindow,
+    ReportEstimate,
+    estimate_report,
+    iter_report_rows,
+)
 from cli_consumption.storage import initialize_database
 
 TOKEN_FIELDS = (
@@ -23,6 +31,14 @@ TOKEN_FIELDS = (
     "unattributed_tokens",
     "total_tokens",
 )
+MAX_DASHBOARD_RECORDS = 250_000
+MAX_DASHBOARD_ESTIMATED_BYTES = 128 * 1024 * 1024
+MAX_DASHBOARD_HTML_BYTES = 128 * 1024 * 1024
+ESTIMATED_ROW_OVERHEAD_BYTES = 192
+
+
+class DashboardLimitError(RuntimeError):
+    """A privacy-safe dashboard generation limit failure."""
 
 
 def generate_dashboard(
@@ -32,16 +48,74 @@ def generate_dashboard(
     share_safe: bool = False,
     window: ExportWindow | None = None,
 ) -> None:
+    initialize_database(engine)
+    with engine.connect() as connection:
+        if connection.dialect.name == "postgresql":
+            connection = connection.execution_options(isolation_level="REPEATABLE READ")
+        with connection.begin():
+            _enforce_estimate(estimate_report(connection, window))
+            payload = _dashboard_payload(
+                engine,
+                share_safe=share_safe,
+                window=window,
+                _connection=connection,
+            )
     encoded = json.dumps(
-        _dashboard_payload(engine, share_safe=share_safe, window=window),
+        payload,
         separators=(",", ":"),
         ensure_ascii=True,
     )
     encoded = (
         encoded.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     )
+    document_size = len(encoded) + len(_document("").encode("utf-8"))
+    if document_size > MAX_DASHBOARD_HTML_BYTES:
+        raise DashboardLimitError("dashboard_html_limit_exceeded")
+    _atomic_write_text(output, _document(encoded))
+
+
+def _preflight_dashboard(
+    engine: Engine,
+    *,
+    window: ExportWindow | None = None,
+) -> None:
+    initialize_database(engine)
+    with engine.connect() as connection, connection.begin():
+        estimate = estimate_report(connection, window)
+    _enforce_estimate(estimate)
+
+
+def _enforce_estimate(estimate: ReportEstimate) -> None:
+    if estimate.records > MAX_DASHBOARD_RECORDS:
+        raise DashboardLimitError("dashboard_record_limit_exceeded")
+    estimated_bytes = (
+        estimate.scalar_bytes + estimate.records * ESTIMATED_ROW_OVERHEAD_BYTES
+    )
+    if estimated_bytes > MAX_DASHBOARD_ESTIMATED_BYTES:
+        raise DashboardLimitError("dashboard_estimated_size_limit_exceeded")
+
+
+def _atomic_write_text(output: Path, content: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(_document(encoded), encoding="utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=output.parent,
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, output)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def _dashboard_payload(
@@ -49,26 +123,23 @@ def _dashboard_payload(
     *,
     share_safe: bool = False,
     window: ExportWindow | None = None,
+    _connection: Connection | None = None,
 ) -> dict[str, Any]:
     """Return only metadata needed by the dashboard, with local relationship keys."""
-    initialize_database(engine)
     active_window = window or ExportWindow()
-    with engine.connect() as connection:
-        rows = {
-            table_name: list(iter_report_rows(connection, table_name, active_window))
-            for table_name in (
-                "conversations",
-                "turns",
-                "model_calls",
-                "tool_calls",
-                "work_items",
-                "context_samples",
-                "turn_settings",
-                "compaction_events",
-                "subagents",
-                "ingestion_runs",
+    if _connection is None:
+        initialize_database(engine)
+        with engine.connect() as connection, connection.begin():
+            return _dashboard_payload(
+                engine,
+                share_safe=share_safe,
+                window=active_window,
+                _connection=connection,
             )
-        }
+    rows = {
+        table_name: list(iter_report_rows(_connection, table_name, active_window))
+        for table_name in REPORT_TABLES
+    }
     conversations = rows["conversations"]
     turns = rows["turns"]
     model_calls = rows["model_calls"]

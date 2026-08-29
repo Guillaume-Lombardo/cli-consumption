@@ -91,6 +91,15 @@ daily activity, durations, counts, token counters, configuration labels, statuse
 aggregate work patterns remain disclosed. Share-safe is a minimization profile, not
 anonymization.
 
+Dashboard generation first evaluates only aggregate row counts and scalar byte
+lengths for the selected report. These internal estimates are not exported or logged.
+The command refuses selections above 250,000 rows or an estimated 128 MiB and refuses
+encoded HTML above 128 MiB. Its public limit error is generic and recommends a bounded
+time window without echoing project or machine labels, identifiers, paths, or other
+database values. Atomic replacement prevents a failed generation from truncating a
+previous dashboard. With `--csv`, CSV files remain separate detailed exports and may
+have been written before a later dashboard failure.
+
 Time filters select complete conversations that overlap the requested window. They do
 not redact child records whose individual timestamps fall outside it; related subagent
 edges can also reveal activity around the boundary. Ingestion-run rows are selected by

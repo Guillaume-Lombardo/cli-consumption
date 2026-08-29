@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import builtins
 import csv
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import cast
 
 import pytest
@@ -21,6 +23,7 @@ from cli_consumption.dashboard import (
 from cli_consumption.exporting import export_csv
 from cli_consumption.models import Snapshot
 from cli_consumption.storage import (
+    SCHEMA_TABLES,
     TABLES,
     create_database_engine,
     ingest_snapshot,
@@ -54,6 +57,7 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     dashboard = output / "dashboard.html"
     generate_dashboard(engine, dashboard)
     assert len(paths) == 10
+    assert not (output / "subagent_scopes.csv").exists()
     html = dashboard.read_text(encoding="utf-8")
     assert "CLI Consumption" in html
     assert "Turn performance" in html
@@ -224,7 +228,9 @@ def test_existing_database_gains_additive_analytics_tables(tmp_path: Path) -> No
     assert "work_items" not in inspect(engine).get_table_names()
     initialize_database(engine)
 
-    assert set(TABLES) | {"alembic_version"} == set(inspect(engine).get_table_names())
+    assert set(SCHEMA_TABLES) | {"alembic_version"} == set(
+        inspect(engine).get_table_names()
+    )
     engine.dispose()
 
 
@@ -257,7 +263,7 @@ def test_richer_replacement_is_atomic_and_older_copy_cannot_regress_it(
     engine.dispose()
 
 
-def test_subagent_scope_is_replaced_when_edges_disappear(
+def test_identical_snapshot_cannot_delete_subagent_scope(
     tmp_path: Path, rollout_factory
 ) -> None:
     home = tmp_path / "codex"
@@ -289,7 +295,9 @@ def test_subagent_scope_is_replaced_when_edges_disappear(
     result = ingest_snapshot(engine, without_edges)
 
     assert (result.written, result.skipped) == (0, 1)
-    assert read_table(engine, "subagents") == []
+    assert {row["id"] for row in read_table(engine, "subagents")} == {
+        "codex:desktop:child-thread"
+    }
     engine.dispose()
 
 
@@ -327,6 +335,18 @@ def test_older_copy_cannot_regress_subagent_scope_and_newer_deletion_wins(
         "codex:desktop:recent-child"
     }
 
+    identical_stale_graph = Snapshot.from_dict(recent.to_dict())
+    identical_stale_graph.subagents[0]["status"] = "failed"
+    ingest_snapshot(engine, identical_stale_graph)
+    assert read_table(engine, "subagents")[0]["status"] == "completed"
+
+    identical_without_edges = Snapshot.from_dict(recent.to_dict())
+    identical_without_edges.subagents.clear()
+    ingest_snapshot(engine, identical_without_edges)
+    assert {row["id"] for row in read_table(engine, "subagents")} == {
+        "codex:desktop:recent-child"
+    }
+
     newer_without_edges = Snapshot.from_dict(recent.to_dict())
     newer_without_edges.subagents.clear()
     newer_without_edges.conversations[0]["event_count"] += 1
@@ -335,6 +355,132 @@ def test_older_copy_cannot_regress_subagent_scope_and_newer_deletion_wins(
 
     assert (deletion.written, deletion.skipped) == (1, 0)
     assert read_table(engine, "subagents") == []
+    engine.dispose()
+
+
+def test_mixed_richer_and_stale_conversations_preserve_scope(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home, extra_event=True)
+    stored = CodexAdapter().collect([("desktop", home)])
+    stored.conversations[0]["event_count"] = 2
+    second = dict(stored.conversations[0])
+    second["id"] = "codex:conversation-2"
+    second["external_id"] = "conversation-2"
+    second["content_hash"] = "e" * 64
+    stored.conversations.append(second)
+    stored.subagents.append(
+        {
+            "id": "codex:desktop:child-thread",
+            "provider": "codex",
+            "source_machine": "desktop",
+            "parent_thread_id": "conversation-1",
+            "child_thread_id": "child-thread",
+            "status": "completed",
+            "created_at_ms": 1,
+            "updated_at_ms": 2,
+            "agent_role": "worker",
+            "tokens_used": 3,
+        }
+    )
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+    ingest_snapshot(engine, stored)
+
+    mixed = Snapshot.from_dict(stored.to_dict())
+    mixed.subagents.clear()
+    mixed.conversations[0]["event_count"] = 3
+    mixed.conversations[0]["content_hash"] = "d" * 64
+    mixed.conversations[1]["event_count"] = 1
+    mixed.conversations[1]["content_hash"] = "c" * 64
+    result = ingest_snapshot(engine, mixed)
+
+    assert (result.written, result.skipped) == (1, 1)
+    assert {row["id"] for row in read_table(engine, "subagents")} == {
+        "codex:desktop:child-thread"
+    }
+    engine.dispose()
+
+
+def test_graph_only_scope_is_authoritative_only_when_first_seen(tmp_path: Path) -> None:
+    def graph(child: str) -> Snapshot:
+        return Snapshot(
+            provider="codex",
+            subagents=[
+                {
+                    "id": f"codex:desktop:{child}",
+                    "provider": "codex",
+                    "source_machine": "desktop",
+                    "parent_thread_id": "parent",
+                    "child_thread_id": child,
+                    "status": "completed",
+                    "created_at_ms": 1,
+                    "updated_at_ms": 2,
+                    "agent_role": "worker",
+                    "tokens_used": 3,
+                }
+            ],
+        )
+
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+    ingest_snapshot(engine, graph("first"))
+    ingest_snapshot(engine, graph("unproven-newer"))
+
+    assert {row["id"] for row in read_table(engine, "subagents")} == {
+        "codex:desktop:first"
+    }
+    engine.dispose()
+
+
+def test_concurrent_sqlite_scope_updates_keep_richest_graph(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    base = CodexAdapter().collect([("desktop", home)])
+    base.conversations[0]["event_count"] = 1
+    base.conversations[0]["content_hash"] = "1" * 64
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+    ingest_snapshot(engine, base)
+
+    def version(event_count: int, child: str) -> Snapshot:
+        snapshot = Snapshot.from_dict(base.to_dict())
+        snapshot.conversations[0]["event_count"] = event_count
+        snapshot.conversations[0]["content_hash"] = str(event_count) * 64
+        snapshot.subagents.append(
+            {
+                "id": f"codex:desktop:{child}",
+                "provider": "codex",
+                "source_machine": "desktop",
+                "parent_thread_id": "conversation-1",
+                "child_thread_id": child,
+                "status": "completed",
+                "created_at_ms": event_count,
+                "updated_at_ms": event_count,
+                "agent_role": "worker",
+                "tokens_used": event_count,
+            }
+        )
+        return snapshot
+
+    barrier = Barrier(2)
+
+    def ingest(snapshot: Snapshot) -> None:
+        barrier.wait()
+        ingest_snapshot(engine, snapshot)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(ingest, version(2, "older")),
+            executor.submit(ingest, version(3, "newest")),
+        ]
+        for future in futures:
+            future.result()
+
+    assert read_table(engine, "conversations")[0]["event_count"] == 3
+    assert {row["id"] for row in read_table(engine, "subagents")} == {
+        "codex:desktop:newest"
+    }
     engine.dispose()
 
 

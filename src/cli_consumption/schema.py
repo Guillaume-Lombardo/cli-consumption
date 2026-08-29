@@ -155,6 +155,7 @@ BASELINE_COLUMNS: dict[str, frozenset[str]] = {
             "tokens_used",
         }
     ),
+    "subagent_scopes": frozenset({"provider", "source_machine", "lock_version"}),
     "ingestion_runs": frozenset(
         {
             "id",
@@ -180,7 +181,7 @@ def _config(connection: Connection) -> Config:
 
 
 def _preflight_unversioned(connection: Connection) -> None:
-    from cli_consumption.storage import TABLES
+    from cli_consumption.storage import SCHEMA_TABLES
 
     inspector = inspect(connection)
     existing = set(inspector.get_table_names())
@@ -193,7 +194,7 @@ def _preflight_unversioned(connection: Connection) -> None:
         if actual not in accepted:
             _reject_unpublished_schema()
 
-        declared = cast(Table, TABLES[table_name].__table__)
+        declared = cast(Table, SCHEMA_TABLES[table_name].__table__)
         declared_columns = {column.name: column for column in declared.columns}
         for column in columns:
             name = column["name"]
@@ -303,6 +304,8 @@ def upgrade_database(engine: Engine) -> None:
                 raise SchemaCompatibilityError(
                     "The database schema is newer than or unknown to this package"
                 )
+            elif current_heads == expected_heads:
+                return
             connection.commit()
             command.upgrade(config, "head")
             connection.commit()

@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import (
     BigInteger,
@@ -13,12 +13,16 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     create_engine,
     delete,
     event,
     select,
+    update,
 )
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import NullPool
@@ -212,6 +216,16 @@ class Subagent(Base):
     tokens_used: Mapped[int | None] = mapped_column(BigInteger)
 
 
+class SubagentScope(Base):
+    """Internal scope state used to serialize relationship replacement."""
+
+    __tablename__ = "subagent_scopes"
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_machine: Mapped[str] = mapped_column(String(255), primary_key=True)
+    lock_version: Mapped[int] = mapped_column(BigInteger)
+
+
 class IngestionRun(Base):
     __tablename__ = "ingestion_runs"
 
@@ -237,6 +251,8 @@ TABLES = {
     "subagents": Subagent,
     "ingestion_runs": IngestionRun,
 }
+
+SCHEMA_TABLES = {**TABLES, "subagent_scopes": SubagentScope}
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,7 +322,13 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
         for record in (*snapshot.conversations, *snapshot.subagents)
     }
     stale_subagent_scopes: set[tuple[str, str]] = set()
+    richer_subagent_scopes: set[tuple[str, str]] = set()
     with Session(engine) as session, session.begin():
+        initial_subagent_scopes = {
+            scope
+            for scope in sorted(subagent_scopes)
+            if _lock_subagent_scope(session, *scope)
+        }
         for record in snapshot.conversations:
             conversation_id = str(record["id"])
             existing = session.get(Conversation, conversation_id)
@@ -315,6 +337,10 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
                 record["event_count"]
             ):
                 stale_subagent_scopes.add(scope)
+            elif existing is not None and existing.event_count < int(
+                record["event_count"]
+            ):
+                richer_subagent_scopes.add(scope)
             if existing is not None and (
                 existing.event_count > int(record["event_count"])
                 or (
@@ -366,7 +392,9 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
             for compaction in compactions_by_conversation.get(conversation_id, []):
                 session.add(CompactionEvent(**compaction))
             written += 1
-        authoritative_scopes = subagent_scopes - stale_subagent_scopes
+        authoritative_scopes = initial_subagent_scopes | (
+            richer_subagent_scopes - stale_subagent_scopes
+        )
         for provider, source_machine in authoritative_scopes:
             session.execute(
                 delete(Subagent).where(
@@ -391,6 +419,37 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
             )
         )
     return IngestionResult(run_id, len(snapshot.conversations), written, skipped)
+
+
+def _lock_subagent_scope(session: Session, provider: str, source_machine: str) -> bool:
+    """Create or serialize one graph scope, returning whether it was newly created."""
+    table = cast(Table, SubagentScope.__table__)
+    values = {
+        "provider": provider,
+        "source_machine": source_machine,
+        "lock_version": 0,
+    }
+    dialect = session.get_bind().dialect.name
+    if dialect == "sqlite":
+        statement = sqlite_insert(table)
+    elif dialect == "postgresql":
+        statement = postgresql_insert(table)
+    else:  # pragma: no cover - guarded by the supported database backends
+        raise RuntimeError("Unsupported database backend")
+    created = session.scalar(
+        statement.values(**values)
+        .on_conflict_do_nothing(index_elements=["provider", "source_machine"])
+        .returning(table.c.provider)
+    )
+    session.execute(
+        update(SubagentScope)
+        .where(
+            SubagentScope.provider == provider,
+            SubagentScope.source_machine == source_machine,
+        )
+        .values(lock_version=SubagentScope.lock_version + 1)
+    )
+    return created is not None
 
 
 def read_table(engine: Engine, table_name: str) -> list[dict[str, Any]]:

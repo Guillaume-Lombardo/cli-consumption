@@ -2,22 +2,27 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    MAX_BIGINT as MAX_BIGINT,
+)
+from cli_consumption.adapters._shared import (
+    SAFE_BASIC_LABEL as SAFE_LABEL,
+)
+from cli_consumption.adapters._shared import (
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
     read_json,
 )
+from cli_consumption.adapters._shared import (
+    counter as _counter,
+)
 from cli_consumption.models import Snapshot, empty_tokens
 
-MAX_BIGINT = 9_223_372_036_854_775_807
-SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 COMPLETED_REASONS = {"end_turn", "max_tokens", "stop_sequence"}
 ABORTED_REASONS = {"cancelled", "error"}
 
@@ -524,16 +529,6 @@ def _usage(value: Any) -> dict[str, int] | None:
 def _add_tokens(target: dict[str, Any], tokens: dict[str, int]) -> None:
     for key in empty_tokens():
         target[key] = min(MAX_BIGINT, int(target[key]) + tokens[key])
-
-
-def _counter(value: Any) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return min(MAX_BIGINT, max(0, value))
-    if isinstance(value, float) and math.isfinite(value):
-        return min(MAX_BIGINT, max(0, int(value)))
-    return 0
 
 
 def _label(value: Any, limit: int) -> str | None:

@@ -28,6 +28,7 @@ MAX_PROVIDER_SQLITE_ROWS = 250_000
 MAX_PROVIDER_SQLITE_FIELD_BYTES = 8 * 1024 * 1024
 MAX_PROVIDER_SQLITE_FIELDS_BYTES = 256 * 1024 * 1024
 SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+@-]*")
+SAFE_BASIC_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
 class ProviderDataLimitError(RuntimeError):
@@ -101,11 +102,26 @@ def mapping(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def list_value(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
 def label(value: object, maximum: int = 512) -> str | None:
     if not isinstance(value, str):
         return None
     value = value.strip()
     return value if 0 < len(value) <= maximum and SAFE_LABEL.fullmatch(value) else None
+
+
+def basic_label(value: object, maximum: int = 512) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return (
+        value
+        if 0 < len(value) <= maximum and SAFE_BASIC_LABEL.fullmatch(value)
+        else None
+    )
 
 
 def counter(value: object) -> int:
@@ -394,3 +410,9 @@ def ensure_provider_sqlite_fields(
         ).fetchone()
         if oversized is not None:
             raise ProviderDataLimitError("provider_sqlite_field_too_large")
+
+
+def sqlite_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {
+        str(row["name"]) for row in connection.execute(f'PRAGMA table_info("{table}")')
+    }

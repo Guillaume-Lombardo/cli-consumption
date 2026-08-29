@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption.adapters._shared import (
+    MAX_BIGINT as MAX_BIGINT,
+)
+from cli_consumption.adapters._shared import (
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
     open_provider_sqlite,
@@ -82,7 +85,6 @@ AGENT_ROLE_ALIASES = {
     "worker": "worker",
 }
 SAFE_DIMENSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
-MAX_BIGINT = 9_223_372_036_854_775_807
 
 
 def parse_timestamp(value: str | None) -> datetime | None:

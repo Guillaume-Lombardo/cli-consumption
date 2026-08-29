@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,11 +14,26 @@ from cli_consumption.adapters._shared import (
     ensure_provider_sqlite_fields,
     open_provider_sqlite,
 )
+from cli_consumption.adapters._shared import (
+    add_tokens as _add_tokens,
+)
+from cli_consumption.adapters._shared import (
+    basic_label as _label,
+)
+from cli_consumption.adapters._shared import (
+    bounded_sum as _sum,
+)
+from cli_consumption.adapters._shared import (
+    counter as _counter,
+)
+from cli_consumption.adapters._shared import (
+    project as _project,
+)
+from cli_consumption.adapters._shared import (
+    sqlite_columns as _columns,
+)
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.models import Snapshot, empty_tokens
-
-MAX_BIGINT = 9_223_372_036_854_775_807
-SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
 @dataclass(slots=True)
@@ -481,12 +495,6 @@ def _configured_model(value: object) -> tuple[str | None, int]:
     return model, int(data.get("model_name") is not None and model is None)
 
 
-def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
-    return {
-        str(row["name"]) for row in connection.execute(f'PRAGMA table_info("{table}")')
-    }
-
-
 def _rank(value: _Conversation) -> tuple[int, datetime, str]:
     return (
         value.event_count,
@@ -523,18 +531,6 @@ def _model(provider: str | None, model: str | None) -> str | None:
     if provider and not model.startswith(provider + "/"):
         return f"{provider}/{model}"
     return model
-
-
-def _project(directory: str | None, mappings: list[tuple[str, str]]) -> tuple[str, str]:
-    if directory:
-        normalized = directory.replace("\\", "/").rstrip("/")
-        for name, prefix in sorted(
-            mappings, key=lambda item: len(item[1]), reverse=True
-        ):
-            prefix = prefix.replace("\\", "/").rstrip("/")
-            if normalized == prefix or normalized.startswith(prefix + "/"):
-                return name, "mapping"
-    return "outside-project", "none"
 
 
 def _turn_at(
@@ -583,27 +579,3 @@ def _timestamp(value: object) -> datetime | None:
 
 def _iso(value: object) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else None
-
-
-def _label(value: object, maximum: int) -> str | None:
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value if 0 < len(value) <= maximum and SAFE_LABEL.fullmatch(value) else None
-
-
-def _counter(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return 0
-    if isinstance(value, float) and not math.isfinite(value):
-        return 0
-    return min(MAX_BIGINT, max(0, int(value)))
-
-
-def _sum(*values: int) -> int:
-    return min(MAX_BIGINT, sum(values))
-
-
-def _add_tokens(target: dict[str, Any], tokens: dict[str, int]) -> None:
-    for field, value in tokens.items():
-        target[field] = _sum(int(target[field]), value)

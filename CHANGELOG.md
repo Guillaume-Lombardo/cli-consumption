@@ -6,6 +6,10 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reject timezone-naive provider timestamps instead of interpreting them in the host timezone.
+
 ## [0.3.0] - 2026-08-29
 
 ### Added

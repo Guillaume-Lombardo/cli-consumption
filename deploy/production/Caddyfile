@@ -1,0 +1,36 @@
+{
+	admin off
+	email {$ACME_EMAIL}
+	servers {
+		max_header_size 32KB
+		timeouts {
+			read_body 15s
+			read_header 5s
+			write 30s
+			idle 2m
+		}
+	}
+}
+
+{$COLLECTOR_DOMAIN} {
+	# Request targets and headers are untrusted. This reference deployment emits no
+	# access log; use an allowlist-only redaction policy before enabling one.
+	log {
+		output discard
+	}
+
+	request_body {
+		max_size 32MB
+	}
+
+	reverse_proxy collector:8765 {
+		health_uri /ready
+		health_interval 30s
+		lb_try_duration 0s
+		transport http {
+			dial_timeout 3s
+			response_header_timeout 30s
+			max_conns_per_host 16
+		}
+	}
+}

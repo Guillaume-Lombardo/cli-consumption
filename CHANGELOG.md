@@ -8,6 +8,8 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A pinned, privacy-preserving single-host production deployment example now covers
+  the central collector, PostgreSQL, and automatic TLS proxy operations.
 - The README now leads with a reproducible synthetic dashboard preview and routes
   operational and provider-qualification detail to dedicated guides.
 - CI now performs scheduled Python security, locked dependency, and offline workflow

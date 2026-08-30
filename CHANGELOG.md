@@ -17,6 +17,8 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now use an independently tested JavaScript contract embedded in the offline report.
 - Each detailed CSV export now uses a synchronized temporary file and atomic
   replacement, preserving that table's previous file when generation fails early.
+- Multi-provider sync now reuses one HTTP client, negotiates capabilities once, and
+  performs bounded idempotent retries when the collector advertises replay receipts.
 
 ### Fixed
 

@@ -37,6 +37,9 @@ from cli_consumption.storage import (
 MAX_REQUEST_BYTES = 32 * 1024 * 1024
 REQUEST_ID_HEADER = b"x-request-id"
 REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
+IDEMPOTENCY_KEY_PATTERN = (
+    r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+)
 READINESS_TABLES = (
     "conversations",
     "turns",
@@ -49,6 +52,7 @@ READINESS_TABLES = (
     "subagents",
     "subagent_scopes",
     "ingestion_runs",
+    "sync_receipts",
 )
 READINESS_RESPONSE_TIMEOUT_SECONDS = 2.0
 READINESS_CONNECT_TIMEOUT_SECONDS = 2
@@ -442,17 +446,34 @@ def create_app(engine: Engine, api_token: str | None = None) -> SafeExceptionBou
         return JSONResponse(content={"status": "ready"})
 
     @app.get("/api/v1/capabilities")
-    def capabilities() -> dict[str, int]:
+    def capabilities() -> dict[str, int | bool]:
         return {
             "snapshot_schema_min": MIN_SUPPORTED_SNAPSHOT_SCHEMA,
             "snapshot_schema_max": CURRENT_SNAPSHOT_SCHEMA,
             "max_request_bytes": MAX_REQUEST_BYTES,
             "max_snapshot_records": MAX_SNAPSHOT_RECORDS,
+            "idempotent_snapshot_uploads": True,
         }
 
     @app.post("/api/v1/snapshots", dependencies=[Depends(authorize)])
-    def receive_snapshot(payload: SnapshotPayload) -> dict[str, int | str]:
-        result = ingest_snapshot(engine, Snapshot.from_dict(payload.model_dump()))
+    def receive_snapshot(
+        payload: SnapshotPayload,
+        idempotency_key: Annotated[
+            str | None,
+            Header(
+                alias="Idempotency-Key",
+                min_length=36,
+                max_length=36,
+                pattern=IDEMPOTENCY_KEY_PATTERN,
+            ),
+        ] = None,
+    ) -> dict[str, int | str]:
+        snapshot = Snapshot.from_dict(payload.model_dump())
+        result = (
+            ingest_snapshot(engine, snapshot, idempotency_key=idempotency_key)
+            if idempotency_key is not None
+            else ingest_snapshot(engine, snapshot)
+        )
         return {
             "run_id": result.run_id,
             "received": result.received,

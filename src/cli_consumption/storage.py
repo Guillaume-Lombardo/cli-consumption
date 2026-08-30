@@ -18,11 +18,13 @@ from sqlalchemy import (
     create_engine,
     delete,
     event,
+    select,
     update,
 )
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import URL, Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import NullPool
 
@@ -236,6 +238,17 @@ class IngestionRun(Base):
     duplicate_conversations: Mapped[int] = mapped_column(Integer)
 
 
+class SyncReceipt(Base):
+    """Opaque replay key linked to one completed remote ingestion."""
+
+    __tablename__ = "sync_receipts"
+
+    idempotency_key: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ingestion_run_id: Mapped[str] = mapped_column(
+        ForeignKey("ingestion_runs.id", ondelete="CASCADE"), index=True
+    )
+
+
 TABLES = {
     "conversations": Conversation,
     "turns": Turn,
@@ -249,7 +262,11 @@ TABLES = {
     "ingestion_runs": IngestionRun,
 }
 
-SCHEMA_TABLES = {**TABLES, "subagent_scopes": SubagentScope}
+SCHEMA_TABLES = {
+    **TABLES,
+    "subagent_scopes": SubagentScope,
+    "sync_receipts": SyncReceipt,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,9 +341,18 @@ def initialize_database(engine: Engine) -> None:
     upgrade_database(engine)
 
 
-def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
+def ingest_snapshot(
+    engine: Engine,
+    snapshot: Snapshot,
+    *,
+    idempotency_key: str | None = None,
+) -> IngestionResult:
     snapshot = validate_snapshot(snapshot)
     initialize_database(engine)
+    if idempotency_key is not None:
+        idempotency_key = _canonical_idempotency_key(idempotency_key)
+        if previous := _replayed_ingestion(engine, idempotency_key):
+            return previous
     run_id = str(uuid.uuid4())
     written = 0
     skipped = 0
@@ -343,102 +369,147 @@ def ingest_snapshot(engine: Engine, snapshot: Snapshot) -> IngestionResult:
     }
     stale_subagent_scopes: set[tuple[str, str]] = set()
     richer_subagent_scopes: set[tuple[str, str]] = set()
-    with Session(engine) as session, session.begin():
-        initial_subagent_scopes = {
-            scope
-            for scope in sorted(subagent_scopes)
-            if _lock_subagent_scope(session, *scope)
-        }
-        for record in snapshot.conversations:
-            conversation_id = str(record["id"])
-            existing = session.get(Conversation, conversation_id)
-            scope = (snapshot.provider, str(record["source_machine"]))
-            if existing is not None and existing.event_count > int(
-                record["event_count"]
-            ):
-                stale_subagent_scopes.add(scope)
-            elif existing is not None and existing.event_count < int(
-                record["event_count"]
-            ):
-                richer_subagent_scopes.add(scope)
-            if existing is not None and (
-                existing.event_count > int(record["event_count"])
-                or (
-                    existing.event_count == int(record["event_count"])
-                    and existing.content_hash == record["content_hash"]
+    try:
+        with Session(engine) as session, session.begin():
+            initial_subagent_scopes = {
+                scope
+                for scope in sorted(subagent_scopes)
+                if _lock_subagent_scope(session, *scope)
+            }
+            for record in snapshot.conversations:
+                conversation_id = str(record["id"])
+                existing = session.get(Conversation, conversation_id)
+                scope = (snapshot.provider, str(record["source_machine"]))
+                if existing is not None and existing.event_count > int(
+                    record["event_count"]
+                ):
+                    stale_subagent_scopes.add(scope)
+                elif existing is not None and existing.event_count < int(
+                    record["event_count"]
+                ):
+                    richer_subagent_scopes.add(scope)
+                if existing is not None and (
+                    existing.event_count > int(record["event_count"])
+                    or (
+                        existing.event_count == int(record["event_count"])
+                        and existing.content_hash == record["content_hash"]
+                    )
+                ):
+                    skipped += 1
+                    continue
+                session.execute(
+                    delete(ModelCall).where(
+                        ModelCall.conversation_id == conversation_id
+                    )
                 )
-            ):
-                skipped += 1
-                continue
-            session.execute(
-                delete(ModelCall).where(ModelCall.conversation_id == conversation_id)
+                session.execute(
+                    delete(ToolCall).where(ToolCall.conversation_id == conversation_id)
+                )
+                session.execute(
+                    delete(WorkItem).where(WorkItem.conversation_id == conversation_id)
+                )
+                session.execute(
+                    delete(ContextSample).where(
+                        ContextSample.conversation_id == conversation_id
+                    )
+                )
+                session.execute(
+                    delete(TurnSetting).where(
+                        TurnSetting.conversation_id == conversation_id
+                    )
+                )
+                session.execute(
+                    delete(CompactionEvent).where(
+                        CompactionEvent.conversation_id == conversation_id
+                    )
+                )
+                session.execute(
+                    delete(Turn).where(Turn.conversation_id == conversation_id)
+                )
+                session.merge(_conversation_from_record(record))
+                session.flush()
+                for turn in turns_by_conversation.get(conversation_id, []):
+                    session.add(Turn(**turn))
+                for call in calls_by_conversation.get(conversation_id, []):
+                    session.add(ModelCall(**call))
+                for tool in tools_by_conversation.get(conversation_id, []):
+                    session.add(ToolCall(**tool))
+                for work_item in work_by_conversation.get(conversation_id, []):
+                    session.add(WorkItem(**work_item))
+                for sample in context_by_conversation.get(conversation_id, []):
+                    session.add(ContextSample(**sample))
+                for setting in settings_by_conversation.get(conversation_id, []):
+                    session.add(TurnSetting(**setting))
+                for compaction in compactions_by_conversation.get(conversation_id, []):
+                    session.add(CompactionEvent(**compaction))
+                written += 1
+            authoritative_scopes = initial_subagent_scopes | (
+                richer_subagent_scopes - stale_subagent_scopes
             )
-            session.execute(
-                delete(ToolCall).where(ToolCall.conversation_id == conversation_id)
-            )
-            session.execute(
-                delete(WorkItem).where(WorkItem.conversation_id == conversation_id)
-            )
-            session.execute(
-                delete(ContextSample).where(
-                    ContextSample.conversation_id == conversation_id
+            for provider, source_machine in authoritative_scopes:
+                session.execute(
+                    delete(Subagent).where(
+                        Subagent.provider == provider,
+                        Subagent.source_machine == source_machine,
+                    )
+                )
+            for subagent in snapshot.subagents:
+                scope = (snapshot.provider, str(subagent["source_machine"]))
+                if scope in authoritative_scopes:
+                    session.add(Subagent(**subagent))
+            session.add(
+                IngestionRun(
+                    id=run_id,
+                    provider=snapshot.provider,
+                    ingested_at=canonical_timestamp(datetime.now(UTC)),
+                    conversations_received=len(snapshot.conversations),
+                    conversations_written=written,
+                    conversations_skipped=skipped,
+                    malformed_records=snapshot.malformed_records,
+                    duplicate_conversations=snapshot.duplicate_conversations,
                 )
             )
-            session.execute(
-                delete(TurnSetting).where(
-                    TurnSetting.conversation_id == conversation_id
+            if idempotency_key is not None:
+                session.add(
+                    SyncReceipt(
+                        idempotency_key=idempotency_key,
+                        ingestion_run_id=run_id,
+                    )
                 )
-            )
-            session.execute(
-                delete(CompactionEvent).where(
-                    CompactionEvent.conversation_id == conversation_id
-                )
-            )
-            session.execute(delete(Turn).where(Turn.conversation_id == conversation_id))
-            session.merge(_conversation_from_record(record))
-            session.flush()
-            for turn in turns_by_conversation.get(conversation_id, []):
-                session.add(Turn(**turn))
-            for call in calls_by_conversation.get(conversation_id, []):
-                session.add(ModelCall(**call))
-            for tool in tools_by_conversation.get(conversation_id, []):
-                session.add(ToolCall(**tool))
-            for work_item in work_by_conversation.get(conversation_id, []):
-                session.add(WorkItem(**work_item))
-            for sample in context_by_conversation.get(conversation_id, []):
-                session.add(ContextSample(**sample))
-            for setting in settings_by_conversation.get(conversation_id, []):
-                session.add(TurnSetting(**setting))
-            for compaction in compactions_by_conversation.get(conversation_id, []):
-                session.add(CompactionEvent(**compaction))
-            written += 1
-        authoritative_scopes = initial_subagent_scopes | (
-            richer_subagent_scopes - stale_subagent_scopes
-        )
-        for provider, source_machine in authoritative_scopes:
-            session.execute(
-                delete(Subagent).where(
-                    Subagent.provider == provider,
-                    Subagent.source_machine == source_machine,
-                )
-            )
-        for subagent in snapshot.subagents:
-            scope = (snapshot.provider, str(subagent["source_machine"]))
-            if scope in authoritative_scopes:
-                session.add(Subagent(**subagent))
-        session.add(
-            IngestionRun(
-                id=run_id,
-                provider=snapshot.provider,
-                ingested_at=canonical_timestamp(datetime.now(UTC)),
-                conversations_received=len(snapshot.conversations),
-                conversations_written=written,
-                conversations_skipped=skipped,
-                malformed_records=snapshot.malformed_records,
-                duplicate_conversations=snapshot.duplicate_conversations,
-            )
-        )
+    except IntegrityError:
+        if idempotency_key is not None and (
+            previous := _replayed_ingestion(engine, idempotency_key)
+        ):
+            return previous
+        raise
     return IngestionResult(run_id, len(snapshot.conversations), written, skipped)
+
+
+def _canonical_idempotency_key(value: str) -> str:
+    try:
+        parsed = uuid.UUID(value)
+    except (AttributeError, ValueError):
+        raise ValueError("Idempotency key must be a canonical UUIDv4") from None
+    if parsed.version != 4 or str(parsed) != value:
+        raise ValueError("Idempotency key must be a canonical UUIDv4")
+    return value
+
+
+def _replayed_ingestion(engine: Engine, idempotency_key: str) -> IngestionResult | None:
+    with Session(engine) as session:
+        run = session.scalar(
+            select(IngestionRun)
+            .join(SyncReceipt, SyncReceipt.ingestion_run_id == IngestionRun.id)
+            .where(SyncReceipt.idempotency_key == idempotency_key)
+        )
+        if run is None:
+            return None
+        return IngestionResult(
+            run.id,
+            run.conversations_received,
+            run.conversations_written,
+            run.conversations_skipped,
+        )
 
 
 def _lock_subagent_scope(session: Session, provider: str, source_machine: str) -> bool:

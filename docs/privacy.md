@@ -60,6 +60,15 @@ outside this application's retention boundary. A final ASGI exception boundary s
 outside FastAPI and consumes framework-re-raised request exceptions, preventing
 Uvicorn's error logger from independently writing their messages or tracebacks.
 
+Idempotent sync uses a separate client-generated canonical UUIDv4. It is unrelated to
+provider content, machine paths, labels, and the request-correlation identifier. The
+collector persists only that opaque UUID and its ingestion-run foreign key in an
+internal `sync_receipts` table; it is absent from CSV, dashboards, API error bodies,
+and logs, and retention deletes it with the associated ingestion run. Capabilities
+are negotiated once per endpoint. Retries are limited to three attempts and are
+enabled only when the collector advertises this receipt mechanism, so a legacy server
+is never retried after an ambiguous transport failure.
+
 ## Threat model
 
 Provider files and incoming API payloads are untrusted. Parsers must tolerate malformed

@@ -4,6 +4,7 @@ import builtins
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from click.utils import strip_ansi
 from storage_helpers import read_table
@@ -126,6 +127,43 @@ def test_sync_reports_missing_optional_dependencies_without_a_traceback(
     assert result.exit_code == 2
     assert "cli-consumption[sync]" in normalized_cli_output(result.output)
     assert "Traceback" not in result.output
+
+
+def test_sync_reuses_one_client_and_reports_success_before_later_failure(
+    monkeypatch,
+) -> None:
+    snapshots = [Snapshot(provider="codex"), Snapshot(provider="claude")]
+    observed: dict[str, Any] = {"created": 0, "providers": [], "closed": False}
+
+    class FakeSyncClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            observed["created"] += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            observed["closed"] = True
+
+        def send_snapshot(self, snapshot: Snapshot) -> dict[str, int | str]:
+            observed["providers"].append(snapshot.provider)
+            if snapshot.provider == "claude":
+                raise ValueError("synthetic later failure")
+            return {"run_id": "run-1", "received": 0, "written": 0, "skipped": 0}
+
+    monkeypatch.setattr(cli_module, "_collect_snapshots", lambda *_args: snapshots)
+    monkeypatch.setattr("cli_consumption.sync.SyncClient", FakeSyncClient)
+
+    result = runner.invoke(app, ["sync", "--endpoint", "https://collector.test"])
+
+    assert result.exit_code == 2
+    assert "Remote ingestion codex run-1" in result.output
+    assert "synthetic later failure" in normalized_cli_output(result.output)
+    assert observed == {
+        "created": 1,
+        "providers": ["codex", "claude"],
+        "closed": True,
+    }
 
 
 def test_serve_reports_missing_optional_dependencies_without_a_traceback(

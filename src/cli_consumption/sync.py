@@ -1,11 +1,92 @@
 from __future__ import annotations
 
 import ipaddress
+import time
+import uuid
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 import httpx
 
 from cli_consumption.models import CURRENT_SNAPSHOT_SCHEMA, Snapshot
+
+MAX_UPLOAD_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = (0.25, 0.5)
+RETRYABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
+
+
+class SyncClient:
+    """Reusable collector client with one capability negotiation per endpoint."""
+
+    def __init__(
+        self,
+        endpoint: str,
+        token: str | None = None,
+        timeout: float = 60.0,
+        *,
+        allow_insecure: bool = False,
+        client: httpx.Client | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        _require_secure_endpoint(endpoint, allow_insecure=allow_insecure)
+        self._endpoint = endpoint.rstrip("/")
+        self._headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._client = client or httpx.Client(timeout=timeout)
+        self._owns_client = client is None
+        self._sleep = sleep
+        self._capabilities_checked = False
+        self._supports_idempotency = False
+
+    def __enter__(self) -> SyncClient:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def send_snapshot(self, snapshot: Snapshot) -> dict[str, int | str]:
+        payload_to_send = Snapshot.from_dict(snapshot.to_dict()).to_dict()
+        self._negotiate_capabilities()
+        idempotency_key = str(uuid.uuid4())
+        headers = {**self._headers, "Idempotency-Key": idempotency_key}
+        attempts = MAX_UPLOAD_ATTEMPTS if self._supports_idempotency else 1
+
+        for attempt in range(attempts):
+            try:
+                response = self._client.post(
+                    self._endpoint + "/api/v1/snapshots",
+                    json=payload_to_send,
+                    headers=headers,
+                )
+            except httpx.TransportError:
+                if attempt + 1 == attempts:
+                    raise
+                self._sleep(RETRY_BACKOFF_SECONDS[attempt])
+                continue
+            if (
+                response.status_code in RETRYABLE_STATUS_CODES
+                and attempt + 1 < attempts
+            ):
+                self._sleep(RETRY_BACKOFF_SECONDS[attempt])
+                continue
+            response.raise_for_status()
+            return _validated_response(response.json())
+
+        raise RuntimeError("Upload retry loop exhausted")  # pragma: no cover
+
+    def _negotiate_capabilities(self) -> None:
+        if self._capabilities_checked:
+            return
+        response = self._client.get(self._endpoint + "/api/v1/capabilities")
+        if response.status_code == 404:
+            self._capabilities_checked = True
+            return
+        response.raise_for_status()
+        self._supports_idempotency = _require_compatible_schema(response.json())
+        self._capabilities_checked = True
 
 
 def send_snapshot(
@@ -16,23 +97,16 @@ def send_snapshot(
     *,
     allow_insecure: bool = False,
 ) -> dict[str, int | str]:
-    _require_secure_endpoint(endpoint, allow_insecure=allow_insecure)
-    payload_to_send = Snapshot.from_dict(snapshot.to_dict()).to_dict()
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    capabilities = httpx.get(
-        endpoint.rstrip("/") + "/api/v1/capabilities", timeout=timeout
-    )
-    if capabilities.status_code != 404:
-        capabilities.raise_for_status()
-        _require_compatible_schema(capabilities.json())
-    response = httpx.post(
-        endpoint.rstrip("/") + "/api/v1/snapshots",
-        json=payload_to_send,
-        headers=headers,
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    payload = response.json()
+    with SyncClient(
+        endpoint,
+        token,
+        timeout,
+        allow_insecure=allow_insecure,
+    ) as client:
+        return client.send_snapshot(snapshot)
+
+
+def _validated_response(payload: object) -> dict[str, int | str]:
     if not isinstance(payload, dict):
         raise ValueError("Collector returned an invalid response")
     if not isinstance(payload.get("run_id"), str) or not all(
@@ -64,7 +138,7 @@ def _require_secure_endpoint(endpoint: str, *, allow_insecure: bool) -> None:
         )
 
 
-def _require_compatible_schema(payload: object) -> None:
+def _require_compatible_schema(payload: object) -> bool:
     if not isinstance(payload, dict):
         raise ValueError("Collector returned invalid capabilities")
     minimum = payload.get("snapshot_schema_min")
@@ -78,3 +152,7 @@ def _require_compatible_schema(payload: object) -> None:
         raise ValueError("Collector returned invalid capabilities")
     if not minimum <= CURRENT_SNAPSHOT_SCHEMA <= maximum:
         raise ValueError("Collector does not support this snapshot schema")
+    idempotency = payload.get("idempotent_snapshot_uploads", False)
+    if not isinstance(idempotency, bool):
+        raise ValueError("Collector returned invalid capabilities")
+    return idempotency

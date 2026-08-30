@@ -63,7 +63,12 @@ deployment still needs TLS, token rotation, backups, monitoring, and a reverse p
 or platform ingress. Read access is not exposed. The collector limits bodies to 32 MiB
 including chunked requests, accepts snapshot schema v1, and caps a snapshot at 250,000
 normalized records. `/api/v1/capabilities` publishes these limits and the supported
-schema range so clients can fail before uploading incompatible data.
+schema range so clients can fail before uploading incompatible data. One sync command
+reuses a single HTTP client and negotiates capabilities once for its endpoint. A
+collector that advertises idempotent uploads receives an opaque UUIDv4 per logical
+snapshot. The client reuses that UUID for at most three attempts, with 0.25 and 0.5
+second backoffs after transport failures or HTTP 500/502/503/504. It does not retry an
+ambiguous upload against a legacy collector that lacks the capability.
 The sync client refuses plain HTTP beyond loopback unless the operator passes the
 explicit `--allow-insecure` override for a trusted network.
 
@@ -116,6 +121,15 @@ and avoid mixed-version access during migration. The detailed policy is recorded
 Conversation records use a provider-qualified stable ID. Repeated ingestion skips an
 identical or less complete record. A more complete copy atomically replaces the
 conversation and its child records.
+
+Remote idempotency receipts are internal, provider-neutral rows mapping a canonical
+client UUIDv4 to one completed ingestion run. Receipt insertion shares the ingestion
+transaction and its primary key serializes concurrent replays on SQLite and
+PostgreSQL. A replay returns the stored run identifier and counters without creating a
+second ingestion run. Receipt rows are not exported and are removed by the foreign-key
+cascade when retention removes their ingestion run. New clients remain single-attempt
+with older servers; older clients can write to the new optional-header endpoint but do
+not receive retry guarantees.
 
 Subagent relationships have a provider-and-source-machine lifecycle. The first
 snapshot representing a scope can create its graph. After that, the graph is replaced

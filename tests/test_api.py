@@ -6,6 +6,7 @@ import logging
 import sqlite3
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
@@ -55,6 +56,7 @@ async def test_collector_requires_token_and_ingests_snapshot(
         capabilities = (await client.get("/api/v1/capabilities")).json()
         assert capabilities["max_request_bytes"] == 32 * 1024 * 1024
         assert capabilities["max_snapshot_records"] == 250_000
+        assert capabilities["idempotent_snapshot_uploads"] is True
         assert (
             await client.post("/api/v1/snapshots", json=snapshot.to_dict())
         ).status_code == 401
@@ -134,6 +136,60 @@ async def test_collector_requires_token_and_ingests_snapshot(
         assert response.status_code == 413
         assert response.json() == {"detail": "request_too_large"}
         assert response.headers["x-request-id"]
+    engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_collector_replays_an_idempotent_snapshot_response(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "central.sqlite")
+    transport = httpx.ASGITransport(app=create_app(engine))
+    key = str(uuid.uuid4())
+
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://collector.test"
+    ) as client:
+        first = await client.post(
+            "/api/v1/snapshots",
+            json={"provider": "codex"},
+            headers={"Idempotency-Key": key},
+        )
+        replay = await client.post(
+            "/api/v1/snapshots",
+            json={"provider": "codex"},
+            headers={"Idempotency-Key": key},
+        )
+        invalid = await client.post(
+            "/api/v1/snapshots",
+            json={"provider": "codex"},
+            headers={"Idempotency-Key": "privacy-canary-invalid-key"},
+        )
+        non_random = await client.post(
+            "/api/v1/snapshots",
+            json={"provider": "codex"},
+            headers={"Idempotency-Key": "11111111-2222-1333-8444-555555555555"},
+        )
+
+    assert first.status_code == replay.status_code == 200
+    assert replay.json() == first.json()
+    assert len(read_table(engine, "ingestion_runs")) == 1
+    with engine.connect() as connection:
+        receipts = (
+            connection.execute(
+                text("SELECT idempotency_key, ingestion_run_id FROM sync_receipts")
+            )
+            .mappings()
+            .all()
+        )
+    assert [dict(row) for row in receipts] == [
+        {"idempotency_key": key, "ingestion_run_id": first.json()["run_id"]}
+    ]
+    assert invalid.status_code == 422
+    assert invalid.json() == {"detail": "invalid_snapshot"}
+    assert "privacy-canary" not in invalid.text
+    assert non_random.status_code == 422
+    assert non_random.json() == {"detail": "invalid_snapshot"}
     engine.dispose()
 
 

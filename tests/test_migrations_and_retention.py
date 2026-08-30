@@ -34,6 +34,7 @@ from cli_consumption.migrations.versions import (
     v0002_minimize_subagents,
     v0003_canonical_timestamps,
     v0004_subagent_scope_freshness,
+    v0005_sync_receipts,
 )
 from cli_consumption.models import Snapshot
 from cli_consumption.retention import retain_before
@@ -164,7 +165,7 @@ def test_empty_database_upgrades_to_packaged_head(tmp_path: Path) -> None:
     assert set(inspector.get_table_names()) == {*BASELINE_COLUMNS, "alembic_version"}
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0004"
+            "0005"
         )
     for table in Base.metadata.sorted_tables:
         assert {column["name"] for column in inspector.get_columns(table.name)} == (
@@ -217,7 +218,7 @@ def test_concurrent_sqlite_initialization_reaches_one_packaged_head(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0004"
+            "0005"
         )
     assert set(inspect(engine).get_table_names()) == {
         *BASELINE_COLUMNS,
@@ -243,7 +244,7 @@ def test_concurrent_sqlite_migration_is_idempotent(tmp_path: Path) -> None:
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0004"
+            "0005"
         )
     assert "ix_conversations_ended_at" in {
         item["name"] for item in inspect(engine).get_indexes("conversations")
@@ -298,7 +299,7 @@ def test_failed_sqlite_migration_releases_waiter(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0004"
+            "0005"
         )
     engine.dispose()
 
@@ -394,7 +395,7 @@ def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> No
     assert read_table(engine, "ingestion_runs")[0]["id"] == "run"
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0004"
+            "0005"
         )
     assert "agent_nickname" not in {
         column["name"] for column in inspect(engine).get_columns("subagents")
@@ -423,6 +424,12 @@ def test_unversioned_head_database_preserves_validated_scope_state(
                 tokens_used=3,
             )
         )
+    receipt_key = "11111111-2222-4333-8444-555555555555"
+    receipt = ingest_snapshot(
+        engine,
+        Snapshot(provider="codex"),
+        idempotency_key=receipt_key,
+    )
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -438,7 +445,7 @@ def test_unversioned_head_database_preserves_validated_scope_state(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0004"
+            "0005"
         )
         assert (
             connection.scalar(
@@ -453,6 +460,50 @@ def test_unversioned_head_database_preserves_validated_scope_state(
     assert [row["id"] for row in read_table(engine, "subagents")] == [
         "test:machine:child"
     ]
+    with engine.connect() as connection:
+        assert connection.execute(
+            text(
+                "SELECT idempotency_key, ingestion_run_id FROM sync_receipts "
+                "WHERE idempotency_key = :key"
+            ),
+            {"key": receipt_key},
+        ).one() == (receipt_key, receipt.run_id)
+    engine.dispose()
+
+
+def test_unversioned_revision_0004_is_adopted_before_sync_receipt_upgrade(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "unversioned-0004.sqlite")
+    initialize_database(engine)
+    downgrade_database(engine, "0004")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO subagent_scopes "
+                "(provider, source_machine, lock_version) "
+                "VALUES ('codex', 'legacy-0004', 41)"
+            )
+        )
+        connection.execute(text("DROP TABLE alembic_version"))
+
+    initialize_database(engine)
+    initialize_database(engine)
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0005"
+        )
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT lock_version FROM subagent_scopes "
+                    "WHERE provider = 'codex' AND source_machine = 'legacy-0004'"
+                )
+            )
+            == 41
+        )
+    assert "sync_receipts" in inspect(engine).get_table_names()
     engine.dispose()
 
 
@@ -550,6 +601,7 @@ def test_migrations_emit_portable_postgresql_structure() -> None:
         v0002_minimize_subagents.upgrade()
         v0003_canonical_timestamps.upgrade()
         v0004_subagent_scope_freshness.upgrade()
+        v0005_sync_receipts.upgrade()
 
     ddl = output.getvalue()
     assert "CREATE TABLE conversations" in ddl
@@ -563,6 +615,8 @@ def test_migrations_emit_portable_postgresql_structure() -> None:
     assert "CREATE INDEX ix_conversations_ended_at" in ddl
     assert "CREATE TABLE subagent_scopes" in ddl
     assert "INSERT INTO subagent_scopes" in ddl
+    assert "CREATE TABLE sync_receipts" in ddl
+    assert "FOREIGN KEY(ingestion_run_id)" in ddl
 
 
 def test_subagent_scope_migration_seeds_existing_scopes_and_round_trips(
@@ -604,6 +658,38 @@ def test_subagent_scope_migration_seeds_existing_scopes_and_round_trips(
     assert "subagent_scopes" not in inspect(engine).get_table_names()
     upgrade_database(engine)
     assert "subagent_scopes" in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_sync_receipt_migration_round_trips_and_cascades(tmp_path: Path) -> None:
+    engine = create_database_engine(tmp_path / "sync-receipts.sqlite")
+    initialize_database(engine)
+    downgrade_database(engine, "0004")
+    assert "sync_receipts" not in inspect(engine).get_table_names()
+
+    upgrade_database(engine)
+    inspector = inspect(engine)
+    assert "sync_receipts" in inspector.get_table_names()
+    foreign_key = inspector.get_foreign_keys("sync_receipts")[0]
+    assert foreign_key["constrained_columns"] == ["ingestion_run_id"]
+    assert foreign_key["referred_table"] == "ingestion_runs"
+    assert foreign_key["options"] == {"ondelete": "CASCADE"}
+
+    result = ingest_snapshot(
+        engine,
+        Snapshot(provider="codex"),
+        idempotency_key="11111111-2222-4333-8444-555555555555",
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text("DELETE FROM ingestion_runs WHERE id = :run_id"),
+            {"run_id": result.run_id},
+        )
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT COUNT(*) FROM sync_receipts")) == 0
+
+    downgrade_database(engine, "0004")
+    assert "sync_receipts" not in inspect(engine).get_table_names()
     engine.dispose()
 
 
@@ -950,7 +1036,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0004"
+                == "0005"
             )
 
         with test_engine.begin() as connection:
@@ -976,7 +1062,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0004"
+                == "0005"
             )
             assert (
                 connection.scalar(
@@ -1199,6 +1285,33 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
         assert {row["id"] for row in read_table(test_engine, "subagents")} == {
             "codex:ci:recent-child"
         }
+
+        replay_key = str(uuid.uuid4())
+        replay_barrier = Barrier(2)
+
+        def replay_concurrently() -> str:
+            replay_barrier.wait()
+            return ingest_snapshot(
+                test_engine,
+                Snapshot(provider="codex"),
+                idempotency_key=replay_key,
+            ).run_id
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            replay_futures = [executor.submit(replay_concurrently) for _ in range(2)]
+            replay_run_ids = [future.result() for future in replay_futures]
+        assert replay_run_ids[0] == replay_run_ids[1]
+        with test_engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    text(
+                        "SELECT COUNT(*) FROM sync_receipts "
+                        "WHERE idempotency_key = :key"
+                    ),
+                    {"key": replay_key},
+                )
+                == 1
+            )
 
         concurrent_base = Snapshot.from_dict(snapshot.to_dict())
         concurrent_base.turns.clear()

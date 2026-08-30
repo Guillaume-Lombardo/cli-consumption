@@ -205,7 +205,7 @@ def sync(
 ) -> None:
     """Collect locally and send metadata-only records to a central collector."""
     try:
-        from cli_consumption.sync import send_snapshot
+        from cli_consumption.sync import SyncClient
     except ModuleNotFoundError:
         raise typer.BadParameter(
             "sync requires optional dependencies; install cli-consumption[sync]"
@@ -213,17 +213,16 @@ def sync(
 
     snapshots = _collect_snapshots(provider, source, project)
     token = os.environ.get(token_env)
-    for snapshot in snapshots:
-        try:
-            result = send_snapshot(
-                snapshot, endpoint, token, allow_insecure=allow_insecure
-            )
-        except ValueError as error:
-            raise typer.BadParameter(str(error)) from None
-        typer.echo(
-            f"Remote ingestion {snapshot.provider} {result['run_id']}: "
-            f"{result['written']} written, {result['skipped']} unchanged."
-        )
+    try:
+        with SyncClient(endpoint, token, allow_insecure=allow_insecure) as sync_client:
+            for snapshot in snapshots:
+                result = sync_client.send_snapshot(snapshot)
+                typer.echo(
+                    f"Remote ingestion {snapshot.provider} {result['run_id']}: "
+                    f"{result['written']} written, {result['skipped']} unchanged."
+                )
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from None
 
 
 @app.command("export")

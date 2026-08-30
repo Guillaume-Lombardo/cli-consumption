@@ -93,8 +93,9 @@ uv run cli-consumption providers --json
   structured-field, and total normalized-record limits; direct provider-file symlinks
   are refused.
 - `collect --strict` and `sync --strict` refuse a batch when any provider skipped
-  malformed records. Machine-readable results use fixed error codes without paths,
-  payloads, response bodies, tokens, or exception text.
+  malformed records. Collection distinguishes `provider_limit_exceeded`,
+  `provider_format_incompatible`, and `invalid_snapshot`; machine-readable results use
+  these fixed codes without paths, payloads, response bodies, tokens, or exception text.
 - Dashboards are self-contained and network-free. Share-safe mode pseudonymizes
   labels, groups tools, rounds timestamps, and hides small cohorts, but still exposes
   aggregate work patterns.

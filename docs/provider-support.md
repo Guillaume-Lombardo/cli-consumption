@@ -35,7 +35,8 @@ the local default homes; repeated `--source` paths are filtered by detected form
 Provider metadata is maintained in one registry: canonical name, aliases, adapter,
 default home, detection markers, support state, and token semantics. `providers --json`
 uses that same registry to check default local stores and emits deterministic schema-v2
-JSON. Token semantics are one of `additive`, `conversation-aggregate`,
+JSON. Only implemented, supported adapters appear in command output; planned adapters
+do not. Token semantics are one of `additive`, `conversation-aggregate`,
 `context-snapshot`, or `unavailable`; a missing counter is never presented as a measured
 zero in provider capability output. Its
 compatibility status is one of:
@@ -49,6 +50,13 @@ compatibility status is one of:
 
 The diagnostic is deliberately coarse: it does not persist collected records or emit
 local paths, provider identifiers, record counts, malformed values, or parser errors.
+
+Collection failures expose only the canonical provider name and a fixed code:
+`provider_limit_exceeded` for an input or snapshot safety bound,
+`provider_format_incompatible` for a recognized but unsupported store schema, and
+`invalid_snapshot` when normalized metadata violates the provider-neutral contract.
+Unexpected adapter failures use `provider_collection_failed`. Exception messages,
+paths, and record values are never included.
 
 ## Qualification ledger
 

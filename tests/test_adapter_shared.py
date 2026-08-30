@@ -185,6 +185,7 @@ def test_mapping_and_list_value_preserve_only_expected_container_types() -> None
     ("value", "expected"),
     [
         ("2026-08-29T12:34:56Z", datetime(2026, 8, 29, 12, 34, 56, tzinfo=UTC)),
+        ("2026-08-29T12:34:56", None),
         (1_777_117_696, datetime(2026, 4, 25, 11, 48, 16, tzinfo=UTC)),
         (1_777_117_696_000, datetime(2026, 4, 25, 11, 48, 16, tzinfo=UTC)),
         (True, None),

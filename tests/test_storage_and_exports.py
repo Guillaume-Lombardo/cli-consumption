@@ -79,6 +79,8 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     )
     assert "semantics==='unavailable'" in html
     assert "conversationInRange(conversation,range)" in html
+    assert "(!range.end||start<=range.end)" in html
+    assert "s.calls=filtered" in html
     assert (
         "Conversation aggregates and latest-context snapshots are included in full"
         in html

@@ -6,14 +6,17 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
 from click.utils import strip_ansi
 from storage_helpers import read_table
 from typer.testing import CliRunner
 
 import cli_consumption.cli as cli_module
+from cli_consumption.adapters._shared import ProviderDataLimitError
+from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.adapters.registry import AdapterSpec
 from cli_consumption.cli import app
-from cli_consumption.models import Snapshot
+from cli_consumption.models import Snapshot, SnapshotValidationError
 from cli_consumption.storage import (
     create_database_engine,
     initialize_database,
@@ -52,6 +55,122 @@ def test_provider_status_is_explicit() -> None:
     assert "pi       supported" in result.stdout
     assert "plandex  supported" in result.stdout
     assert "qwen     supported" in result.stdout
+
+    help_result = runner.invoke(app, ["providers", "--help"])
+    assert help_result.exit_code == 0
+    assert "supported CLI adapters" in normalized_cli_output(help_result.stdout)
+    assert "planned" not in help_result.stdout.lower()
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_code", "expected_message"),
+    [
+        (
+            "provider_limit",
+            "provider_limit_exceeded",
+            "data exceeds collection safety limits",
+        ),
+        (
+            "snapshot_limit",
+            "provider_limit_exceeded",
+            "data exceeds collection safety limits",
+        ),
+        (
+            "format",
+            "provider_format_incompatible",
+            "data format is incompatible",
+        ),
+        (
+            "snapshot",
+            "invalid_snapshot",
+            "produced an invalid metadata snapshot",
+        ),
+        (
+            "unexpected",
+            "provider_collection_failed",
+            "collection failed",
+        ),
+    ],
+)
+def test_collect_classifies_privacy_safe_errors_in_human_and_json_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    canary = "PROMPT_SECRET_CANARY"
+
+    class FailingAdapter:
+        name = "synthetic"
+
+        def collect(
+            self,
+            sources: list[tuple[str, Path]],
+            project_mappings: list[tuple[str, str]],
+        ) -> Snapshot:
+            if failure == "provider_limit":
+                raise ProviderDataLimitError(canary)
+            if failure == "snapshot_limit":
+                raise SnapshotValidationError("snapshot_too_large")
+            if failure == "format":
+                raise UnsupportedProviderFormat(canary)
+            if failure == "snapshot":
+                raise SnapshotValidationError(canary)
+            raise ValueError(canary)
+
+    spec = AdapterSpec("synthetic", FailingAdapter, ".synthetic", ("marker",))
+    monkeypatch.setattr(cli_module, "resolve_adapter_spec", lambda _: spec)
+    monkeypatch.setattr(cli_module, "has_provider_data", lambda *_: True)
+    arguments = [
+        "collect",
+        "--provider",
+        "synthetic",
+        "--source",
+        f"machine={tmp_path}",
+        "--database",
+        str(tmp_path / "usage.sqlite"),
+    ]
+
+    human = runner.invoke(app, arguments)
+    machine = runner.invoke(app, [*arguments, "--json"])
+
+    assert human.exit_code == machine.exit_code == 2
+    assert expected_message in human.stderr
+    assert json.loads(machine.stdout) == {
+        "error": {"code": expected_code, "provider": "synthetic"},
+        "ingestions": [],
+    }
+    assert machine.stderr == ""
+    assert canary not in human.output + machine.output
+
+
+def test_collect_classifies_snapshot_rejected_during_ingestion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canary = "PROMPT_SECRET_CANARY"
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_snapshots",
+        lambda *_: [Snapshot(provider="codex")],
+    )
+
+    def reject_snapshot(*_args: object) -> None:
+        raise SnapshotValidationError(canary)
+
+    monkeypatch.setattr(cli_module, "ingest_snapshot", reject_snapshot)
+    arguments = ["collect", "--database", str(tmp_path / "usage.sqlite")]
+
+    human = runner.invoke(app, arguments)
+    machine = runner.invoke(app, [*arguments, "--json"])
+
+    assert human.exit_code == machine.exit_code == 2
+    assert "produced an invalid metadata snapshot" in human.stderr
+    assert json.loads(machine.stdout) == {
+        "error": {"code": "invalid_snapshot", "provider": "codex"},
+        "ingestions": [],
+    }
+    assert canary not in human.output + machine.output
 
 
 def test_provider_json_is_deterministic_and_does_not_leak_diagnostic_errors(
@@ -371,6 +490,33 @@ def test_sync_collection_errors_are_generic_in_human_and_json_output(
     combined = human.output + machine.output
     assert canary not in combined
     assert "/private/" not in combined
+
+
+def test_sync_preserves_classified_privacy_safe_collection_errors(monkeypatch) -> None:
+    failure = cli_module.CollectionFailure(
+        "codex",
+        "invalid_snapshot",
+        "Provider 'codex' produced an invalid metadata snapshot.",
+    )
+
+    def fail_collection(*_args: object) -> list[Snapshot]:
+        raise failure
+
+    monkeypatch.setattr(cli_module, "_collect_snapshots", fail_collection)
+
+    human = runner.invoke(app, ["sync", "--endpoint", "https://collector.test"])
+    machine = runner.invoke(
+        app, ["sync", "--endpoint", "https://collector.test", "--json"]
+    )
+
+    assert human.exit_code == machine.exit_code == 2
+    assert "produced an invalid metadata snapshot" in human.stderr
+    assert json.loads(machine.stdout) == {
+        "complete": False,
+        "error": {"code": "invalid_snapshot"},
+        "synchronizations": [],
+    }
+    assert machine.stderr == ""
 
 
 def test_sync_strict_refuses_the_complete_batch_before_transport(monkeypatch) -> None:

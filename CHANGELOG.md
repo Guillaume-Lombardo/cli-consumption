@@ -8,6 +8,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Collection errors now distinguish provider limits, incompatible formats, invalid
+  snapshots, and unexpected adapter failures with privacy-safe human messages and
+  deterministic JSON codes.
 - A pinned, privacy-preserving single-host production deployment example now covers
   the central collector, PostgreSQL, and automatic TLS proxy operations.
 - The README now leads with a reproducible synthetic dashboard preview and routes

@@ -5,13 +5,14 @@ import os
 import platform
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Never
 
 import typer
 from sqlalchemy.engine import Engine
 
 from cli_consumption import __version__
 from cli_consumption.adapters._shared import ProviderDataLimitError
+from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.adapters.registry import (
     ADAPTER_SPECS,
     AdapterSpec,
@@ -37,6 +38,16 @@ app = typer.Typer(
     help="Analyze AI coding CLI consumption without exporting conversation content.",
     no_args_is_help=True,
 )
+
+
+class CollectionFailure(RuntimeError):
+    """A classified provider failure containing only bounded presentation fields."""
+
+    def __init__(self, provider: str, code: str, message: str) -> None:
+        self.provider = provider
+        self.code = code
+        self.message = message
+        super().__init__(code)
 
 
 def version_callback(value: bool) -> None:
@@ -72,7 +83,7 @@ def providers(
         ),
     ] = False,
 ) -> None:
-    """Show implemented and planned CLI adapters."""
+    """Show supported CLI adapters and check local format compatibility."""
     if json_output:
         payload = {
             "schema_version": 2,
@@ -130,16 +141,26 @@ def collect(
     ] = False,
 ) -> None:
     """Collect one or more local/copied CLI data directories into SQL storage."""
-    snapshots = _collect_snapshots(provider, source, project)
+    try:
+        snapshots = _collect_snapshots(provider, source, project)
+    except CollectionFailure as error:
+        _abort_collection(error, json_output=json_output)
     if strict and any(snapshot.malformed_records for snapshot in snapshots):
         raise typer.BadParameter(
             "--strict refused snapshots containing malformed provider records"
         )
     engine = _open_database(database)
     try:
-        results = [
-            (snapshot, ingest_snapshot(engine, snapshot)) for snapshot in snapshots
-        ]
+        results = []
+        for snapshot in snapshots:
+            try:
+                result = ingest_snapshot(engine, snapshot)
+            except SnapshotValidationError as error:
+                _abort_collection(
+                    _snapshot_failure(snapshot.provider, error),
+                    json_output=json_output,
+                )
+            results.append((snapshot, result))
     finally:
         engine.dispose()
     if json_output:
@@ -230,6 +251,12 @@ def sync(
 
     try:
         snapshots = _collect_snapshots(provider, source, project)
+    except CollectionFailure as error:
+        if json_output:
+            _emit_sync_json([], complete=False, error_code=error.code)
+            raise typer.Exit(code=2) from None
+        typer.echo(error.message, err=True)
+        raise typer.Exit(code=2) from None
     except Exception:  # Provider errors are untrusted and stay generic for sync.
         if json_output:
             _emit_sync_json(
@@ -341,6 +368,28 @@ def _emit_sync_json(
     if error_code is not None:
         payload["error"] = {"code": error_code}
     typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+def _emit_collection_json(error: CollectionFailure) -> None:
+    """Emit one deterministic collection failure without provider error details."""
+    typer.echo(
+        json.dumps(
+            {
+                "error": {"code": error.code, "provider": error.provider},
+                "ingestions": [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+
+def _abort_collection(error: CollectionFailure, *, json_output: bool) -> Never:
+    if json_output:
+        _emit_collection_json(error)
+    else:
+        typer.echo(error.message, err=True)
+    raise typer.Exit(code=2) from None
 
 
 @app.command("export")
@@ -602,10 +651,42 @@ def _collect_adapter(
 ) -> Snapshot:
     try:
         return spec.adapter_type().collect(sources, mappings)
-    except (ProviderDataLimitError, SnapshotValidationError):
-        raise typer.BadParameter(
-            f"Provider {spec.name!r} data exceeds collection safety limits."
+    except ProviderDataLimitError:
+        raise CollectionFailure(
+            spec.name,
+            "provider_limit_exceeded",
+            f"Provider {spec.name!r} data exceeds collection safety limits.",
         ) from None
+    except UnsupportedProviderFormat:
+        raise CollectionFailure(
+            spec.name,
+            "provider_format_incompatible",
+            f"Provider {spec.name!r} data format is incompatible.",
+        ) from None
+    except SnapshotValidationError as error:
+        raise _snapshot_failure(spec.name, error) from None
+    except Exception:
+        raise CollectionFailure(
+            spec.name,
+            "provider_collection_failed",
+            f"Provider {spec.name!r} collection failed.",
+        ) from None
+
+
+def _snapshot_failure(
+    provider: str, error: SnapshotValidationError
+) -> CollectionFailure:
+    if error.code == "snapshot_too_large":
+        return CollectionFailure(
+            provider,
+            "provider_limit_exceeded",
+            f"Provider {provider!r} data exceeds collection safety limits.",
+        )
+    return CollectionFailure(
+        provider,
+        "invalid_snapshot",
+        f"Provider {provider!r} produced an invalid metadata snapshot.",
+    )
 
 
 def _parse_sources(

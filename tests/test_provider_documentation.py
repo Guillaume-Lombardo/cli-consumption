@@ -112,10 +112,20 @@ def test_provider_support_matrix_matches_the_canonical_registry() -> None:
 
 def test_readme_routes_provider_details_to_the_support_ledger() -> None:
     readme = README.read_text(encoding="utf-8")
+    support = PROVIDER_SUPPORT.read_text(encoding="utf-8")
 
     assert "[provider support ledger]" in readme
     assert "docs/provider-support.md" in readme
     assert "| Provider name |" not in readme
+    for code in (
+        "provider_limit_exceeded",
+        "provider_format_incompatible",
+        "invalid_snapshot",
+        "provider_collection_failed",
+    ):
+        assert code in readme
+        assert code in support
+    assert "planned adapters\ndo not" in support
 
 
 def test_markdown_table_parser_preserves_escaped_and_inline_code_pipes(

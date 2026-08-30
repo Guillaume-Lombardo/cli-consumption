@@ -1,11 +1,24 @@
 # Contributing
 
+## Plan work in Linear
+
+Create every new task in the
+[CLI Consumption Linear project](https://linear.app/g1lom/project/cli-consumption-b84515055d16)
+before starting implementation. Set the issue to `In Progress` when work begins and
+keep its status, progress, decisions, and blockers current while the change is being
+implemented and reviewed. Move it to `Done` only after its acceptance criteria and
+required validation are complete.
+
+Use the Linear issue identifier in the branch name, commits, and pull request when one
+is available. Record follow-up work as a new linked Linear issue instead of leaving it
+only in review comments, local notes, or the repository roadmap.
+
 ## Set up the project
 
 ```bash
 git switch main
 git pull --ff-only
-git switch -c feat/short-description
+git switch -c feat/G1L-123-short-description
 uv sync --all-extras --all-groups
 uv run pre-commit install
 ```

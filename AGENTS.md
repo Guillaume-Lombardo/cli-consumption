@@ -61,6 +61,23 @@ privacy assertions for every new exported field.
 - Rebase or merge current `main` before final validation when the branch is stale.
 - Delete the source branch only after the pull request is verified as merged.
 
+## Linear task tracking
+
+- Track every new repository task in the
+  [CLI Consumption Linear project](https://linear.app/g1lom/project/cli-consumption-b84515055d16)
+  before implementation starts. This includes features, fixes, refactors,
+  documentation, security, infrastructure, and maintenance work.
+- Move the Linear issue to `In Progress` when work starts. Keep its description,
+  status, progress, and blockers current throughout implementation, review, and
+  validation.
+- Move an issue to `Done` only after its acceptance criteria are satisfied and the
+  required validation has passed. Record any remaining limitation or follow-up in
+  Linear rather than leaving it only in a local note or pull request discussion.
+- Reference the Linear issue identifier in branch names, commits, and pull requests
+  when one is available.
+- Keep `docs/roadmap.md` focused on durable product direction; Linear is the source of
+  truth for actionable work and current progress.
+
 ## Local orchestration files
 
 `.agents/orchestrator.md` and `.agents/local-environment.md` are machine-specific and

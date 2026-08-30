@@ -6,6 +6,11 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Linear is now the source of truth for new repository tasks and their progress, while
+  the roadmap remains focused on durable product direction.
+
 ## [0.3.0] - 2026-08-29
 
 ### Added

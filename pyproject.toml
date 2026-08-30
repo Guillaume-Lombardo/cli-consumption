@@ -49,6 +49,7 @@ dev = [
   "fastapi>=0.115",
   "httpx>=0.27",
   "hypothesis>=6.165.10",
+  "pip-audit>=2.10.1",
   "pre-commit>=4.6.2",
   "psycopg[binary]>=3.2",
   "pytest>=8.3",
@@ -56,6 +57,7 @@ dev = [
   "ruff>=0.11",
   "ty>=0.0.74",
   "uvicorn>=0.34",
+  "zizmor>=1.29.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -89,7 +91,20 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/cli_consumption/dashboard.py" = ["E501"]
+"src/cli_consumption/adapters/_shared.py" = ["S608"]
+"src/cli_consumption/adapters/cline.py" = ["S608"]
+"src/cli_consumption/adapters/crush.py" = ["S608"]
+"src/cli_consumption/adapters/kilo.py" = ["S608"]
+"src/cli_consumption/adapters/opencode.py" = ["S608"]
+"src/cli_consumption/adapters/registry.py" = ["S105", "S106"]
+"src/cli_consumption/api.py" = ["S608"]
+"src/cli_consumption/cli.py" = ["S107"]
+"src/cli_consumption/dashboard.py" = ["E501", "S608"]
+"tests/**" = ["S101"]
+"tests/smoke_minimal_install.py" = ["S603", "S607"]
+"tests/test_codex_adapter.py" = ["S608"]
+"tests/test_dashboard_calculations.py" = ["S607"]
+"tests/test_packaging.py" = ["S603", "S607"]

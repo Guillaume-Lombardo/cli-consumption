@@ -8,14 +8,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
+    name: Quality and security
     runs-on: ubuntu-latest
     env:
       TEST_POSTGRESQL_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/cli_consumption_test
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
         env:
           POSTGRES_DB: cli_consumption_test
           POSTGRES_PASSWORD: postgres
@@ -28,8 +33,10 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           python-version: "3.14"
@@ -47,6 +54,7 @@ jobs:
             --with "${wheel}" python tests/smoke_minimal_install.py
 
   compatibility:
+    name: Python ${{ matrix.python-version }} compatibility
     runs-on: ubuntu-latest
     env:
       UV_PYTHON: ${{ matrix.python-version }}
@@ -55,8 +63,10 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
@@ -64,10 +74,13 @@ jobs:
       - run: uv run pytest
 
   minimum-server-stack:
+    name: Minimum server stack
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           python-version: "3.12"

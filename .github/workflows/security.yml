@@ -1,0 +1,40 @@
+name: Security
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+      - "tests/**"
+  schedule:
+    - cron: "41 5 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Source, dependency, and workflow audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.14"
+      - run: uv sync --locked --all-groups --all-extras
+      - name: Audit Python source
+        run: uv run ruff check --select S .
+      - name: Audit installed locked dependencies
+        run: uv run pip-audit --local --strict
+      - name: Audit GitHub Actions without network access
+        run: uv run zizmor --offline --persona=pedantic .github/workflows

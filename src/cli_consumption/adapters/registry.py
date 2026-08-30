@@ -41,6 +41,18 @@ CompatibilityStatus = Literal[
 
 
 @dataclass(frozen=True, slots=True)
+class AdapterQualification:
+    """Auditable provenance for one synthetic provider-format contract."""
+
+    version: str
+    qualified_on: str
+    format: str
+    fixture: str
+    provenance: str
+    limitations: str
+
+
+@dataclass(frozen=True, slots=True)
 class AdapterSpec:
     """Static registration data for a provider adapter."""
 
@@ -53,6 +65,8 @@ class AdapterSpec:
     token_semantics: TokenSemantics = "unavailable"
     # Exact presentation value for maintained docs; never emitted by diagnostics.
     documented_source: str = ""
+    # Repository-only qualification metadata; never emitted by diagnostics.
+    qualification: AdapterQualification | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +89,26 @@ class ProviderDiagnostic:
         }
 
 
+_QUALIFIED_ON = "2026-08-30"
+
+
+def _qualification(
+    name: str,
+    version: str,
+    format: str,
+    provenance: str,
+    limitations: str,
+) -> AdapterQualification:
+    return AdapterQualification(
+        version=version,
+        qualified_on=_QUALIFIED_ON,
+        format=format,
+        fixture=f"tests/test_{name.replace('-', '_')}_adapter.py",
+        provenance=provenance,
+        limitations=limitations,
+    )
+
+
 ADAPTER_SPECS = (
     AdapterSpec(
         "aider",
@@ -83,6 +117,13 @@ ADAPTER_SPECS = (
         ("analytics.jsonl",),
         documented_source="~/.aider/analytics.jsonl",
         token_semantics="additive",
+        qualification=_qualification(
+            "aider",
+            "analytics schema (unversioned)",
+            "analytics JSONL",
+            "https://github.com/Aider-AI/aider/tree/5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+            "Opt-in analytics; no projects, tools, cache, reasoning, or durations.",
+        ),
     ),
     AdapterSpec(
         "amazon-q",
@@ -90,6 +131,13 @@ ADAPTER_SPECS = (
         ".local/share/amazon-q",
         ("data.sqlite3",),
         documented_source="~/.local/share/amazon-q/data.sqlite3",
+        qualification=_qualification(
+            "amazon-q",
+            "conversation state (unversioned)",
+            "SQLite conversations and serialized state",
+            "https://github.com/aws/amazon-q-developer-cli/tree/15cc8f3cd18c4272925ce1c7053268eedff1ea0a",
+            "Persistent conversations only; token counters unavailable.",
+        ),
     ),
     AdapterSpec(
         "amp",
@@ -98,6 +146,13 @@ ADAPTER_SPECS = (
         ("threads",),
         documented_source="~/.local/share/amp/threads/",
         token_semantics="additive",
+        qualification=_qualification(
+            "amp",
+            "thread mirror (unversioned)",
+            "thread JSON",
+            "https://ampcode.com/manual",
+            "No subthreads, compactions, reasoning split, or latency.",
+        ),
     ),
     AdapterSpec(
         "codex",
@@ -106,6 +161,13 @@ ADAPTER_SPECS = (
         ("sessions",),
         documented_source="~/.codex/sessions/",
         token_semantics="additive",
+        qualification=_qualification(
+            "codex",
+            "rollout schema (unversioned)",
+            "session rollout JSONL",
+            "https://github.com/openai/codex/tree/0a12b855a0b21068108a8a3b311d492712737e0f",
+            "Local rollout metadata only; provider internals may evolve.",
+        ),
     ),
     AdapterSpec(
         "copilot",
@@ -114,6 +176,13 @@ ADAPTER_SPECS = (
         ("session-state",),
         documented_source="~/.copilot/session-state/",
         token_semantics="conversation-aggregate",
+        qualification=_qualification(
+            "copilot",
+            "CLI 1.0.80 / event schema v1",
+            "session event JSONL",
+            "https://github.com/github/copilot-cli/tree/v1.0.80",
+            "Shutdown aggregates only; no per-turn token attribution.",
+        ),
     ),
     AdapterSpec(
         "continue",
@@ -122,6 +191,13 @@ ADAPTER_SPECS = (
         ("sessions",),
         documented_source="~/.continue/sessions/",
         token_semantics="additive",
+        qualification=_qualification(
+            "continue",
+            "session schema (unversioned)",
+            "session JSON",
+            "https://github.com/continuedev/continue/tree/5522c6f44ca0ac3528b37244818fbfa39b5af470",
+            "No reliable message timing, context windows, compactions, or latency.",
+        ),
     ),
     AdapterSpec(
         "crush",
@@ -130,6 +206,13 @@ ADAPTER_SPECS = (
         ("projects.json", "crush.db", ".crush/crush.db"),
         documented_source="~/.local/share/crush/",
         token_semantics="context-snapshot",
+        qualification=_qualification(
+            "crush",
+            "CLI 0.91.2",
+            "project registry and additive SQLite migrations",
+            "https://github.com/charmbracelet/crush/tree/v0.91.2",
+            "Latest context snapshot only; no additive per-call usage.",
+        ),
     ),
     AdapterSpec(
         "cursor",
@@ -137,6 +220,13 @@ ADAPTER_SPECS = (
         ".cursor",
         ("chats", "projects/*/agent-transcripts"),
         documented_source="~/.cursor/",
+        qualification=_qualification(
+            "cursor",
+            "Composer 2",
+            "transcript JSONL and chat SQLite",
+            "https://cursor.com/docs/cli/overview",
+            "No per-message timing or tokens; model attribution is incomplete.",
+        ),
     ),
     AdapterSpec(
         "gemini",
@@ -145,6 +235,13 @@ ADAPTER_SPECS = (
         ("tmp",),
         documented_source="~/.gemini/tmp/",
         token_semantics="additive",
+        qualification=_qualification(
+            "gemini",
+            "session history (unversioned)",
+            "active history JSON and JSONL",
+            "https://github.com/google-gemini/gemini-cli/tree/0bd1d439751478771c45d3d0895a6a9760554bf4",
+            "Nested agents excluded; hashed projects are not reversed.",
+        ),
     ),
     AdapterSpec(
         "goose",
@@ -153,6 +250,13 @@ ADAPTER_SPECS = (
         ("sessions.db",),
         documented_source="~/.local/share/goose/sessions/sessions.db",
         token_semantics="additive",
+        qualification=_qualification(
+            "goose",
+            "CLI 1.47.0 / schema v16",
+            "SQLite sessions and usage ledger",
+            "https://github.com/aaif-goose/goose/tree/v1.47.0",
+            "Schema v16 only; no legacy JSONL, subagents, reasoning, or latency.",
+        ),
     ),
     AdapterSpec(
         "grok",
@@ -161,6 +265,13 @@ ADAPTER_SPECS = (
         ("sessions/*/*/summary.json",),
         documented_source="~/.grok/sessions/",
         token_semantics="additive",
+        qualification=_qualification(
+            "grok",
+            "session schema (unversioned)",
+            "summary, updates, and events JSONL",
+            "https://github.com/xai-org/grok-build/tree/bc7f02eddd3d84085849dc19ed216f11c23b0571",
+            "No costs, subagent relationships, rewinds, or manual compactions.",
+        ),
     ),
     AdapterSpec(
         "claude",
@@ -170,6 +281,13 @@ ADAPTER_SPECS = (
         documented_source="~/.claude/projects/",
         aliases=("claude-code",),
         token_semantics="additive",
+        qualification=_qualification(
+            "claude",
+            "transcript schema (unversioned)",
+            "project session JSONL",
+            "https://github.com/anthropics/claude-code/tree/f1af9b1f4b1fd4c776135381606edada82ef638e",
+            "Main sessions only; no subagents, context windows, effort, or latency.",
+        ),
     ),
     AdapterSpec(
         "cline",
@@ -178,6 +296,13 @@ ADAPTER_SPECS = (
         ("sessions/sessions.db",),
         documented_source="~/.cline/data/sessions/sessions.db",
         token_semantics="additive",
+        qualification=_qualification(
+            "cline",
+            "SDK session schema (unversioned)",
+            "SQLite session index and message JSON",
+            "https://github.com/cline/cline/tree/48d63852745460ff0fa3dfcc0457bbe2493841de",
+            "No costs or arbitrary task metadata; artifacts must remain present.",
+        ),
     ),
     AdapterSpec(
         "kilo",
@@ -186,6 +311,13 @@ ADAPTER_SPECS = (
         ("kilo.db",),
         documented_source="~/.local/share/kilo/kilo.db",
         token_semantics="additive",
+        qualification=_qualification(
+            "kilo",
+            "CLI 7.5.5",
+            "SQLite session, message, and part tables",
+            "https://github.com/Kilo-Org/kilocode/tree/v7.5.5",
+            "CLI store only; no legacy IDE tasks, cloud sessions, or subagents.",
+        ),
     ),
     AdapterSpec(
         "kimi",
@@ -194,6 +326,13 @@ ADAPTER_SPECS = (
         ("sessions/*/*/wire.jsonl",),
         documented_source="~/.kimi/sessions/",
         token_semantics="additive",
+        qualification=_qualification(
+            "kimi",
+            "Wire v1",
+            "wire event JSONL",
+            "https://github.com/MoonshotAI/kimi-cli/tree/cbc15c076d17f70fec9f89c90c0502e68657f505",
+            "Selected model unavailable; hashed work directories are not reversed.",
+        ),
     ),
     AdapterSpec(
         "mistral-vibe",
@@ -202,6 +341,13 @@ ADAPTER_SPECS = (
         ("logs/session/*/meta.json",),
         documented_source="~/.vibe/logs/session/",
         token_semantics="conversation-aggregate",
+        qualification=_qualification(
+            "mistral-vibe",
+            "CLI 2.24.5",
+            "session meta JSON and messages JSONL",
+            "https://github.com/mistralai/mistral-vibe/tree/v2.24.5",
+            "Session aggregates only; no timing or historical model attribution.",
+        ),
     ),
     AdapterSpec(
         "opencode",
@@ -210,6 +356,13 @@ ADAPTER_SPECS = (
         ("opencode.db",),
         documented_source="~/.local/share/opencode/opencode.db",
         token_semantics="additive",
+        qualification=_qualification(
+            "opencode",
+            "SQLite v2",
+            "SQLite session, message, and part tables",
+            "https://github.com/anomalyco/opencode/tree/10765ff2a9da8c3b88e4de873aa383a49c318912",
+            "No legacy storage, child sessions, context windows, or costs.",
+        ),
     ),
     AdapterSpec(
         "openhands",
@@ -218,6 +371,13 @@ ADAPTER_SPECS = (
         ("conversations/*/base_state.json",),
         documented_source="~/.openhands/conversations/",
         token_semantics="additive",
+        qualification=_qualification(
+            "openhands",
+            "CLI 1.16.0",
+            "SDK base state and event JSON",
+            "https://github.com/OpenHands/OpenHands/tree/v1.16.0",
+            "Local SDK persistence only; no cloud conversations or delegates.",
+        ),
     ),
     AdapterSpec(
         "pi",
@@ -226,6 +386,13 @@ ADAPTER_SPECS = (
         ("sessions",),
         documented_source="~/.pi/agent/sessions/",
         token_semantics="additive",
+        qualification=_qualification(
+            "pi",
+            "session schema v3",
+            "branched session JSONL",
+            "https://github.com/earendil-works/pi/tree/853a80d26c90a14c1886f0ebb8ffaae133ca2185",
+            "All branches counted; no branch graph, context windows, or durations.",
+        ),
     ),
     AdapterSpec(
         "plandex",
@@ -234,6 +401,13 @@ ADAPTER_SPECS = (
         ("orgs/*/plans/*/conversation",),
         documented_source="/plandex-server",
         token_semantics="additive",
+        qualification=_qualification(
+            "plandex",
+            "conversation JSON (unversioned)",
+            "self-hosted conversation JSON",
+            "https://github.com/plandex-ai/plandex/tree/e2d772072efadbe41d2946d97d79be55532dbab5",
+            "Offline self-hosted copy only; models and tools unavailable.",
+        ),
     ),
     AdapterSpec(
         "qwen",
@@ -242,6 +416,13 @@ ADAPTER_SPECS = (
         ("projects/*/chats",),
         documented_source="~/.qwen/projects/",
         token_semantics="additive",
+        qualification=_qualification(
+            "qwen",
+            "CLI 0.22.2",
+            "active-branch chat JSONL",
+            "https://github.com/QwenLM/qwen-code/tree/v0.22.2",
+            "Archived and sidechain sessions excluded; cache writes unavailable.",
+        ),
     ),
 )
 

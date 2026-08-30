@@ -232,6 +232,11 @@ file position, and bytes written remain identical on Windows as well as POSIX sy
 Adapters are introduced one at a time because local data formats are undocumented or
 can evolve independently. Each adapter must have synthetic fixtures, format detection,
 privacy tests, and a documented support level before it appears as supported.
+The central registry also records its qualified provider or schema version, UTC date,
+format, synthetic fixture, primary provenance, and known limits. A weekly scheduled
+check fails when any qualification is older than 90 days. This is a maintenance
+signal, not runtime telemetry: qualification metadata and fixture paths are never
+included in provider diagnostics, snapshots, storage, APIs, exports, or logs.
 
 Timestamp fields are canonical fixed-width UTC strings after strict snapshot
 validation and schema revision `0003`. Reporting and retention bind values in the same

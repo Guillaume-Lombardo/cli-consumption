@@ -166,3 +166,35 @@ def test_every_provider_has_exactly_one_qualified_support_section() -> None:
         paragraphs = [part for part in section.strip().split("\n\n") if part.strip()]
         assert len(paragraphs) >= 1, (index, heading)
         assert len(section.split()) >= 35, (index, heading)
+
+
+def test_qualification_ledger_matches_the_canonical_registry() -> None:
+    rows = _table(
+        PROVIDER_SUPPORT,
+        {
+            "Provider name",
+            "Qualified version",
+            "Qualified on",
+            "Format",
+            "Synthetic fixture",
+            "Primary provenance",
+            "Qualification limits",
+        },
+    )
+    assert len(rows) == len(ADAPTER_SPECS)
+    by_name = {_single_code(row["Provider name"]): row for row in rows}
+    assert set(by_name) == {spec.name for spec in ADAPTER_SPECS}
+
+    for spec in ADAPTER_SPECS:
+        qualification = spec.qualification
+        assert qualification is not None
+        row = by_name[spec.name]
+        assert row["Qualified version"] == qualification.version
+        assert _single_code(row["Qualified on"]) == qualification.qualified_on
+        assert row["Format"] == qualification.format
+        assert (
+            f"({qualification.fixture.replace('tests/', '../tests/')})"
+            in row["Synthetic fixture"]
+        )
+        assert f"({qualification.provenance})" in row["Primary provenance"]
+        assert row["Qualification limits"] == qualification.limitations

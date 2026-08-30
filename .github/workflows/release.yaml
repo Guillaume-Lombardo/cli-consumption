@@ -19,7 +19,7 @@ permissions: {}
 
 jobs:
   detect-version:
-    name: Detect version
+    name: detect-version
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -75,7 +75,7 @@ jobs:
           fi
 
   build:
-    name: Build and validate
+    name: build
     needs: detect-version
     if: needs.detect-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
@@ -111,7 +111,7 @@ jobs:
           overwrite: true
 
   tag:
-    name: Tag release
+    name: tag
     needs: [detect-version, build]
     runs-on: ubuntu-latest
     permissions:
@@ -145,7 +145,7 @@ jobs:
           fi
 
   publish:
-    name: Publish to PyPI
+    name: publish
     needs: [detect-version, tag]
     runs-on: ubuntu-latest
     environment:

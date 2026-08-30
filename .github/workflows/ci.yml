@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Quality and security
+    name: quality
     runs-on: ubuntu-latest
     env:
       TEST_POSTGRESQL_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/cli_consumption_test
@@ -54,7 +54,7 @@ jobs:
             --with "${wheel}" python tests/smoke_minimal_install.py
 
   compatibility:
-    name: Python ${{ matrix.python-version }} compatibility
+    name: compatibility
     runs-on: ubuntu-latest
     env:
       UV_PYTHON: ${{ matrix.python-version }}
@@ -74,7 +74,7 @@ jobs:
       - run: uv run pytest
 
   minimum-server-stack:
-    name: Minimum server stack
+    name: minimum-server-stack
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

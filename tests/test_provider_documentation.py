@@ -155,8 +155,12 @@ def test_every_provider_has_exactly_one_qualified_support_section() -> None:
         },
     )
     text = PROVIDER_SUPPORT.read_text(encoding="utf-8")
-    headings = re.findall(r"^## ([^\n]+)$", text, flags=re.MULTILINE)
     documented_providers = [row["Provider"] for row in rows]
+    headings = [
+        heading
+        for heading in re.findall(r"^## ([^\n]+)$", text, flags=re.MULTILINE)
+        if heading in documented_providers
+    ]
 
     assert Counter(headings) == Counter({name: 1 for name in documented_providers})
     for index, heading in enumerate(headings):

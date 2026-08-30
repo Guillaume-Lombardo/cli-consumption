@@ -25,6 +25,7 @@ def test_every_provider_has_verifiable_synthetic_qualification_provenance() -> N
             assert "/tree/" in qualification.provenance, spec.name
         else:
             assert spec.name in {"amp", "cursor"}, spec.name
+            assert "web.archive.org/web/2026" in qualification.provenance, spec.name
 
         fixture = PROJECT_ROOT / qualification.fixture
         assert fixture.is_file(), spec.name

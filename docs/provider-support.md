@@ -50,7 +50,7 @@ compatibility status is one of:
 The diagnostic is deliberately coarse: it does not persist collected records or emit
 local paths, provider identifiers, record counts, malformed values, or parser errors.
 
-### Qualification ledger
+## Qualification ledger
 
 The registry records the exact synthetic contract used to qualify every adapter. The
 fixture links below contain generated test data rather than copied provider content;
@@ -65,12 +65,12 @@ changed between releases.
 | --- | --- | --- | --- | --- | --- | --- |
 | `aider` | analytics schema (unversioned) | `2026-08-30` | analytics JSONL | [fixture](../tests/test_aider_adapter.py) | [Aider](https://github.com/Aider-AI/aider/tree/5dc9490bb35f9729ef2c95d00a19ccd30c26339c) | Opt-in analytics; no projects, tools, cache, reasoning, or durations. |
 | `amazon-q` | conversation state (unversioned) | `2026-08-30` | SQLite conversations and serialized state | [fixture](../tests/test_amazon_q_adapter.py) | [Amazon Q Developer CLI](https://github.com/aws/amazon-q-developer-cli/tree/15cc8f3cd18c4272925ce1c7053268eedff1ea0a) | Persistent conversations only; token counters unavailable. |
-| `amp` | thread mirror (unversioned) | `2026-08-30` | thread JSON | [fixture](../tests/test_amp_adapter.py) | [Amp manual](https://ampcode.com/manual) | No subthreads, compactions, reasoning split, or latency. |
+| `amp` | thread mirror (unversioned) | `2026-08-30` | thread JSON | [fixture](../tests/test_amp_adapter.py) | [Amp manual](https://web.archive.org/web/20260825165815id_/https://ampcode.com/manual) | No subthreads, compactions, reasoning split, or latency. |
 | `codex` | rollout schema (unversioned) | `2026-08-30` | session rollout JSONL | [fixture](../tests/test_codex_adapter.py) | [Codex](https://github.com/openai/codex/tree/0a12b855a0b21068108a8a3b311d492712737e0f) | Local rollout metadata only; provider internals may evolve. |
 | `copilot` | CLI 1.0.80 / event schema v1 | `2026-08-30` | session event JSONL | [fixture](../tests/test_copilot_adapter.py) | [GitHub Copilot CLI](https://github.com/github/copilot-cli/tree/v1.0.80) | Shutdown aggregates only; no per-turn token attribution. |
 | `continue` | session schema (unversioned) | `2026-08-30` | session JSON | [fixture](../tests/test_continue_adapter.py) | [Continue](https://github.com/continuedev/continue/tree/5522c6f44ca0ac3528b37244818fbfa39b5af470) | No reliable message timing, context windows, compactions, or latency. |
 | `crush` | CLI 0.91.2 | `2026-08-30` | project registry and additive SQLite migrations | [fixture](../tests/test_crush_adapter.py) | [Crush](https://github.com/charmbracelet/crush/tree/v0.91.2) | Latest context snapshot only; no additive per-call usage. |
-| `cursor` | Composer 2 | `2026-08-30` | transcript JSONL and chat SQLite | [fixture](../tests/test_cursor_adapter.py) | [Cursor CLI](https://cursor.com/docs/cli/overview) | No per-message timing or tokens; model attribution is incomplete. |
+| `cursor` | Composer 2 | `2026-08-30` | transcript JSONL and chat SQLite | [fixture](../tests/test_cursor_adapter.py) | [Cursor CLI](https://web.archive.org/web/20260815113223id_/https://cursor.com/docs/cli/overview) | No per-message timing or tokens; model attribution is incomplete. |
 | `gemini` | session history (unversioned) | `2026-08-30` | active history JSON and JSONL | [fixture](../tests/test_gemini_adapter.py) | [Gemini CLI](https://github.com/google-gemini/gemini-cli/tree/0bd1d439751478771c45d3d0895a6a9760554bf4) | Nested agents excluded; hashed projects are not reversed. |
 | `goose` | CLI 1.47.0 / schema v16 | `2026-08-30` | SQLite sessions and usage ledger | [fixture](../tests/test_goose_adapter.py) | [Goose](https://github.com/aaif-goose/goose/tree/v1.47.0) | Schema v16 only; no legacy JSONL, subagents, reasoning, or latency. |
 | `grok` | session schema (unversioned) | `2026-08-30` | summary, updates, and events JSONL | [fixture](../tests/test_grok_adapter.py) | [Grok Build](https://github.com/xai-org/grok-build/tree/bc7f02eddd3d84085849dc19ed216f11c23b0571) | No costs, subagent relationships, rewinds, or manual compactions. |

@@ -16,6 +16,7 @@ from sqlalchemy.schema import CreateTable
 from storage_helpers import read_table
 
 from cli_consumption.adapters.codex import CodexAdapter
+from cli_consumption.adapters.registry import ADAPTER_SPECS
 from cli_consumption.dashboard import (
     _dashboard_payload,
     _round_epoch_day,
@@ -73,6 +74,20 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     assert html.index("<h2>Models</h2>") < html.index("<h2>Turn performance</h2>")
     assert "Median total-token count only for providers" in html
     assert "tokenSemantics==='additive'" in html
+    assert (
+        "semantics==='conversation-aggregate'||semantics==='context-snapshot'" in html
+    )
+    assert "semantics==='unavailable'" in html
+    assert "conversationInRange(conversation,range)" in html
+    assert (
+        "Conversation aggregates and latest-context snapshots are included in full"
+        in html
+    )
+    semantics = {spec.name: spec.token_semantics for spec in ADAPTER_SPECS}
+    assert semantics["copilot"] == "conversation-aggregate"
+    assert semantics["mistral-vibe"] == "conversation-aggregate"
+    assert semantics["crush"] == "context-snapshot"
+    assert semantics["codex"] == "additive"
     assert html.count('class="info"') == 1
     assert "Data quality" in html
     assert "https://" not in html

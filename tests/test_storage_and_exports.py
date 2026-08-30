@@ -95,6 +95,14 @@ def test_dashboard_token_semantics_select_expected_calls() -> None:
     ]
     turns = [
         {
+            "key": 30,
+            "conversationKey": 3,
+            "startedAt": "2026-08-01T01:00:00Z",
+            "status": "completed",
+            "total_tokens": 300,
+            "toolCalls": 0,
+        },
+        {
             "key": 40,
             "conversationKey": 4,
             "startedAt": "2026-08-02T01:00:00Z",
@@ -123,7 +131,7 @@ def test_dashboard_token_semantics_select_expected_calls() -> None:
             (1, None, None, 100),
             (2, None, None, 200),
             (3, None, None, 0),
-            (3, None, None, 300),
+            (3, 30, None, 300),
             (4, 40, "2026-08-02T01:00:00Z", 40),
             (4, 41, "2026-08-02T02:00:00Z", 50),
             (5, None, "2026-08-02T03:00:00Z", 60),

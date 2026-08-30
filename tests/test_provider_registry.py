@@ -7,6 +7,7 @@ from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.base import UnsupportedProviderFormat
 from cli_consumption.adapters.registry import (
     ADAPTER_SPECS,
+    AdapterQualification,
     AdapterSpec,
     default_source_path,
     diagnose_provider,
@@ -211,3 +212,31 @@ def test_provider_diagnostics_cover_every_bounded_status(tmp_path: Path) -> None
     ]
     diagnostic = diagnose_provider(specs[-1], tmp_path / "limited").to_dict()
     assert "provider_file_too_large" not in str(diagnostic)
+
+
+def test_provider_diagnostics_do_not_expose_qualification_metadata(
+    tmp_path: Path,
+) -> None:
+    canary = "PROMPT_SECRET_CANARY"
+    qualification = AdapterQualification(
+        version=canary,
+        qualified_on="2026-08-30",
+        format=canary,
+        fixture=f"/private/{canary}",
+        provenance=f"https://example.test/{canary}",
+        limitations=canary,
+    )
+    spec = AdapterSpec(
+        "synthetic",
+        _CompatibleAdapter,
+        ".synthetic",
+        ("marker",),
+        qualification=qualification,
+    )
+    (tmp_path / "marker").touch()
+
+    diagnostic = diagnose_provider(spec, tmp_path).to_dict()
+
+    assert diagnostic["status"] == "compatible"
+    assert canary not in str(diagnostic)
+    assert "/private/" not in str(diagnostic)

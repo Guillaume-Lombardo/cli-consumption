@@ -50,6 +50,47 @@ compatibility status is one of:
 The diagnostic is deliberately coarse: it does not persist collected records or emit
 local paths, provider identifiers, record counts, malformed values, or parser errors.
 
+## Qualification ledger
+
+The registry records the exact synthetic contract used to qualify every adapter. The
+fixture links below contain generated test data rather than copied provider content;
+the provenance link identifies the primary upstream project or documentation used to
+verify the format. Qualification dates use UTC. A scheduled GitHub Actions check runs
+weekly and fails once any entry is more than 90 days old, prompting maintainers to
+recheck the upstream format and refresh its synthetic fixture before changing the
+date. A passing age check does not prove that an undocumented local format has not
+changed between releases.
+
+| Provider name | Qualified version | Qualified on | Format | Synthetic fixture | Primary provenance | Qualification limits |
+| --- | --- | --- | --- | --- | --- | --- |
+| `aider` | analytics schema (unversioned) | `2026-08-30` | analytics JSONL | [fixture](../tests/test_aider_adapter.py) | [Aider](https://github.com/Aider-AI/aider/tree/5dc9490bb35f9729ef2c95d00a19ccd30c26339c) | Opt-in analytics; no projects, tools, cache, reasoning, or durations. |
+| `amazon-q` | conversation state (unversioned) | `2026-08-30` | SQLite conversations and serialized state | [fixture](../tests/test_amazon_q_adapter.py) | [Amazon Q Developer CLI](https://github.com/aws/amazon-q-developer-cli/tree/15cc8f3cd18c4272925ce1c7053268eedff1ea0a) | Persistent conversations only; token counters unavailable. |
+| `amp` | thread mirror (unversioned) | `2026-08-30` | thread JSON | [fixture](../tests/test_amp_adapter.py) | [Amp manual](https://web.archive.org/web/20260825165815id_/https://ampcode.com/manual) | No subthreads, compactions, reasoning split, or latency. |
+| `codex` | rollout schema (unversioned) | `2026-08-30` | session rollout JSONL | [fixture](../tests/test_codex_adapter.py) | [Codex](https://github.com/openai/codex/tree/0a12b855a0b21068108a8a3b311d492712737e0f) | Local rollout metadata only; provider internals may evolve. |
+| `copilot` | CLI 1.0.80 / event schema v1 | `2026-08-30` | session event JSONL | [fixture](../tests/test_copilot_adapter.py) | [GitHub Copilot CLI](https://github.com/github/copilot-cli/tree/v1.0.80) | Shutdown aggregates only; no per-turn token attribution. |
+| `continue` | session schema (unversioned) | `2026-08-30` | session JSON | [fixture](../tests/test_continue_adapter.py) | [Continue](https://github.com/continuedev/continue/tree/5522c6f44ca0ac3528b37244818fbfa39b5af470) | No reliable message timing, context windows, compactions, or latency. |
+| `crush` | CLI 0.91.2 | `2026-08-30` | project registry and additive SQLite migrations | [fixture](../tests/test_crush_adapter.py) | [Crush](https://github.com/charmbracelet/crush/tree/v0.91.2) | Latest context snapshot only; no additive per-call usage. |
+| `cursor` | Composer 2 | `2026-08-30` | transcript JSONL and chat SQLite | [fixture](../tests/test_cursor_adapter.py) | [Cursor CLI](https://web.archive.org/web/20260815113223id_/https://cursor.com/docs/cli/overview) | No per-message timing or tokens; model attribution is incomplete. |
+| `gemini` | session history (unversioned) | `2026-08-30` | active history JSON and JSONL | [fixture](../tests/test_gemini_adapter.py) | [Gemini CLI](https://github.com/google-gemini/gemini-cli/tree/0bd1d439751478771c45d3d0895a6a9760554bf4) | Nested agents excluded; hashed projects are not reversed. |
+| `goose` | CLI 1.47.0 / schema v16 | `2026-08-30` | SQLite sessions and usage ledger | [fixture](../tests/test_goose_adapter.py) | [Goose](https://github.com/aaif-goose/goose/tree/v1.47.0) | Schema v16 only; no legacy JSONL, subagents, reasoning, or latency. |
+| `grok` | session schema (unversioned) | `2026-08-30` | summary, updates, and events JSONL | [fixture](../tests/test_grok_adapter.py) | [Grok Build](https://github.com/xai-org/grok-build/tree/bc7f02eddd3d84085849dc19ed216f11c23b0571) | No costs, subagent relationships, rewinds, or manual compactions. |
+| `claude` | transcript schema (unversioned) | `2026-08-30` | project session JSONL | [fixture](../tests/test_claude_adapter.py) | [Claude Code](https://github.com/anthropics/claude-code/tree/f1af9b1f4b1fd4c776135381606edada82ef638e) | Main sessions only; no subagents, context windows, effort, or latency. |
+| `cline` | SDK session schema (unversioned) | `2026-08-30` | SQLite session index and message JSON | [fixture](../tests/test_cline_adapter.py) | [Cline](https://github.com/cline/cline/tree/48d63852745460ff0fa3dfcc0457bbe2493841de) | No costs or arbitrary task metadata; artifacts must remain present. |
+| `kilo` | CLI 7.5.5 | `2026-08-30` | SQLite session, message, and part tables | [fixture](../tests/test_kilo_adapter.py) | [Kilo Code](https://github.com/Kilo-Org/kilocode/tree/v7.5.5) | CLI store only; no legacy IDE tasks, cloud sessions, or subagents. |
+| `kimi` | Wire v1 | `2026-08-30` | wire event JSONL | [fixture](../tests/test_kimi_adapter.py) | [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli/tree/cbc15c076d17f70fec9f89c90c0502e68657f505) | Selected model unavailable; hashed work directories are not reversed. |
+| `mistral-vibe` | CLI 2.24.5 | `2026-08-30` | session meta JSON and messages JSONL | [fixture](../tests/test_mistral_vibe_adapter.py) | [Mistral Vibe](https://github.com/mistralai/mistral-vibe/tree/v2.24.5) | Session aggregates only; no timing or historical model attribution. |
+| `opencode` | SQLite v2 | `2026-08-30` | SQLite session, message, and part tables | [fixture](../tests/test_opencode_adapter.py) | [OpenCode](https://github.com/anomalyco/opencode/tree/10765ff2a9da8c3b88e4de873aa383a49c318912) | No legacy storage, child sessions, context windows, or costs. |
+| `openhands` | CLI 1.16.0 | `2026-08-30` | SDK base state and event JSON | [fixture](../tests/test_openhands_adapter.py) | [OpenHands](https://github.com/OpenHands/OpenHands/tree/v1.16.0) | Local SDK persistence only; no cloud conversations or delegates. |
+| `pi` | session schema v3 | `2026-08-30` | branched session JSONL | [fixture](../tests/test_pi_adapter.py) | [Pi](https://github.com/earendil-works/pi/tree/853a80d26c90a14c1886f0ebb8ffaae133ca2185) | All branches counted; no branch graph, context windows, or durations. |
+| `plandex` | conversation JSON (unversioned) | `2026-08-30` | self-hosted conversation JSON | [fixture](../tests/test_plandex_adapter.py) | [Plandex](https://github.com/plandex-ai/plandex/tree/e2d772072efadbe41d2946d97d79be55532dbab5) | Offline self-hosted copy only; models and tools unavailable. |
+| `qwen` | CLI 0.22.2 | `2026-08-30` | active-branch chat JSONL | [fixture](../tests/test_qwen_adapter.py) | [Qwen Code](https://github.com/QwenLM/qwen-code/tree/v0.22.2) | Archived and sidechain sessions excluded; cache writes unavailable. |
+
+Compatibility classification is provider-neutral and ordered: an explicit
+`UnsupportedProviderFormat` is `unsupported-schema`; any other inspection failure or
+any skipped malformed record is `degraded`; a clean snapshot with conversations is
+`compatible`; and a recognized but empty store is `detected`. Diagnostic output never
+includes the qualification provenance, fixture path, exception, or inspected values.
+
 All adapters share the provider-input limits documented in the privacy boundary:
 10,000 discovered candidates and 512 MiB of actual provider-file reads per collection;
 64 MiB per monolithic JSON file; 256 MiB per JSONL file and 8 MiB per line; and, for

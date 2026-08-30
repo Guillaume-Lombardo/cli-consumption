@@ -8,6 +8,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Provider adapters now carry auditable format qualification metadata backed by
+  synthetic fixtures, with a weekly check that flags qualifications older than 90
+  days and homogeneous privacy-minimized compatibility criteria.
 - Linear is now the source of truth for new repository tasks and their progress, while
   the roadmap remains focused on durable product direction.
 - Dashboard token totals now include conversation aggregates and latest-context

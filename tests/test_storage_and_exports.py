@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import builtins
 import csv
+import json
+import shutil
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -19,6 +22,7 @@ from cli_consumption.adapters.codex import CodexAdapter
 from cli_consumption.adapters.registry import ADAPTER_SPECS
 from cli_consumption.dashboard import (
     _dashboard_payload,
+    _document,
     _round_epoch_day,
     _round_timestamp,
     _tool_category,
@@ -35,6 +39,150 @@ from cli_consumption.storage import (
     initialize_database,
     normalize_database_url,
 )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is unavailable")
+def test_dashboard_token_semantics_select_expected_calls() -> None:
+    conversations = [
+        {
+            "key": key,
+            "provider": provider,
+            "tokenSemantics": semantics,
+            "machine": "machine",
+            "project": "project",
+            "models": ["model"],
+            "startedAt": start,
+            "endedAt": end,
+        }
+        for key, provider, semantics, start, end in (
+            (
+                1,
+                "copilot",
+                "conversation-aggregate",
+                "2026-08-01T00:00:00Z",
+                "2026-08-03T00:00:00Z",
+            ),
+            (
+                2,
+                "mistral-vibe",
+                "conversation-aggregate",
+                "2026-08-02T00:00:00Z",
+                "2026-08-02T12:00:00Z",
+            ),
+            (
+                3,
+                "crush",
+                "context-snapshot",
+                "2026-08-02T00:00:00Z",
+                "2026-08-02T12:00:00Z",
+            ),
+            (4, "codex", "additive", "2026-08-02T00:00:00Z", "2026-08-02T12:00:00Z"),
+            (
+                5,
+                "cursor",
+                "unavailable",
+                "2026-08-02T00:00:00Z",
+                "2026-08-02T12:00:00Z",
+            ),
+            (
+                6,
+                "copilot",
+                "conversation-aggregate",
+                "2026-08-04T00:00:00Z",
+                "2026-08-04T12:00:00Z",
+            ),
+        )
+    ]
+    turns = [
+        {
+            "key": 40,
+            "conversationKey": 4,
+            "startedAt": "2026-08-02T01:00:00Z",
+            "status": "completed",
+            "total_tokens": 40,
+            "toolCalls": 0,
+        },
+        {
+            "key": 41,
+            "conversationKey": 4,
+            "startedAt": "2026-08-02T02:00:00Z",
+            "status": "in-progress",
+            "total_tokens": 50,
+            "toolCalls": 0,
+        },
+    ]
+    calls = [
+        {
+            "conversationKey": conversation,
+            "turnKey": turn,
+            "timestamp": timestamp,
+            "model": "model",
+            "total_tokens": tokens,
+        }
+        for conversation, turn, timestamp, tokens in (
+            (1, None, None, 100),
+            (2, None, None, 200),
+            (3, None, None, 0),
+            (3, None, None, 300),
+            (4, 40, "2026-08-02T01:00:00Z", 40),
+            (4, 41, "2026-08-02T02:00:00Z", 50),
+            (5, None, "2026-08-02T03:00:00Z", 60),
+            (6, None, None, 70),
+        )
+    ]
+    payload = {
+        "meta": {"shareSafe": False},
+        "conversations": conversations,
+        "turns": turns,
+        "modelCalls": calls,
+        "toolCalls": [],
+        "workItems": [],
+        "contextSamples": [],
+        "turnSettings": [],
+        "compactions": [],
+        "subagents": [],
+        "ingestionRuns": [],
+    }
+    html = _document(json.dumps(payload))
+    javascript = html.split("<script>", 1)[1].split("</script>", 1)[0]
+    fragment = javascript[
+        javascript.index("function conversationInRange") : javascript.index(
+            "function delta"
+        )
+    ]
+    harness = f"""
+const data={json.dumps(payload)};
+const convByKey=Object.fromEntries(data.conversations.map(c=>[c.key,c]));
+const validDate=v=>v&&Number.isFinite(Date.parse(v));
+const day=v=>validDate(v)?v.slice(0,10):'unknown';
+const percentile=(values,p)=>{{
+  const xs=values.map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+  if(!xs.length)return null;
+  const i=(xs.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);
+  return xs[lo]+(xs[hi]-xs[lo])*(i-lo);
+}};
+const inRange=(value,range)=>{{
+  if(!range||!validDate(value))return !range||!range.start;
+  const time=Date.parse(value);
+  return(!range.start||time>=range.start)&&time<=range.end;
+}};
+const total=(rows,key)=>rows.reduce((n,r)=>n+(Number(r[key])||0),0);
+const ratio=(a,b)=>b?100*a/b:0;
+{fragment}
+const range={{
+  start:new Date('2026-08-02T00:00:00Z'),
+  end:new Date('2026-08-02T23:59:59Z')
+}};
+const selectedSlice=slice({{provider:'',machine:'',project:'',model:'',range}});
+const result=metrics(selectedSlice);
+console.log(JSON.stringify({{tokens:result.tokens,calls:selectedSlice.calls.map(c=>c.total_tokens)}}));
+"""
+    completed = subprocess.run(["node"], input=harness, text=True, capture_output=True)
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "tokens": 640,
+        "calls": [100, 200, 0, 300, 40],
+    }
 
 
 def test_ingestion_is_idempotent_and_exports_are_self_contained(

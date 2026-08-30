@@ -128,14 +128,14 @@ def test_dashboard_token_semantics_select_expected_calls() -> None:
             "total_tokens": tokens,
         }
         for conversation, turn, timestamp, tokens in (
-            (1, None, None, 100),
+            (1, None, "2026-08-01T01:00:00Z", 100),
             (2, None, None, 200),
             (3, None, None, 0),
             (3, 30, None, 300),
             (4, 40, "2026-08-02T01:00:00Z", 40),
             (4, 41, "2026-08-02T02:00:00Z", 50),
             (5, None, "2026-08-02T03:00:00Z", 60),
-            (6, None, None, 70),
+            (6, None, "2026-08-02T04:00:00Z", 70),
         )
     ]
     payload = {

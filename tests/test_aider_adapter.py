@@ -163,7 +163,7 @@ def test_privacy_canary_is_absent_from_surfaces(
 
         def json(self) -> dict[str, int | str]:
             return {
-                "run_id": "run-1",
+                "run_id": "12345678-1234-4abc-8def-123456789abc",
                 "received": 1,
                 "written": 1,
                 "skipped": 0,

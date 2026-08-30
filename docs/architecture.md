@@ -69,6 +69,12 @@ collector that advertises idempotent uploads receives an opaque UUIDv4 per logic
 snapshot. The client reuses that UUID for at most three attempts, with 0.25 and 0.5
 second backoffs after transport failures or HTTP 500/502/503/504. It does not retry an
 ambiguous upload against a legacy collector that lacks the capability.
+Strict sync validates the complete local batch before creating that client. During a
+multi-provider execution, one failed upload does not prevent later independent
+providers from being attempted. Machine-readable results preserve provider order,
+carry local malformed and duplicate counters, and distinguish complete from partial
+success. External exceptions, response bodies, paths, and payload values are reduced
+to fixed error codes before they reach human or JSON output.
 The sync client refuses plain HTTP beyond loopback unless the operator passes the
 explicit `--allow-insecure` override for a trusted network.
 

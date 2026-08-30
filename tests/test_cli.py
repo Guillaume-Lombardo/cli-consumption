@@ -128,11 +128,27 @@ def test_sync_reports_missing_optional_dependencies_without_a_traceback(
     assert "cli-consumption[sync]" in normalized_cli_output(result.output)
     assert "Traceback" not in result.output
 
+    json_result = runner.invoke(
+        app,
+        ["sync", "--endpoint", "https://collector.test", "--json"],
+    )
+    assert json_result.exit_code == 2
+    assert json.loads(json_result.stdout) == {
+        "complete": False,
+        "error": {"code": "sync_dependency_missing"},
+        "synchronizations": [],
+    }
+    assert json_result.stderr == ""
 
-def test_sync_reuses_one_client_and_reports_success_before_later_failure(
+
+def test_sync_reuses_one_client_and_reports_generic_partial_failure(
     monkeypatch,
 ) -> None:
-    snapshots = [Snapshot(provider="codex"), Snapshot(provider="claude")]
+    canary = "PROMPT_SECRET_CANARY"
+    snapshots = [
+        Snapshot(provider="codex", duplicate_conversations=2),
+        Snapshot(provider="claude", malformed_records=1),
+    ]
     observed: dict[str, Any] = {"created": 0, "providers": [], "closed": False}
 
     class FakeSyncClient:
@@ -148,7 +164,7 @@ def test_sync_reuses_one_client_and_reports_success_before_later_failure(
         def send_snapshot(self, snapshot: Snapshot) -> dict[str, int | str]:
             observed["providers"].append(snapshot.provider)
             if snapshot.provider == "claude":
-                raise ValueError("synthetic later failure")
+                raise ValueError(f"/private/provider/path: {canary}")
             return {"run_id": "run-1", "received": 0, "written": 0, "skipped": 0}
 
     monkeypatch.setattr(cli_module, "_collect_snapshots", lambda *_args: snapshots)
@@ -158,11 +174,254 @@ def test_sync_reuses_one_client_and_reports_success_before_later_failure(
 
     assert result.exit_code == 2
     assert "Remote ingestion codex run-1" in result.output
-    assert "synthetic later failure" in normalized_cli_output(result.output)
+    assert "0 malformed, 2 duplicates" in normalized_cli_output(result.output)
+    assert "Remote ingestion claude failed" in normalized_cli_output(result.output)
+    assert "partially completed: 1 succeeded, 1 failed" in normalized_cli_output(
+        result.output
+    )
+    assert canary not in result.output
+    assert "/private/" not in result.output
     assert observed == {
         "created": 1,
         "providers": ["codex", "claude"],
         "closed": True,
+    }
+
+
+def test_sync_json_is_deterministic_and_reports_partial_diagnostics(
+    monkeypatch,
+) -> None:
+    canary = "PROMPT_SECRET_CANARY"
+    snapshots = [
+        Snapshot(provider="codex", duplicate_conversations=2),
+        Snapshot(provider="claude", malformed_records=1),
+        Snapshot(provider="gemini"),
+    ]
+
+    class FakeSyncClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None: ...
+
+        def send_snapshot(self, snapshot: Snapshot) -> dict[str, int | str]:
+            if snapshot.provider == "claude":
+                raise ValueError(f"/private/provider/path: {canary}")
+            return {
+                "run_id": f"run-{snapshot.provider}",
+                "received": 3,
+                "written": 2,
+                "skipped": 1,
+            }
+
+    monkeypatch.setattr(cli_module, "_collect_snapshots", lambda *_args: snapshots)
+    monkeypatch.setattr("cli_consumption.sync.SyncClient", FakeSyncClient)
+
+    first = runner.invoke(
+        app, ["sync", "--endpoint", "https://collector.test", "--json"]
+    )
+    second = runner.invoke(
+        app, ["sync", "--endpoint", "https://collector.test", "--json"]
+    )
+
+    assert first.exit_code == second.exit_code == 2
+    assert first.stdout == second.stdout
+    assert json.loads(first.stdout) == {
+        "complete": False,
+        "synchronizations": [
+            {
+                "duplicates": 2,
+                "malformed": 0,
+                "provider": "codex",
+                "received": 3,
+                "run_id": "run-codex",
+                "skipped": 1,
+                "status": "succeeded",
+                "written": 2,
+            },
+            {
+                "duplicates": 0,
+                "error": {"code": "remote_sync_failed"},
+                "malformed": 1,
+                "provider": "claude",
+                "status": "failed",
+            },
+            {
+                "duplicates": 0,
+                "malformed": 0,
+                "provider": "gemini",
+                "received": 3,
+                "run_id": "run-gemini",
+                "skipped": 1,
+                "status": "succeeded",
+                "written": 2,
+            },
+        ],
+    }
+    assert first.stderr == ""
+    assert canary not in first.stdout
+    assert "/private/" not in first.stdout
+
+
+def test_sync_json_reports_complete_success(monkeypatch) -> None:
+    snapshot = Snapshot(
+        provider="codex",
+        malformed_records=1,
+        duplicate_conversations=2,
+    )
+
+    class FakeSyncClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None: ...
+
+        def send_snapshot(self, _snapshot: Snapshot) -> dict[str, int | str]:
+            return {
+                "run_id": "run-1",
+                "received": 4,
+                "written": 3,
+                "skipped": 1,
+            }
+
+    monkeypatch.setattr(cli_module, "_collect_snapshots", lambda *_args: [snapshot])
+    monkeypatch.setattr("cli_consumption.sync.SyncClient", FakeSyncClient)
+
+    result = runner.invoke(
+        app, ["sync", "--endpoint", "https://collector.test", "--json"]
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {
+        "complete": True,
+        "synchronizations": [
+            {
+                "duplicates": 2,
+                "malformed": 1,
+                "provider": "codex",
+                "received": 4,
+                "run_id": "run-1",
+                "skipped": 1,
+                "status": "succeeded",
+                "written": 3,
+            }
+        ],
+    }
+
+
+def test_sync_client_setup_errors_are_generic_in_human_and_json_output(
+    monkeypatch,
+) -> None:
+    canary = "PROMPT_SECRET_CANARY"
+
+    class FailingSyncClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise ValueError(f"/private/provider/path: {canary}")
+
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_snapshots",
+        lambda *_args: [Snapshot(provider="codex")],
+    )
+    monkeypatch.setattr("cli_consumption.sync.SyncClient", FailingSyncClient)
+
+    human = runner.invoke(app, ["sync", "--endpoint", "https://collector.test"])
+    machine = runner.invoke(
+        app, ["sync", "--endpoint", "https://collector.test", "--json"]
+    )
+
+    assert human.exit_code == machine.exit_code == 2
+    assert "Remote synchronization failed" in human.stderr
+    assert json.loads(machine.stdout) == {
+        "complete": False,
+        "error": {"code": "remote_sync_failed"},
+        "synchronizations": [],
+    }
+    combined = human.output + machine.output
+    assert canary not in combined
+    assert "/private/" not in combined
+
+
+def test_sync_collection_errors_are_generic_in_human_and_json_output(
+    monkeypatch,
+) -> None:
+    canary = "PROMPT_SECRET_CANARY"
+
+    def fail_collection(*_args: object) -> list[Snapshot]:
+        raise ValueError(f"/private/provider/path: {canary}")
+
+    monkeypatch.setattr(cli_module, "_collect_snapshots", fail_collection)
+
+    human = runner.invoke(app, ["sync", "--endpoint", "https://collector.test"])
+    machine = runner.invoke(
+        app, ["sync", "--endpoint", "https://collector.test", "--json"]
+    )
+
+    assert human.exit_code == machine.exit_code == 2
+    assert "Local provider collection failed" in human.stderr
+    assert json.loads(machine.stdout) == {
+        "complete": False,
+        "error": {"code": "local_collection_failed"},
+        "synchronizations": [],
+    }
+    combined = human.output + machine.output
+    assert canary not in combined
+    assert "/private/" not in combined
+
+
+def test_sync_strict_refuses_the_complete_batch_before_transport(monkeypatch) -> None:
+    snapshots = [
+        Snapshot(provider="codex"),
+        Snapshot(
+            provider="claude",
+            malformed_records=1,
+            duplicate_conversations=2,
+        ),
+    ]
+    created = False
+
+    class UnusedSyncClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            nonlocal created
+            created = True
+
+    monkeypatch.setattr(cli_module, "_collect_snapshots", lambda *_args: snapshots)
+    monkeypatch.setattr("cli_consumption.sync.SyncClient", UnusedSyncClient)
+
+    result = runner.invoke(
+        app,
+        [
+            "sync",
+            "--endpoint",
+            "https://collector.test",
+            "--strict",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert created is False
+    assert json.loads(result.stdout) == {
+        "complete": False,
+        "error": {"code": "malformed_records"},
+        "synchronizations": [
+            {
+                "duplicates": 0,
+                "malformed": 0,
+                "provider": "codex",
+                "status": "refused",
+            },
+            {
+                "duplicates": 2,
+                "malformed": 1,
+                "provider": "claude",
+                "status": "refused",
+            },
+        ],
     }
 
 

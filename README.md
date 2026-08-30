@@ -249,6 +249,20 @@ uv run cli-consumption sync --provider all \
   --endpoint https://usage.example.test
 ```
 
+For automation, require clean local parsing and emit one deterministic result:
+
+```bash
+uv run cli-consumption sync --provider all --strict --json \
+  --endpoint https://usage.example.test
+```
+
+`--strict` refuses the complete batch before opening the HTTP client when any
+provider skipped malformed records. JSON results include ordered per-provider
+`malformed` and `duplicates` counters plus a `complete` flag. Independent provider
+uploads continue after a failure, so successful and failed entries explicitly report
+partial completion. Remote failures use fixed error codes and never include response
+bodies, paths, payloads, tokens, or exception text.
+
 The application refuses to bind beyond localhost without a token. Production
 deployments also need TLS and standard operational controls. The sync client refuses
 plain HTTP beyond loopback unless `--allow-insecure` is passed explicitly. See
@@ -311,9 +325,10 @@ as zero.
 
 Run `uv run cli-consumption COMMAND --help` for all options.
 
-`collect`, `export`, and `retention` accept `--json` for deterministic
+`collect`, `sync`, `export`, and `retention` accept `--json` for deterministic
 machine-readable results. `collect --strict` rejects snapshots containing malformed
-provider records before opening the destination database.
+provider records before opening the destination database; `sync --strict` rejects the
+complete batch before opening its HTTP client.
 
 ## Development
 

@@ -6,9 +6,18 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Linear is now the source of truth for new repository tasks and their progress, while
+  the roadmap remains focused on durable product direction.
+- Dashboard token totals now include conversation aggregates and latest-context
+  snapshots for conversations overlapping the selected period, with explicit labels
+  distinguishing them from additive usage.
+
 ### Fixed
 
-- Reject timezone-naive provider timestamps instead of interpreting them in the host timezone.
+- Reject timezone-naive provider timestamps instead of interpreting them in the host
+  timezone.
 
 ## [0.3.0] - 2026-08-29
 

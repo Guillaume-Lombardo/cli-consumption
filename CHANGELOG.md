@@ -15,6 +15,8 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   distinguishing them from additive usage.
 - Dashboard selection, period, aggregation, percentile, and comparison calculations
   now use an independently tested JavaScript contract embedded in the offline report.
+- Each detailed CSV export now uses a synchronized temporary file and atomic
+  replacement, preserving that table's previous file when generation fails early.
 
 ### Fixed
 

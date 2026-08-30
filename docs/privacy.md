@@ -126,9 +126,11 @@ it reveals no labels because only its private byte counter is retained. Its publ
 limit error is generic and recommends a bounded time
 window without echoing project or machine labels, identifiers, paths, or other database
 values. `--json` returns only a deterministic error code and generic hint. Atomic
-replacement prevents a failed generation from truncating a previous dashboard. With
-`--csv`, CSV files remain separate detailed exports and may have been written before a
-later dashboard failure.
+replacement prevents a failed generation from truncating a previous dashboard. Each
+CSV also replaces its own previous file atomically, but CSV files remain separate
+detailed exports and earlier tables may have been replaced before a later table or
+dashboard failure. Replacement preserves an existing CSV's file mode; new CSV files
+retain private temporary-file permissions.
 
 Time filters select complete conversations that overlap the requested window. They do
 not redact child records whose individual timestamps fall outside it; related subagent

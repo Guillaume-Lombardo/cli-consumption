@@ -36,6 +36,13 @@ whose complete `0004` layout passes the strict adoption preflight retains its va
 scope rows and is stamped directly at head. Older recognized layouts still replay the
 required forward migrations.
 
+Revision `0005` adds internal `sync_receipts` rows. Each row maps one opaque canonical
+UUIDv4 to an ingestion run through a cascading foreign key, allowing an ambiguous remote
+retry to return the original result without another ingestion. The table contains no
+payload digest or exported analytics field. Downgrade removes only replay receipts;
+normalized usage and ingestion runs remain intact. Mixed writers are still unsupported,
+so deploy and initialize the server before enabling retry-capable clients.
+
 Schema inspection, adoption, and migration are serialized for concurrent processes of
 the same application version in one outer transaction. SQLite waits at most 15 seconds
 for `BEGIN IMMEDIATE`, then holds that transaction across the decision and migration.

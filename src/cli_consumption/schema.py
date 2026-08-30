@@ -20,7 +20,7 @@ class SchemaCompatibilityError(RuntimeError):
 # Stable signed-bigint advisory-lock namespace for ``b"cli-cons"``.
 POSTGRESQL_MIGRATION_LOCK = 7_164_216_750_902_308_467
 SQLITE_MIGRATION_LOCK_TIMEOUT_MS = 15_000
-CURRENT_DATABASE_REVISION = "0004"
+CURRENT_DATABASE_REVISION = "0005"
 
 
 BASELINE_COLUMNS: dict[str, frozenset[str]] = {
@@ -163,6 +163,7 @@ BASELINE_COLUMNS: dict[str, frozenset[str]] = {
         }
     ),
     "subagent_scopes": frozenset({"provider", "source_machine", "lock_version"}),
+    "sync_receipts": frozenset({"idempotency_key", "ingestion_run_id"}),
     "ingestion_runs": frozenset(
         {
             "id",
@@ -274,13 +275,17 @@ def _preflight_unversioned(connection: Connection) -> None:
             _reject_unpublished_schema()
 
 
-def _matches_current_head_layout(connection: Connection) -> bool:
+def _matches_declared_layout(
+    connection: Connection, table_names: frozenset[str]
+) -> bool:
     from cli_consumption.storage import SCHEMA_TABLES
 
     inspector = inspect(connection)
-    if not set(SCHEMA_TABLES).issubset(inspector.get_table_names()):
+    existing = set(inspector.get_table_names())
+    if not table_names.issubset(existing):
         return False
-    for table_name, model in SCHEMA_TABLES.items():
+    for table_name in table_names:
+        model = SCHEMA_TABLES[table_name]
         declared = cast(Table, model.__table__)
         if {column["name"] for column in inspector.get_columns(table_name)} != {
             column.name for column in declared.columns
@@ -305,6 +310,24 @@ def _matches_current_head_layout(connection: Connection) -> bool:
         if actual_indexes != expected_indexes:
             return False
     return True
+
+
+def _matches_current_head_layout(connection: Connection) -> bool:
+    from cli_consumption.storage import SCHEMA_TABLES
+
+    return _matches_declared_layout(connection, frozenset(SCHEMA_TABLES))
+
+
+def _matches_revision_0004_layout(connection: Connection) -> bool:
+    from cli_consumption.storage import SCHEMA_TABLES
+
+    inspector = inspect(connection)
+    if "sync_receipts" in inspector.get_table_names():
+        return False
+    return _matches_declared_layout(
+        connection,
+        frozenset(SCHEMA_TABLES) - {"sync_receipts"},
+    )
 
 
 def _matching_type(actual: object, expected: object) -> bool:
@@ -372,19 +395,22 @@ def upgrade_database(engine: Engine) -> None:
             known_revisions = {item.revision for item in script.walk_revisions()}
             context = MigrationContext.configure(connection)
             current_heads = tuple(context.get_current_heads())
-            adopt_current_head = False
+            adopt_revision: str | None = None
             if not current_heads:
                 _preflight_unversioned(connection)
-                adopt_current_head = _matches_current_head_layout(connection)
+                if _matches_current_head_layout(connection):
+                    adopt_revision = expected_heads[0]
+                elif _matches_revision_0004_layout(connection):
+                    adopt_revision = "0004"
             elif any(head not in known_revisions for head in current_heads):
                 raise SchemaCompatibilityError(
                     "The database schema is newer than or unknown to this package"
                 )
             elif current_heads == expected_heads:
                 return
-            if adopt_current_head:
-                command.stamp(config, "head")
-            else:
+            if adopt_revision is not None:
+                command.stamp(config, adopt_revision)
+            if adopt_revision != expected_heads[0]:
                 command.upgrade(config, "head")
             migrated_heads = tuple(
                 MigrationContext.configure(connection).get_current_heads()

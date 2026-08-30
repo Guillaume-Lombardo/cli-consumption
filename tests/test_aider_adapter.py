@@ -173,15 +173,21 @@ def test_privacy_canary_is_absent_from_surfaces(
         def json(self) -> dict[str, int | str]:
             return {"snapshot_schema_min": 1, "snapshot_schema_max": 1}
 
-    def fake_post(url: str, **kwargs: Any) -> Response:
-        observed.update(url=url, **kwargs)
-        return Response()
+    class Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
 
-    monkeypatch.setattr("cli_consumption.sync.httpx.post", fake_post)
-    monkeypatch.setattr(
-        "cli_consumption.sync.httpx.get",
-        lambda *args, **kwargs: CapabilitiesResponse(),
-    )
+        def get(self, _url: str) -> Response:
+            return CapabilitiesResponse()
+
+        def post(self, url: str, **kwargs: Any) -> Response:
+            observed.update(url=url, **kwargs)
+            return Response()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("cli_consumption.sync.httpx.Client", Client)
     send_snapshot(snapshot, "https://collector.test")
     assert CANARY not in json.dumps(observed["json"])
     assert USER_ID not in json.dumps(observed["json"])

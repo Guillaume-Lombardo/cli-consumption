@@ -273,8 +273,13 @@ to avoid recording untrusted URLs or query strings.
 
 Snapshots use strict schema version 1. The collector rejects request bodies larger
 than 32 MiB and snapshots containing more than 250,000 normalized records. A sync
-client checks `/api/v1/capabilities` before sending when the endpoint exposes it.
-Upgrade the server before clients whenever supported snapshot schemas change.
+execution reuses one HTTP client and checks `/api/v1/capabilities` once for its
+endpoint. When the collector advertises idempotent uploads, each logical snapshot uses
+one opaque UUIDv4 across at most three attempts, with 0.25 and 0.5 second backoffs for
+transport failures or HTTP 500/502/503/504. A legacy collector receives only one
+attempt, avoiding an ambiguous duplicate. The collector retains the UUID only as
+internal replay state tied to the ingestion run. Upgrade the server before clients
+whenever supported snapshot schemas change.
 
 ## Provider diagnostics
 

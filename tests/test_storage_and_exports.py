@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import builtins
 import csv
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 from typing import cast
 
 import pytest
-from sqlalchemy import Table, inspect
+from sqlalchemy import Table, inspect, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
@@ -185,6 +186,36 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     assert payload["turnSettings"][0]["effort"] == "high"
     with (output / "conversations.csv").open(encoding="utf-8") as handle:
         assert next(iter(csv.DictReader(handle)))["source_machine"] == "workstation"
+    engine.dispose()
+
+
+def test_concurrent_replay_keys_create_one_ingestion_run(tmp_path: Path) -> None:
+    engine = create_database_engine(tmp_path / "replay.sqlite")
+    snapshot = Snapshot(provider="codex")
+    key = str(uuid.uuid4())
+    barrier = Barrier(2)
+
+    def ingest() -> str:
+        barrier.wait()
+        return ingest_snapshot(engine, snapshot, idempotency_key=key).run_id
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = [executor.submit(ingest) for _ in range(2)]
+        run_ids = [result.result() for result in results]
+
+    assert run_ids[0] == run_ids[1]
+    assert len(read_table(engine, "ingestion_runs")) == 1
+    with engine.connect() as connection:
+        receipts = (
+            connection.execute(
+                text("SELECT idempotency_key, ingestion_run_id FROM sync_receipts")
+            )
+            .mappings()
+            .all()
+        )
+    assert [dict(row) for row in receipts] == [
+        {"idempotency_key": key, "ingestion_run_id": run_ids[0]}
+    ]
     engine.dispose()
 
 

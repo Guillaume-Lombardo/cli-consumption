@@ -67,7 +67,7 @@ format. Limit an export to conversations overlapping a half-open UTC window:
 
 ```bash
 uv run cli-consumption export --output reports \
-  --since 2026-08-01 --until 2026-08-31
+  --since 2026-08-01 --until 2026-09-01
 ```
 
 Dates denote UTC calendar boundaries; timestamps must include a timezone. An included

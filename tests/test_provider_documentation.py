@@ -113,7 +113,8 @@ def test_provider_support_matrix_matches_the_canonical_registry() -> None:
 def test_readme_routes_provider_details_to_the_support_ledger() -> None:
     readme = README.read_text(encoding="utf-8")
 
-    assert "[provider support ledger](docs/provider-support.md)" in readme
+    assert "[provider support ledger]" in readme
+    assert "docs/provider-support.md" in readme
     assert "| Provider name |" not in readme
 
 

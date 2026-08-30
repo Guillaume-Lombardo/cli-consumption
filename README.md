@@ -7,11 +7,14 @@ metadata-only snapshots to a central collector.
 
 It never stores prompts, responses, tool arguments, credentials, or raw provider
 events. Local token counters are usage metadata, not billing records. Read the
-[privacy boundary](docs/privacy.md) before sharing a database or report.
+[privacy boundary](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/privacy.md)
+before sharing a database or report.
 
-[![Synthetic CLI Consumption dashboard](docs/demo/dashboard.png)](docs/demo/dashboard.html)
+[![Synthetic CLI Consumption dashboard](https://raw.githubusercontent.com/Guillaume-Lombardo/cli-consumption/main/docs/demo/dashboard.png)](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/demo/dashboard.html)
 
-The preview and [self-contained demo dashboard](docs/demo/dashboard.html) contain only
+The preview and
+[self-contained demo dashboard](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/demo/dashboard.html)
+contain only
 deterministic synthetic records. Rebuild the HTML with:
 
 ```bash
@@ -62,7 +65,8 @@ uv run cli-consumption collect --provider codex --database usage.sqlite
 
 Use `--source [LABEL=]PATH` for trusted offline copies and repeated
 `--project NAME=PATH_PREFIX` mappings for stable project labels. See the
-[usage and operations guide](docs/usage.md) for multi-machine collection, reporting,
+[usage and operations guide](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/usage.md)
+for multi-machine collection, reporting,
 PostgreSQL, retention, synchronization, readiness, and automation.
 
 ## Supported CLIs
@@ -74,7 +78,9 @@ Qwen Code.
 
 Provider formats are internal and can change without notice. Exact source locations,
 token semantics, extraction limits, synthetic qualification fixtures, provenance, and
-known gaps live in the [provider support ledger](docs/provider-support.md). Inspect the
+known gaps live in the
+[provider support ledger](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/provider-support.md).
+Inspect the
 local registry without exposing paths or content:
 
 ```bash
@@ -97,7 +103,9 @@ uv run cli-consumption providers --json
 - Central collection requires TLS, token rotation, backups, limits, monitoring, and a
   reverse proxy. The application does not replace those operator controls.
 
-See [Privacy](docs/privacy.md) for the exact data boundary and [Architecture](docs/architecture.md)
+See [Privacy](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/privacy.md)
+for the exact data boundary and
+[Architecture](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/architecture.md)
 for ingestion, idempotency, migrations, report limits, and collector behavior.
 
 ## Commands
@@ -112,17 +120,18 @@ for ingestion, idempotency, migrations, report limits, and collector behavior.
 | `retention` | Preview or apply deletion outside a retention window. |
 
 Run `uv run cli-consumption COMMAND --help` for every option. The
-[usage guide](docs/usage.md) contains copy-ready examples.
+[usage guide](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/usage.md)
+contains copy-ready examples.
 
 ## Documentation
 
-- [Usage and operations](docs/usage.md)
-- [Provider support and qualification](docs/provider-support.md)
-- [Privacy boundary](docs/privacy.md)
-- [Architecture](docs/architecture.md)
-- [Roadmap](docs/roadmap.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
+- [Usage and operations](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/usage.md)
+- [Provider support and qualification](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/provider-support.md)
+- [Privacy boundary](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/privacy.md)
+- [Architecture](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/architecture.md)
+- [Roadmap](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/roadmap.md)
+- [Contributing](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/CONTRIBUTING.md)
+- [Security policy](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/SECURITY.md)
 
 ## Development
 
@@ -138,9 +147,12 @@ uv build
 ```
 
 Development uses short-lived branches and squash-merged pull requests into protected
-`main`. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before
-changing the project.
+`main`. Read
+[CONTRIBUTING.md](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/CONTRIBUTING.md)
+and [AGENTS.md](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/AGENTS.md)
+before changing the project.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the
+[Apache License 2.0](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/LICENSE).

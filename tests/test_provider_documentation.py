@@ -121,6 +121,7 @@ def test_readme_routes_provider_details_to_the_support_ledger() -> None:
         "provider_limit_exceeded",
         "provider_format_incompatible",
         "invalid_snapshot",
+        "provider_collection_failed",
     ):
         assert code in readme
         assert code in support

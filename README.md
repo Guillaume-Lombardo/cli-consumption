@@ -94,8 +94,9 @@ uv run cli-consumption providers --json
   are refused.
 - `collect --strict` and `sync --strict` refuse a batch when any provider skipped
   malformed records. Collection distinguishes `provider_limit_exceeded`,
-  `provider_format_incompatible`, and `invalid_snapshot`; machine-readable results use
-  these fixed codes without paths, payloads, response bodies, tokens, or exception text.
+  `provider_format_incompatible`, `invalid_snapshot`, and the unexpected-failure
+  fallback `provider_collection_failed`; machine-readable results use these fixed codes
+  without paths, payloads, response bodies, tokens, or exception text.
 - Dashboards are self-contained and network-free. Share-safe mode pseudonymizes
   labels, groups tools, rounds timestamps, and hides small cohorts, but still exposes
   aggregate work patterns.

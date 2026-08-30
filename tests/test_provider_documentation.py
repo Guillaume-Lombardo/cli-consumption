@@ -85,38 +85,37 @@ def _single_code(cell: str) -> str:
     return values[0]
 
 
-def test_provider_matrices_match_the_canonical_registry() -> None:
+def test_provider_support_matrix_matches_the_canonical_registry() -> None:
     common = {
         "Provider name",
         "Aliases",
         "Default local source",
         "Token semantics",
     }
-    readme_rows = _table(README, common | {"CLI", "Particularities and limits"})
     support_rows = _table(PROVIDER_SUPPORT, common | {"Provider", "Status"})
 
     expected_names = {spec.name for spec in ADAPTER_SPECS}
-    assert Counter(_single_code(row["Provider name"]) for row in readme_rows) == {
-        name: 1 for name in expected_names
-    }
     assert Counter(_single_code(row["Provider name"]) for row in support_rows) == {
         name: 1 for name in expected_names
     }
 
-    readme_by_name = {_single_code(row["Provider name"]): row for row in readme_rows}
     support_by_name = {_single_code(row["Provider name"]): row for row in support_rows}
     for spec in ADAPTER_SPECS:
-        readme = readme_by_name[spec.name]
         support = support_by_name[spec.name]
-        assert _code_values(readme["Aliases"]) == spec.aliases
         assert _code_values(support["Aliases"]) == spec.aliases
-        assert _single_code(readme["Token semantics"]) == spec.token_semantics
         assert _single_code(support["Token semantics"]) == spec.token_semantics
         assert _single_code(support["Status"]) == spec.support
 
-        readme_source = _single_code(readme["Default local source"])
         support_source = _single_code(support["Default local source"])
-        assert readme_source == support_source == spec.documented_source
+        assert support_source == spec.documented_source
+
+
+def test_readme_routes_provider_details_to_the_support_ledger() -> None:
+    readme = README.read_text(encoding="utf-8")
+
+    assert "[provider support ledger]" in readme
+    assert "docs/provider-support.md" in readme
+    assert "| Provider name |" not in readme
 
 
 def test_markdown_table_parser_preserves_escaped_and_inline_code_pipes(

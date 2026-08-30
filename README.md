@@ -177,10 +177,13 @@ A dashboard is streamed through a temporary file in its destination directory,
 synchronized, and atomically replaces an older dashboard only after generation
 succeeds.
 
-When `--csv` and the dashboard are requested together, each CSV is still streamed
-before dashboard generation. The dashboard file is atomic, but the output directory
-as a whole is not: a dashboard limit or write failure can leave newly written CSV
-files alongside the preserved older dashboard.
+When `--csv` and the dashboard are requested together, each CSV is streamed through
+its own synchronized temporary file and atomically replaces that table's older CSV
+before dashboard generation. Replacement preserves an existing CSV's file mode; a
+new CSV uses private temporary-file permissions. The output directory as a whole is
+not atomic: a later
+CSV or dashboard failure can leave earlier tables updated alongside preserved older
+files.
 
 ## SQLite and PostgreSQL
 

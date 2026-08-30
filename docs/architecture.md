@@ -202,8 +202,14 @@ directory `fsync`; unsupported directory synchronization falls back explicitly t
 atomic rename guarantee. A failure before replacement leaves an existing dashboard
 intact and removes only the temporary file owned by that generation attempt; unrelated
 stale temporary files are not deleted.
-CSV files retain their independent streaming behavior, so `export --csv` plus a
-dashboard is not an atomic transaction for the entire output directory.
+Each CSV independently streams through a uniquely named temporary file, flushes and
+synchronizes it, then atomically replaces that table's final file and synchronizes the
+directory. A failure before replacement preserves the existing CSV and removes only
+the temporary owned by that table export. Replacement preserves an existing CSV's
+file mode, while a new CSV retains private temporary-file permissions. Earlier tables
+can already be replaced when
+a later table or dashboard fails, so `export --csv` plus a dashboard is not an atomic
+transaction for the entire output directory.
 The temporary text stream disables newline translation, so the encoded-byte counter,
 file position, and bytes written remain identical on Windows as well as POSIX systems.
 

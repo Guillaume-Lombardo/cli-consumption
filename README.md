@@ -126,6 +126,7 @@ contains copy-ready examples.
 ## Documentation
 
 - [Usage and operations](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/usage.md)
+- [Production deployment](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/deployment.md)
 - [Provider support and qualification](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/provider-support.md)
 - [Privacy boundary](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/privacy.md)
 - [Architecture](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/architecture.md)

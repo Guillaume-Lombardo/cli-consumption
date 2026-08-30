@@ -148,6 +148,10 @@ TLS-terminating reverse proxy or ingress, rate and connection limits, trusted pr
 configuration, token rotation, backups, monitoring, and access-log redaction. Uvicorn
 access logs are disabled because URLs and query strings are untrusted.
 
+The [production deployment guide](deployment.md) provides a pinned single-host example
+with PostgreSQL, automatic TLS, explicit capacity bounds, secret rotation,
+backup/restore, monitoring, and retention procedures.
+
 Use `GET /health` for process liveness; it never opens the database. Use `GET /ready`
 for traffic readiness; it returns `200` only when the database and expected schema are
 available, otherwise a generic `503`, within a two-second application deadline. Both

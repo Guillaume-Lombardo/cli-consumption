@@ -149,6 +149,17 @@ detailed exports and earlier tables may have been replaced before a later table 
 dashboard failure. Replacement preserves an existing CSV's file mode; new CSV files
 retain private temporary-file permissions.
 
+## Public synthetic demo
+
+The repository preview is generated only by `docs/demo/generate.py`. Its provider,
+machine, project, model, timestamp, token, tool, and relationship values are explicit
+invented constants; it never invokes an adapter or reads provider directories. The
+temporary SQLite database is created outside the repository and removed after the
+self-contained HTML is written. A regression test rebuilds the HTML byte for byte,
+checks privacy canaries and network primitives are absent, and validates the tracked
+PNG preview. The packaging contract excludes `docs/`, tests, generated demo assets,
+and every other repository-only file from wheels and source distributions.
+
 Time filters select complete conversations that overlap the requested window. They do
 not redact child records whose individual timestamps fall outside it; related subagent
 edges can also reveal activity around the boundary. Ingestion-run rows are selected by

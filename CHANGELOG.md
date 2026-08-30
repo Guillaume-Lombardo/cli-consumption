@@ -8,6 +8,8 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The README now leads with a reproducible synthetic dashboard preview and routes
+  operational and provider-qualification detail to dedicated guides.
 - CI now performs scheduled Python security, locked dependency, and offline workflow
   audits; third-party actions are pinned to immutable commits with least privileges.
 - Provider adapters now carry auditable format qualification metadata backed by

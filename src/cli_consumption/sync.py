@@ -109,14 +109,25 @@ def send_snapshot(
 def _validated_response(payload: object) -> dict[str, int | str]:
     if not isinstance(payload, dict):
         raise ValueError("Collector returned an invalid response")
-    if not isinstance(payload.get("run_id"), str) or not all(
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str) or not all(
         isinstance(payload.get(field), int)
         and not isinstance(payload.get(field), bool)
         and payload[field] >= 0
         for field in ("received", "written", "skipped")
     ):
         raise ValueError("Collector returned an invalid response")
-    return payload
+    try:
+        if str(uuid.UUID(run_id)) != run_id:
+            raise ValueError
+    except ValueError:
+        raise ValueError("Collector returned an invalid response") from None
+    return {
+        "run_id": run_id,
+        "received": payload["received"],
+        "written": payload["written"],
+        "skipped": payload["skipped"],
+    }
 
 
 def _require_secure_endpoint(endpoint: str, *, allow_insecure: bool) -> None:

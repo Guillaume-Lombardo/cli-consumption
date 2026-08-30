@@ -22,6 +22,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   replacement, preserving that table's previous file when generation fails early.
 - Multi-provider sync now reuses one HTTP client, negotiates capabilities once, and
   performs bounded idempotent retries when the collector advertises replay receipts.
+- Sync automation now supports strict preflight refusal and deterministic JSON with
+  malformed/duplicate diagnostics, explicit partial success, and generic remote
+  errors that do not expose response or provider content.
 
 ### Fixed
 

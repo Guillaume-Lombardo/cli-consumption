@@ -69,6 +69,14 @@ are negotiated once per endpoint. Retries are limited to three attempts and are
 enabled only when the collector advertises this receipt mechanism, so a legacy server
 is never retried after an ambiguous transport failure.
 
+Sync automation output contains only provider names, opaque ingestion-run IDs,
+received/written/skipped counts, local malformed and duplicate counts, bounded status
+labels, and fixed error codes. Partial multi-provider results preserve successful
+entries without including remote response bodies or exception text. Strict mode
+refuses every upload before creating the HTTP client when any local snapshot reports
+malformed records. Paths, snapshot payloads, tokens, provider record values, and
+collector error details are excluded from both human and JSON output.
+
 ## Threat model
 
 Provider files and incoming API payloads are untrusted. Parsers must tolerate malformed

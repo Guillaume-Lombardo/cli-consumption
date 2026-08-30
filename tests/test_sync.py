@@ -10,6 +10,8 @@ import pytest
 from cli_consumption.models import Snapshot
 from cli_consumption.sync import SyncClient
 
+RUN_ID = "12345678-1234-4abc-8def-123456789abc"
+
 
 def response(status: int, payload: object) -> httpx.Response:
     return httpx.Response(
@@ -45,7 +47,7 @@ class FakeClient:
             return self.post_handler(url, **kwargs)
         return response(
             200,
-            {"run_id": "run-1", "received": 0, "written": 0, "skipped": 0},
+            {"run_id": RUN_ID, "received": 0, "written": 0, "skipped": 0},
         )
 
 
@@ -66,7 +68,7 @@ def test_sync_client_reuses_http_client_and_negotiates_capabilities_once() -> No
     first = client.send_snapshot(Snapshot(provider="codex"))
     second = client.send_snapshot(Snapshot(provider="claude"))
 
-    assert first["run_id"] == second["run_id"] == "run-1"
+    assert first["run_id"] == second["run_id"] == RUN_ID
     assert fake.get_calls == ["https://collector.test/api/v1/capabilities"]
     assert len(fake.post_calls) == 2
     first_url, first_request = fake.post_calls[0]
@@ -127,7 +129,7 @@ def test_ambiguous_timeout_retries_with_the_same_idempotency_key() -> None:
             raise httpx.ReadTimeout("response lost")
         return response(
             200,
-            {"run_id": "run-1", "received": 0, "written": 0, "skipped": 0},
+            {"run_id": RUN_ID, "received": 0, "written": 0, "skipped": 0},
         )
 
     fake.post_handler = lose_first_response
@@ -140,7 +142,7 @@ def test_ambiguous_timeout_retries_with_the_same_idempotency_key() -> None:
 
     result = client.send_snapshot(Snapshot(provider="codex"))
 
-    assert result["run_id"] == "run-1"
+    assert result["run_id"] == RUN_ID
     assert len(attempts) == 2
     assert (
         attempts[0]["headers"]["Idempotency-Key"]
@@ -236,12 +238,61 @@ def test_retryable_server_failure_is_retried() -> None:
             return response(503, {"detail": "temporarily_unavailable"})
         return response(
             200,
-            {"run_id": "run-1", "received": 0, "written": 0, "skipped": 0},
+            {"run_id": RUN_ID, "received": 0, "written": 0, "skipped": 0},
         )
 
     fake.post_handler = unavailable_once
 
     result = sync_client(fake).send_snapshot(Snapshot(provider="codex"))
 
-    assert result["run_id"] == "run-1"
+    assert result["run_id"] == RUN_ID
     assert attempts == 2
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "run_id": "PROMPT_SECRET_CANARY",
+            "received": 0,
+            "written": 0,
+            "skipped": 0,
+        },
+        {
+            "run_id": RUN_ID.upper(),
+            "received": 0,
+            "written": 0,
+            "skipped": 0,
+        },
+        {"run_id": RUN_ID, "received": True, "written": 0, "skipped": 0},
+    ],
+)
+def test_sync_client_rejects_unbounded_or_invalid_response_fields(
+    payload: dict[str, object],
+) -> None:
+    fake = FakeClient()
+    fake.post_handler = lambda _url, **_kwargs: response(200, payload)
+
+    with pytest.raises(ValueError, match="invalid response"):
+        sync_client(fake).send_snapshot(Snapshot(provider="codex"))
+
+
+def test_sync_client_discards_unknown_response_fields() -> None:
+    fake = FakeClient()
+    fake.post_handler = lambda _url, **_kwargs: response(
+        200,
+        {
+            "run_id": RUN_ID,
+            "received": 1,
+            "written": 1,
+            "skipped": 0,
+            "provider_payload": "PROMPT_SECRET_CANARY",
+        },
+    )
+
+    assert sync_client(fake).send_snapshot(Snapshot(provider="codex")) == {
+        "run_id": RUN_ID,
+        "received": 1,
+        "written": 1,
+        "skipped": 0,
+    }

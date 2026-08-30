@@ -202,27 +202,145 @@ def sync(
             help="Allow plain HTTP to a non-loopback collector on a trusted network.",
         ),
     ] = False,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help="Refuse upload when any malformed provider record was skipped.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit a deterministic JSON result.")
+    ] = False,
 ) -> None:
     """Collect locally and send metadata-only records to a central collector."""
     try:
         from cli_consumption.sync import SyncClient
     except ModuleNotFoundError:
+        if json_output:
+            _emit_sync_json(
+                [],
+                complete=False,
+                error_code="sync_dependency_missing",
+            )
+            raise typer.Exit(code=2) from None
         raise typer.BadParameter(
             "sync requires optional dependencies; install cli-consumption[sync]"
         ) from None
 
-    snapshots = _collect_snapshots(provider, source, project)
+    try:
+        snapshots = _collect_snapshots(provider, source, project)
+    except Exception:  # Provider errors are untrusted and stay generic for sync.
+        if json_output:
+            _emit_sync_json(
+                [],
+                complete=False,
+                error_code="local_collection_failed",
+            )
+            raise typer.Exit(code=2) from None
+        typer.echo("Local provider collection failed.", err=True)
+        raise typer.Exit(code=2) from None
+    if strict and any(snapshot.malformed_records for snapshot in snapshots):
+        outcomes = [
+            _sync_diagnostics(snapshot, status="refused") for snapshot in snapshots
+        ]
+        if json_output:
+            _emit_sync_json(
+                outcomes,
+                complete=False,
+                error_code="malformed_records",
+            )
+            raise typer.Exit(code=2) from None
+        raise typer.BadParameter(
+            "--strict refused snapshots containing malformed provider records"
+        )
+
     token = os.environ.get(token_env)
+    outcomes: list[dict[str, object]] = []
+    failures = 0
     try:
         with SyncClient(endpoint, token, allow_insecure=allow_insecure) as sync_client:
             for snapshot in snapshots:
-                result = sync_client.send_snapshot(snapshot)
-                typer.echo(
-                    f"Remote ingestion {snapshot.provider} {result['run_id']}: "
-                    f"{result['written']} written, {result['skipped']} unchanged."
+                try:
+                    result = sync_client.send_snapshot(snapshot)
+                except Exception:  # Remote errors are untrusted and stay generic.
+                    failures += 1
+                    outcomes.append(
+                        {
+                            **_sync_diagnostics(snapshot, status="failed"),
+                            "error": {"code": "remote_sync_failed"},
+                        }
+                    )
+                    if not json_output:
+                        typer.echo(
+                            f"Remote ingestion {snapshot.provider} failed.", err=True
+                        )
+                    continue
+                outcomes.append(
+                    {
+                        **_sync_diagnostics(snapshot, status="succeeded"),
+                        "run_id": result["run_id"],
+                        "received": result["received"],
+                        "written": result["written"],
+                        "skipped": result["skipped"],
+                    }
                 )
-    except ValueError as error:
-        raise typer.BadParameter(str(error)) from None
+                if not json_output:
+                    typer.echo(
+                        f"Remote ingestion {snapshot.provider} {result['run_id']}: "
+                        f"{result['written']} written, {result['skipped']} unchanged, "
+                        f"{snapshot.malformed_records} malformed, "
+                        f"{snapshot.duplicate_conversations} duplicates."
+                    )
+    except Exception:  # Endpoint and client errors are untrusted and stay generic.
+        if json_output:
+            _emit_sync_json(
+                outcomes,
+                complete=False,
+                error_code="remote_sync_failed",
+            )
+            raise typer.Exit(code=2) from None
+        typer.echo("Remote synchronization failed.", err=True)
+        raise typer.Exit(code=2) from None
+
+    complete = failures == 0
+    if json_output:
+        _emit_sync_json(outcomes, complete=complete)
+    elif failures:
+        succeeded = len(outcomes) - failures
+        typer.echo(
+            f"Synchronization partially completed: {succeeded} succeeded, "
+            f"{failures} failed.",
+            err=True,
+        )
+    if not complete:
+        raise typer.Exit(code=2)
+
+
+def _sync_diagnostics(snapshot: Snapshot, *, status: str) -> dict[str, object]:
+    """Return the bounded local diagnostics allowed in sync results."""
+    return {
+        "provider": snapshot.provider,
+        "status": status,
+        "malformed": snapshot.malformed_records,
+        "duplicates": snapshot.duplicate_conversations,
+    }
+
+
+def _emit_sync_json(
+    outcomes: list[dict[str, object]],
+    *,
+    complete: bool,
+    error_code: str | None = None,
+) -> None:
+    """Emit one deterministic sync result without external error details."""
+    payload: dict[str, object] = {
+        "complete": complete,
+        "synchronizations": outcomes,
+    }
+    if error_code is not None:
+        payload["error"] = {"code": error_code}
+    typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
 @app.command("export")

@@ -24,7 +24,7 @@
 	}
 
 	reverse_proxy collector:8765 {
-		health_uri /health
+		health_uri /ready
 		health_interval 30s
 		lb_try_duration 0s
 		transport http {

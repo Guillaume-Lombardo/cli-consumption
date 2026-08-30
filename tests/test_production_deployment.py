@@ -60,6 +60,8 @@ def test_reference_proxy_discards_untrusted_access_logs_and_bounds_connections()
     caddyfile = (DEPLOYMENT / "Caddyfile").read_text(encoding="utf-8")
 
     assert "output discard" in caddyfile
+    assert "health_uri /ready" in caddyfile
+    assert "health_uri /health" not in caddyfile
     assert "max_conns_per_host 16" in caddyfile
     assert "max_size 32MB" in caddyfile
     assert "max_header_size 32KB" in caddyfile

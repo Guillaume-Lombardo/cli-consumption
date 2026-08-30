@@ -189,6 +189,12 @@ charged before writing and the complete HTML has an exact 128 MiB limit. Limit e
 expose no labels, IDs, paths, or database values and direct the operator to `--since`
 and `--until`.
 
+Interactive selection, period, aggregation, percentile, and comparison calculations
+are a pure JavaScript contract over that minimized payload. The packaged resource has
+no DOM, storage, logging, or network access and returns only selected rows or derived
+scalars. It is inlined into the generated document so the production dashboard stays
+self-contained while the exact calculation code remains independently testable.
+
 The HTML is written to a uniquely named temporary file in the destination directory,
 flushed and synchronized, then installed with an atomic replacement. The destination
 directory is synchronized after replacement on platforms and filesystems that support

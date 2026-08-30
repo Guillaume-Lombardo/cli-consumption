@@ -13,6 +13,8 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Dashboard token totals now include conversation aggregates and latest-context
   snapshots for conversations overlapping the selected period, with explicit labels
   distinguishing them from additive usage.
+- Dashboard selection, period, aggregation, percentile, and comparison calculations
+  now use an independently tested JavaScript contract embedded in the offline report.
 
 ### Fixed
 

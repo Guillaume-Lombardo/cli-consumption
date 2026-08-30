@@ -94,7 +94,11 @@ def test_distribution_artifact_contract(tmp_path: Path) -> None:
                 "import sys; "
                 f"sys.path.insert(0, {str(wheel)!r}); "
                 "import cli_consumption, cli_consumption.migrations; "
-                "assert cli_consumption.__version__ != '0.0.0'"
+                "from cli_consumption.dashboard import "
+                "_dashboard_calculations_script; "
+                "assert cli_consumption.__version__ != '0.0.0'; "
+                "assert 'createDashboardCalculations' in "
+                "_dashboard_calculations_script()"
             ),
         ],
         check=False,

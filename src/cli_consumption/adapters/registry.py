@@ -98,10 +98,12 @@ def _qualification(
     format: str,
     provenance: str,
     limitations: str,
+    *,
+    qualified_on: str = _QUALIFIED_ON,
 ) -> AdapterQualification:
     return AdapterQualification(
         version=version,
-        qualified_on=_QUALIFIED_ON,
+        qualified_on=qualified_on,
         format=format,
         fixture=f"tests/test_{name.replace('-', '_')}_adapter.py",
         provenance=provenance,
@@ -358,10 +360,11 @@ ADAPTER_SPECS = (
         token_semantics="additive",
         qualification=_qualification(
             "opencode",
-            "SQLite v2",
-            "SQLite session, message, and part tables",
-            "https://github.com/anomalyco/opencode/tree/10765ff2a9da8c3b88e4de873aa383a49c318912",
-            "No legacy storage, child sessions, context windows, or costs.",
+            "CLI 1.18.23 / SQLite v2",
+            "SQLite session plus current message/part or projection records",
+            "https://github.com/anomalyco/opencode/tree/v1.18.23",
+            "No pre-v2 JSON, child sessions, context windows, or costs.",
+            qualified_on="2026-08-31",
         ),
     ),
     AdapterSpec(

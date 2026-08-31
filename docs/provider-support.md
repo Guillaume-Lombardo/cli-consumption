@@ -87,7 +87,7 @@ changed between releases.
 | `kilo` | CLI 7.5.5 | `2026-08-30` | SQLite session, message, and part tables | [fixture](../tests/test_kilo_adapter.py) | [Kilo Code](https://github.com/Kilo-Org/kilocode/tree/v7.5.5) | CLI store only; no legacy IDE tasks, cloud sessions, or subagents. |
 | `kimi` | Wire v1 | `2026-08-30` | wire event JSONL | [fixture](../tests/test_kimi_adapter.py) | [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli/tree/cbc15c076d17f70fec9f89c90c0502e68657f505) | Selected model unavailable; hashed work directories are not reversed. |
 | `mistral-vibe` | CLI 2.24.5 | `2026-08-30` | session meta JSON and messages JSONL | [fixture](../tests/test_mistral_vibe_adapter.py) | [Mistral Vibe](https://github.com/mistralai/mistral-vibe/tree/v2.24.5) | Session aggregates only; no timing or historical model attribution. |
-| `opencode` | SQLite v2 | `2026-08-30` | SQLite session, message, and part tables | [fixture](../tests/test_opencode_adapter.py) | [OpenCode](https://github.com/anomalyco/opencode/tree/10765ff2a9da8c3b88e4de873aa383a49c318912) | No legacy storage, child sessions, context windows, or costs. |
+| `opencode` | CLI 1.18.23 / SQLite v2 | `2026-08-31` | SQLite session plus current message/part or projection records | [fixture](../tests/test_opencode_adapter.py) | [OpenCode](https://github.com/anomalyco/opencode/tree/v1.18.23) | No pre-v2 JSON, child sessions, context windows, or costs. |
 | `openhands` | CLI 1.16.0 | `2026-08-30` | SDK base state and event JSON | [fixture](../tests/test_openhands_adapter.py) | [OpenHands](https://github.com/OpenHands/OpenHands/tree/v1.16.0) | Local SDK persistence only; no cloud conversations or delegates. |
 | `pi` | session schema v3 | `2026-08-30` | branched session JSONL | [fixture](../tests/test_pi_adapter.py) | [Pi](https://github.com/earendil-works/pi/tree/853a80d26c90a14c1886f0ebb8ffaae133ca2185) | All branches counted; no branch graph, context windows, or durations. |
 | `plandex` | conversation JSON (unversioned) | `2026-08-30` | self-hosted conversation JSON | [fixture](../tests/test_plandex_adapter.py) | [Plandex](https://github.com/plandex-ai/plandex/tree/e2d772072efadbe41d2946d97d79be55532dbab5) | Offline self-hosted copy only; models and tools unavailable. |
@@ -283,17 +283,20 @@ internal format can change without notice.
 ## OpenCode
 
 OpenCode reads `opencode.db` from its XDG data directory (normally
-`~/.local/share/opencode/`). It extracts v2 session messages, model references, token
-usage, tool names, and compaction timestamps while discarding message text, reasoning,
-tool inputs/results, shell commands/output, paths, titles, errors, costs, and arbitrary
-metadata. Model labels combine OpenCode's provider and model identifiers.
+`~/.local/share/opencode/`). For OpenCode 1.18.23, it reads assistant model references
+and token usage from `message.data`, and tool names plus compaction markers from
+`part.data`. When the current `message` and `part` tables are absent, it retains
+compatibility with the earlier `session_message` projection format. If either current
+table is present but incomplete, the adapter reports an unsupported schema instead of
+falling back to a misleading zero-usage snapshot. Message text, reasoning, tool
+inputs/results, shell commands/output, paths, titles, errors, costs, and arbitrary
+metadata are discarded. Model labels combine OpenCode's provider and model identifiers.
 
 OpenCode reports uncached input, cache reads, cache writes, visible output, and
 reasoning separately. Normalized input and output totals include their respective
-components. The adapter does not currently read pre-v2 JSON storage, legacy
-`message`/`part` tables, child-session relationships, context-window sizes, or
-provider-reported cost. The SQLite schema is internal and may change without notice;
-local token events are not billing data.
+components. The adapter does not currently read pre-v2 JSON storage, child-session
+relationships, context-window sizes, or provider-reported cost. The SQLite schema is
+internal and may change without notice; local token events are not billing data.
 
 ## OpenHands CLI
 

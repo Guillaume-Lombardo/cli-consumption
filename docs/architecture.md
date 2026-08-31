@@ -9,6 +9,8 @@ local formats into one parser.
 ```text
 provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/CSV
                                       |
+                                      +-> signed gzip file -> SQL storage
+                                      |
                                       +-> HTTPS collector -> central SQL storage
 ```
 
@@ -27,6 +29,8 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
 - `storage`, `schema`, and `migrations`: own the normalized schema, idempotent
   replacement rules, automatic Alembic upgrades, legacy adoption, SQLite, and
   PostgreSQL engine creation.
+- `snapshot_files`: serializes the existing strict snapshot schema in a bounded,
+  deterministic gzip envelope authenticated with an Ed25519 signature.
 - `api` and `sync`: offer an optional push workflow for recurring multi-machine use.
 - `dashboard`, `reporting`, and `exporting`: select complete conversation graphs,
   provide an offline HTML view by default, and stream deterministic portable CSV tables
@@ -51,6 +55,23 @@ recommended for personal use, occasional reports, and air-gapped environments.
 
 The trade-off is operational: users must schedule copies and keep machine clocks
 synchronized if they later analyze overlapping activity.
+
+### Signed offline snapshot files
+
+`snapshot create` collects provider data locally, validates the existing
+provider-neutral snapshot schema, serializes a fixed version-1 envelope, compresses it
+deterministically, and signs the magic header plus compressed bytes with Ed25519. The
+envelope adds only its fixed format name and version; it does not extend the normalized
+data model. `snapshot ingest` reads a regular bounded file, verifies it with a trusted
+PEM public key before decompression, strictly parses the envelope, and sends each
+snapshot through normal idempotent ingestion for SQLite or PostgreSQL.
+
+This option works without a network service and avoids transferring raw provider
+stores. Authentication detects tampering and identifies possession of a trusted
+signing key; it does not encrypt metadata or establish when or where a file was
+created. Trust distribution, private-key protection, revocation, snapshot-file
+retention, and replay policy remain operator responsibilities. Replays are safe at the
+storage boundary but still produce ingestion-run metadata.
 
 ### Central API
 

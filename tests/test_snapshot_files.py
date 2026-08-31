@@ -19,6 +19,7 @@ from cli_consumption.cli import app
 from cli_consumption.models import Snapshot
 from cli_consumption.snapshot_files import (
     FILE_MAGIC,
+    SIGNATURE_SIZE,
     SnapshotFileError,
     read_snapshot_file,
     write_snapshot_file,
@@ -104,6 +105,26 @@ def test_wrong_key_and_malformed_signed_envelope_are_rejected(tmp_path: Path) ->
         read_snapshot_file(output, valid_public)
 
 
+def test_truncated_and_oversized_signed_files_are_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_path, public_path, _ = _keys(tmp_path)
+    output = tmp_path / "usage.snapshot"
+    write_snapshot_file([Snapshot(provider="codex")], output, private_path)
+    complete = output.read_bytes()
+
+    output.write_bytes(complete[: len(FILE_MAGIC) + 8])
+    with pytest.raises(SnapshotFileError, match="snapshot_file_invalid"):
+        read_snapshot_file(output, public_path)
+
+    output.write_bytes(complete)
+    monkeypatch.setattr(
+        "cli_consumption.snapshot_files.MAX_SIGNED_FILE_BYTES", len(complete) - 1
+    )
+    with pytest.raises(SnapshotFileError, match="snapshot_file_too_large"):
+        read_snapshot_file(output, public_path)
+
+
 def test_bounded_decompression_and_snapshot_count(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -116,6 +137,18 @@ def test_bounded_decompression_and_snapshot_count(
         read_snapshot_file(output, public_path)
     with pytest.raises(SnapshotFileError, match="snapshot_file_invalid"):
         write_snapshot_file([Snapshot(provider="codex")] * 65, output, private_path)
+
+
+def test_total_normalized_record_count_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_path, _, _ = _keys(tmp_path)
+    monkeypatch.setattr("cli_consumption.snapshot_files.MAX_SNAPSHOT_RECORDS", -1)
+
+    with pytest.raises(SnapshotFileError, match="snapshot_payload_too_large"):
+        write_snapshot_file(
+            [Snapshot(provider="codex")], tmp_path / "usage.snapshot", private_path
+        )
 
 
 def test_atomic_replacement_preserves_previous_file_on_failure(
@@ -176,6 +209,8 @@ def test_cli_snapshot_round_trip_is_idempotent_and_privacy_safe(
     )
     assert created.exit_code == 0, created.output
     assert json.loads(created.stdout) == {"providers": ["codex"], "snapshots": 1}
+    compressed = output.read_bytes()[len(FILE_MAGIC) + SIGNATURE_SIZE :]
+    assert canary.encode() not in gzip.decompress(compressed)
     assert canary not in str(read_snapshot_file(output, public_path)[0].to_dict())
 
     first = runner.invoke(

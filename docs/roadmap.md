@@ -13,6 +13,7 @@ its acceptance criteria and validation are complete.
   [Provider support](provider-support.md), including local stores and offline copies of
   self-hosted Plandex data
 - Offline multi-machine deduplication
+- Signed, compressed offline snapshot files with authenticated ingestion
 - SQLite and PostgreSQL storage
 - Metadata-only central collection API
 - Opt-in CSV exports, a self-contained dashboard, and a share-safe dashboard profile
@@ -38,7 +39,6 @@ its acceptance criteria and validation are complete.
 
 ## Later operational work
 
-- Signed/compressed offline snapshot files
 - Server deployment examples and read-only reporting API
 - Cost estimates driven by explicit, versioned pricing inputs, deferred until token
   semantics are sufficiently comparable across providers

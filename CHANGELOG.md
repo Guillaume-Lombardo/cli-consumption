@@ -6,6 +6,11 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added deterministic, compressed offline snapshot files authenticated with Ed25519,
+  with bounded verification-before-parsing and idempotent SQLite/PostgreSQL ingestion.
+
 ## [0.3.2] - 2026-08-31
 
 ### Changed

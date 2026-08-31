@@ -237,7 +237,7 @@ def snapshot_create(
         _abort_snapshot("malformed_records", json_output=json_output)
     try:
         write_snapshot_file(snapshots, output, signing_key)
-    except (SnapshotFileError, SnapshotValidationError) as error:
+    except (OSError, SnapshotFileError, SnapshotValidationError) as error:
         _abort_snapshot(
             getattr(error, "code", "snapshot_file_invalid"),
             json_output=json_output,
@@ -276,7 +276,7 @@ def snapshot_ingest(
 
     try:
         snapshots = read_snapshot_file(input_path, verification_key)
-    except (SnapshotFileError, SnapshotValidationError) as error:
+    except (OSError, SnapshotFileError, SnapshotValidationError) as error:
         _abort_snapshot(
             getattr(error, "code", "snapshot_file_invalid"),
             json_output=json_output,

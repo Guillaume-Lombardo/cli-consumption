@@ -35,6 +35,10 @@ jobs:
       - name: Audit Python source
         run: uv run ruff check --select S .
       - name: Audit installed locked dependencies
-        run: uv run pip-audit --local --strict
+        run: |
+          uv export --locked --all-extras --all-groups --no-emit-project \
+            --no-hashes --output-file "${RUNNER_TEMP}/locked-requirements.txt"
+          uv run pip-audit --strict \
+            --requirement "${RUNNER_TEMP}/locked-requirements.txt"
       - name: Audit GitHub Actions without network access
         run: uv run zizmor --offline --persona=pedantic .github/workflows

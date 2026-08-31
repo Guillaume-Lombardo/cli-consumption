@@ -37,10 +37,18 @@ def test_every_provider_has_verifiable_synthetic_qualification_provenance() -> N
 def test_qualification_age_boundary_is_deterministic() -> None:
     assert qualification_problems(as_of=date(2026, 11, 28)) == ()
     problems = qualification_problems(as_of=date(2026, 11, 29))
-    assert len(problems) == len(ADAPTER_SPECS)
+    assert {problem.provider for problem in problems} == {
+        spec.name for spec in ADAPTER_SPECS if spec.name != "opencode"
+    }
     assert {problem.reason for problem in problems} == {
         "qualification is 91 days old (maximum 90)"
     }
+    problems = qualification_problems(as_of=date(2026, 11, 30))
+    assert len(problems) == len(ADAPTER_SPECS)
+    assert (
+        next(problem.reason for problem in problems if problem.provider == "opencode")
+        == "qualification is 91 days old (maximum 90)"
+    )
 
 
 def test_qualification_check_rejects_missing_metadata() -> None:

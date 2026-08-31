@@ -146,14 +146,38 @@ limiter competing with that boundary.
 ## Storage
 
 SQLite is the zero-configuration default. PostgreSQL is selected by passing a
-`postgresql+psycopg://` URL. Every database open upgrades through packaged Alembic
-migrations. An unversioned database is adopted only when its columns, SQL types,
+`postgresql+psycopg://` URL. Every normal database open upgrades through packaged
+Alembic migrations. An unversioned database is adopted only when its columns, SQL types,
 nullability, primary and foreign keys, and indexes exactly match a published schema; an
 unknown, newer, or locally modified schema is refused. Migration revisions support
 SQLite and PostgreSQL and define a bounded downgrade, but application rollback can
 still require restoring a pre-upgrade backup. Operators must upgrade the server first
 and avoid mixed-version access during migration. The detailed policy is recorded in
 [ADR 0001](decisions/0001-versioned-schema-migrations.md).
+
+Snapshot extraction is the deliberate exception to migration-on-open. It accepts only
+an existing regular local SQLite file, opens it with URI `mode=ro` and SQLite
+`query_only`, starts an explicit read transaction, and requires both Alembic revision
+`0005` and the exact current table, column, type, nullability, key, constraint, and
+index layout. It never adopts, stamps, migrates, or repairs the source. A normal
+read-only SQLite connection keeps committed WAL contents visible; every estimate and
+row query therefore observes the same database snapshot while collection may continue.
+An orphan `-wal` file without its `-shm` sidecar cannot be opened from a non-writable
+directory because rebuilding shared memory would violate this boundary; extraction
+fails with `database_unavailable` until the operator restores a consistent sidecar set
+or copies the database and WAL into a private writable directory.
+
+The extractor reuses reporting's half-open `since`/`until` selection. A selected
+conversation always carries all its normalized child rows, and a subagent edge is
+retained when either endpoint belongs to the selection. Unbounded graph-only provider
+scopes remain representable. Rows are grouped into strict snapshot-schema-v1 instances
+by provider, with stable IDs, relationships, and content hashes unchanged.
+`ingestion_runs`, `sync_receipts`, `subagent_scopes`, and Alembic state are never
+transferred. SQL preflight and serialized-output checks cap one extraction at 10,000
+conversations, 250,000 normalized records, and 128 MiB. Incompatible data, invalid
+windows, unavailable databases, and limit failures use fixed codes without paths,
+database values, or driver messages. The same exact-layout verifier runs against both
+SQLite and PostgreSQL even though local database-file extraction itself is SQLite-only.
 
 Conversation records use a provider-qualified stable ID. Repeated ingestion skips an
 identical or less complete record. A more complete copy atomically replaces the

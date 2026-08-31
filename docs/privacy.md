@@ -90,6 +90,17 @@ refuses every upload before creating the HTTP client when any local snapshot rep
 malformed records. Paths, snapshot payloads, tokens, provider record values, and
 collector error details are excluded from both human and JSON output.
 
+Read-only database extraction reconstructs only the existing strict snapshot-schema-v1
+fields. It keeps the approved detailed operational labels, stable provider-qualified
+IDs, content hashes, relationships, token counters, statuses, and timestamps because
+the receiving ingestion path needs them for deterministic replacement. It excludes
+the SQLite file and sidecars themselves, database paths, Alembic state,
+`ingestion_runs`, replay receipts, subagent-scope locks, SQL metadata, and exception
+text. A SQL byte/row preflight runs before values are materialized, the reconstructed
+payload is validated again, and every failure exposes only a fixed code. Project and
+machine labels plus activity timestamps remain private operational disclosure; this
+transfer is minimized, not anonymous.
+
 ## Threat model
 
 Provider files and incoming API payloads are untrusted. Parsers must tolerate malformed
@@ -110,6 +121,15 @@ normalized snapshot remains capped at 250,000 records during construction. Limit
 failures expose only generic codes, never paths or record content. The sync client
 requires HTTPS beyond loopback unless the operator uses the explicit
 `--allow-insecure` override.
+
+A normalized database selected for snapshot extraction is also untrusted. Extraction
+requires the exact current revision and physical layout without running migrations,
+uses an explicit read-only transaction that includes live committed WAL data, and caps
+the selection at 10,000 conversations, 250,000 records, and 128 MiB before reading its
+rows. Strict snapshot validation rejects invalid identifiers, relationships, token
+composition, timestamps, models, and labels after reconstruction. Tests place a
+synthetic secret in excluded ingestion, receipt, and scope rows and assert that it is
+absent from snapshots, errors, and logs.
 
 The unauthenticated liveness endpoint does not touch the database. The unauthenticated
 readiness endpoint reads only a bounded schema revision and fixed table probes. It

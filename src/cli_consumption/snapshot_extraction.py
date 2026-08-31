@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 from urllib.parse import quote
 
@@ -140,9 +140,9 @@ def _create_read_only_sqlite_engine(database: str | Path) -> Engine:
     if path.is_symlink() or not path.is_file():
         raise SnapshotExtractionError("database_unavailable")
     resolved = path.resolve(strict=True)
-    encoded = quote(resolved.as_posix(), safe="/")
+    sqlite_uri = _sqlite_file_uri(resolved)
     engine = create_engine(
-        f"sqlite+pysqlite:///file:{encoded}?mode=ro&uri=true",
+        f"sqlite+pysqlite:///{sqlite_uri}?mode=ro&uri=true",
         poolclass=NullPool,
     )
 
@@ -156,6 +156,15 @@ def _create_read_only_sqlite_engine(database: str | Path) -> Engine:
             cursor.close()
 
     return engine
+
+
+def _sqlite_file_uri(path: PurePath) -> str:
+    normalized = path.as_posix()
+    if normalized.startswith("//"):
+        return f"file:{quote(normalized, safe='/:')}"
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    return f"file://{quote(normalized, safe='/:')}"
 
 
 def _extract_snapshots(

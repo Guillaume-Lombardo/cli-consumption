@@ -11,6 +11,8 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Double, Float, String, Table, inspect, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.exc import SQLAlchemyError
 
 
 class SchemaCompatibilityError(RuntimeError):
@@ -222,23 +224,10 @@ def _preflight_unversioned(connection: Connection) -> None:
             ):
                 _reject_unpublished_schema()
 
-        expected_indexes = {
-            (
-                index.name,
-                tuple(column.name for column in index.columns),
-                bool(index.unique),
-            )
-            for index in declared.indexes
-        }
-        actual_indexes = {
-            (
-                index["name"],
-                tuple(index["column_names"]),
-                bool(index["unique"]),
-            )
-            for index in inspector.get_indexes(table_name)
-        }
-        accepted_indexes = {frozenset(expected_indexes)}
+        expected_indexes, actual_indexes = _index_signatures(
+            inspector, table_name, declared
+        )
+        accepted_indexes = {expected_indexes}
         if table_name == "conversations":
             accepted_indexes.add(
                 frozenset(
@@ -246,7 +235,7 @@ def _preflight_unversioned(connection: Connection) -> None:
                     - {("ix_conversations_ended_at", ("ended_at",), False)}
                 )
             )
-        if frozenset(actual_indexes) not in accepted_indexes:
+        if actual_indexes not in accepted_indexes:
             _reject_unpublished_schema()
 
         expected_foreign_keys = {
@@ -291,25 +280,42 @@ def _matches_declared_layout(
             column.name for column in declared.columns
         }:
             return False
-        expected_indexes = {
-            (
-                index.name,
-                tuple(column.name for column in index.columns),
-                bool(index.unique),
-            )
-            for index in declared.indexes
-        }
-        actual_indexes = {
-            (
-                index["name"],
-                tuple(index["column_names"]),
-                bool(index["unique"]),
-            )
-            for index in inspector.get_indexes(table_name)
-        }
-        if actual_indexes != expected_indexes:
+        if not _declared_indexes_match(inspector, table_name, declared):
             return False
     return True
+
+
+def _index_signatures(
+    inspector: Inspector,
+    table_name: str,
+    declared: Table,
+) -> tuple[frozenset[tuple[object, ...]], frozenset[tuple[object, ...]]]:
+    expected = frozenset(
+        (
+            index.name,
+            tuple(column.name for column in index.columns),
+            bool(index.unique),
+        )
+        for index in declared.indexes
+    )
+    actual = frozenset(
+        (
+            index["name"],
+            tuple(index["column_names"]),
+            bool(index["unique"]),
+        )
+        for index in inspector.get_indexes(table_name)
+    )
+    return expected, actual
+
+
+def _declared_indexes_match(
+    inspector: Inspector,
+    table_name: str,
+    declared: Table,
+) -> bool:
+    expected, actual = _index_signatures(inspector, table_name, declared)
+    return actual == expected
 
 
 def _matches_current_head_layout(connection: Connection) -> bool:
@@ -369,23 +375,7 @@ def _matches_exact_current_layout(connection: Connection) -> bool:
             ):
                 return False
 
-        expected_indexes = {
-            (
-                index.name,
-                tuple(column.name for column in index.columns),
-                bool(index.unique),
-            )
-            for index in declared.indexes
-        }
-        actual_indexes = {
-            (
-                index["name"],
-                tuple(index["column_names"]),
-                bool(index["unique"]),
-            )
-            for index in inspector.get_indexes(table_name)
-        }
-        if actual_indexes != expected_indexes:
+        if not _declared_indexes_match(inspector, table_name, declared):
             return False
 
         expected_foreign_keys = {
@@ -426,6 +416,8 @@ def verify_current_database_schema(connection: Connection) -> None:
         ):
             raise SchemaCompatibilityError("Database schema is incompatible")
     except SchemaCompatibilityError:
+        raise
+    except (OSError, SQLAlchemyError):
         raise
     except Exception:
         raise SchemaCompatibilityError("Database schema is incompatible") from None

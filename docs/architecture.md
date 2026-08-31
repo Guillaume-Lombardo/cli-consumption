@@ -162,6 +162,10 @@ an existing regular local SQLite file, opens it with URI `mode=ro` and SQLite
 index layout. It never adopts, stamps, migrates, or repairs the source. A normal
 read-only SQLite connection keeps committed WAL contents visible; every estimate and
 row query therefore observes the same database snapshot while collection may continue.
+An orphan `-wal` file without its `-shm` sidecar cannot be opened from a non-writable
+directory because rebuilding shared memory would violate this boundary; extraction
+fails with `database_unavailable` until the operator restores a consistent sidecar set
+or copies the database and WAL into a private writable directory.
 
 The extractor reuses reporting's half-open `since`/`until` selection. A selected
 conversation always carries all its normalized child rows, and a subagent edge is

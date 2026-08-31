@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from threading import Event
 from typing import Any
 
@@ -162,7 +164,7 @@ def _snapshot(
 def test_extracts_valid_provider_snapshots_and_excludes_internal_state(
     tmp_path: Path,
 ) -> None:
-    database = tmp_path / "usage.sqlite"
+    database = tmp_path / "usage database.sqlite"
     engine = create_database_engine(database)
     codex = _snapshot("codex", "parent", complete=True)
     codex.conversations.append(_conversation("codex", "child", "2026-08-02T00:00:00Z"))
@@ -280,6 +282,21 @@ def test_invalid_window_is_rejected_before_the_database_is_open(tmp_path: Path) 
         extract_snapshots(missing, since="2026-08-02", until="2026-08-01")
 
     assert not missing.exists()
+
+
+def test_sqlite_file_uri_is_absolute_and_percent_encoded_cross_platform() -> None:
+    assert (
+        extraction_module._sqlite_file_uri(
+            PurePosixPath("/var/lib/cli-consumption/database name.sqlite")
+        )
+        == "file:///var/lib/cli-consumption/database%20name.sqlite"
+    )
+    assert (
+        extraction_module._sqlite_file_uri(
+            PureWindowsPath("C:/Users/test/database name.sqlite")
+        )
+        == "file:///C:/Users/test/database%20name.sqlite"
+    )
 
 
 def test_unbounded_extraction_preserves_graph_only_provider_snapshot(
@@ -426,6 +443,17 @@ def test_database_errors_are_generic_and_connection_is_query_only(
     [snapshot] = extract_snapshots(database)
     assert [record["external_id"] for record in snapshot.conversations] == ["one"]
 
+    def fail_operationally(_connection) -> None:
+        raise SQLAlchemyError(CANARY)
+
+    monkeypatch.setattr(
+        extraction_module, "verify_current_database_schema", fail_operationally
+    )
+    with pytest.raises(SnapshotExtractionError) as operational_error:
+        extract_snapshots(database)
+    assert str(operational_error.value) == "database_unavailable"
+    assert CANARY not in str(operational_error.value)
+
 
 def test_invalid_stored_value_is_refused_without_echo_or_log(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -489,3 +517,41 @@ def test_wal_extraction_uses_one_snapshot_during_concurrent_ingestion(
     assert after_write.conversations[0]["content_hash"] == "2" * 64
     assert len(after_write.turns) == 1
     engine.dispose()
+
+
+def test_orphan_wal_without_shm_in_read_only_directory_fails_generically(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.sqlite"
+    engine = create_database_engine(source)
+    initialize_database(engine)
+    keeper = sqlite3.connect(source, isolation_level=None)
+    target_directory = tmp_path / "readonly"
+    target_directory.mkdir()
+    target = target_directory / f"{CANARY}.sqlite"
+    try:
+        assert keeper.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        keeper.execute("PRAGMA wal_autocheckpoint=0")
+        keeper.execute("BEGIN")
+        keeper.execute("SELECT count(*) FROM conversations").fetchone()
+        ingest_snapshot(engine, _snapshot("codex", "one"))
+        source_wal = Path(f"{source}-wal")
+        assert source_wal.is_file()
+        shutil.copy2(source, target)
+        target_wal = Path(f"{target}-wal")
+        shutil.copy2(source_wal, target_wal)
+        target.chmod(0o444)
+        target_wal.chmod(0o444)
+        target_directory.chmod(0o555)
+
+        with pytest.raises(SnapshotExtractionError) as captured:
+            extract_snapshots(target)
+
+        assert str(captured.value) == "database_unavailable"
+        assert CANARY not in str(captured.value)
+        assert not Path(f"{target}-shm").exists()
+    finally:
+        target_directory.chmod(0o755)
+        keeper.rollback()
+        keeper.close()
+        engine.dispose()

@@ -151,6 +151,8 @@ start the metadata-only API:
 
 ```bash
 export CLI_CONSUMPTION_API_TOKEN="$(your-secret-provider)"
+export CLI_CONSUMPTION_READ_TOKEN="$(your-secret-provider)"
+export CLI_CONSUMPTION_EXPORT_TOKEN="$(your-secret-provider)"
 uv run cli-consumption serve \
   --database postgresql+psycopg://usage@localhost/cli_consumption \
   --host 0.0.0.0
@@ -201,6 +203,27 @@ HTTP beyond loopback unless `--allow-insecure` is explicit. Production requires 
 TLS-terminating reverse proxy or ingress, rate and connection limits, trusted proxy
 configuration, token rotation, backups, monitoring, and access-log redaction. Uvicorn
 access logs are disabled because URLs and query strings are untrusted.
+
+The ingestion token grants only `ingest`. The read token grants only `read`; the export
+token grants both `read` and `export`. Reporting filters are accepted only in strict,
+bounded POST bodies. For example, a server-side client can request a dataset with:
+
+```bash
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer ${CLI_CONSUMPTION_READ_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{"version":1,"window":{"since":"2026-08-01T00:00:00Z","until":"2026-09-01T00:00:00Z"},"filters":{"providers":["codex"],"machines":[],"projects":[],"models":[]},"profile":"detailed"}' \
+  https://usage.example.test/api/v1/reporting/dashboard
+```
+
+The related routes are `/api/v1/reporting/filters`,
+`/api/v1/reporting/conversations`, `/api/v1/reporting/conversation`, and
+`/api/v1/reporting/export`.
+Conversation cursors and references are opaque and expire; restart pagination after a
+fixed `pagination_expired` response. They are process-local and therefore also expire
+when the service restarts. All reporting responses disable caching. Requests,
+responses, and errors never include SQL/provider identifiers, hashes, source labels,
+receipt keys, paths, tokens, or exception text.
 
 The [production deployment guide](deployment.md) provides a pinned single-host example
 with PostgreSQL, automatic TLS, explicit capacity bounds, secret rotation,

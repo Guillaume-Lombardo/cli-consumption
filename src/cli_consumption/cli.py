@@ -941,8 +941,22 @@ def serve(
     port: Annotated[int, typer.Option()] = 8765,
     token_env: Annotated[
         str,
-        typer.Option(help="Environment variable containing the accepted bearer token."),
+        typer.Option(
+            help="Environment variable containing the ingestion bearer token."
+        ),
     ] = "CLI_CONSUMPTION_API_TOKEN",
+    read_token_env: Annotated[
+        str,
+        typer.Option(
+            help="Environment variable containing the reporting read bearer token."
+        ),
+    ] = "CLI_CONSUMPTION_READ_TOKEN",
+    export_token_env: Annotated[
+        str,
+        typer.Option(
+            help="Environment variable containing the reporting export bearer token."
+        ),
+    ] = "CLI_CONSUMPTION_EXPORT_TOKEN",
 ) -> None:
     """Run the optional central HTTP collector."""
     try:
@@ -955,17 +969,39 @@ def serve(
         ) from None
 
     token = os.environ.get(token_env)
-    if token is None and host not in {"127.0.0.1", "localhost", "::1"}:
+    read_token = os.environ.get(read_token_env)
+    export_token = os.environ.get(export_token_env)
+    if any(value == "" for value in (token, read_token, export_token)):
         raise typer.BadParameter(
-            f"Set {token_env} before exposing the collector beyond localhost."
+            "Configured token environment variables must be non-empty."
         )
-    if token is None:
+    if (
+        token is None
+        and read_token is None
+        and export_token is None
+        and host not in {"127.0.0.1", "localhost", "::1"}
+    ):
+        raise typer.BadParameter(
+            "Set at least one configured token environment variable before exposing "
+            "the service beyond localhost."
+        )
+    if token is None and read_token is None and export_token is None:
         typer.echo(
-            "Warning: collector authentication is disabled on localhost.", err=True
+            "Warning: service authentication is disabled on localhost.", err=True
         )
     engine = _open_database(database)
     try:
-        uvicorn.run(create_app(engine, token), host=host, port=port, access_log=False)
+        application = (
+            create_app(engine, token)
+            if read_token is None and export_token is None
+            else create_app(
+                engine,
+                token,
+                read_token=read_token,
+                export_token=export_token,
+            )
+        )
+        uvicorn.run(application, host=host, port=port, access_log=False)
     finally:
         engine.dispose()
 

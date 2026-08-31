@@ -31,7 +31,8 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
   PostgreSQL engine creation.
 - `snapshot_files`: serializes the existing strict snapshot schema in a bounded,
   deterministic gzip envelope authenticated with an Ed25519 signature.
-- `api` and `sync`: offer an optional push workflow for recurring multi-machine use.
+- `api`, `reporting_api`, and `sync`: offer optional scoped ingestion, reporting,
+  standalone export, and recurring multi-machine synchronization.
 - `dashboard`, `reporting`, and `exporting`: select complete conversation graphs,
   provide an offline HTML view by default, and stream deterministic portable CSV tables
   when explicitly requested.
@@ -82,9 +83,10 @@ Run `serve` with PostgreSQL and send snapshots using `sync`. Parsing stays on th
 machine, so raw provider files do not cross the network. This works well for recurring
 collection and several workstations.
 
-The API is intentionally small. A bearer token protects ingestion; a production
-deployment still needs TLS, token rotation, backups, monitoring, and a reverse proxy
-or platform ingress. Read access is not exposed. The collector limits bodies to 32 MiB
+The API is intentionally bounded. Separate bearer credentials protect `ingest`,
+`read`, and combined `read`/`export` operations; the legacy API token grants ingestion
+only. A production deployment still needs TLS, token rotation, backups, monitoring,
+and a reverse proxy or platform ingress. The collector limits snapshot bodies to 32 MiB
 including chunked requests, accepts snapshot schema v1, and caps a snapshot at 250,000
 normalized records. `/api/v1/capabilities` publishes these limits and the supported
 schema range so clients can fail before uploading incompatible data. One sync command
@@ -102,12 +104,19 @@ to fixed error codes before they reach human or JSON output.
 The sync client refuses plain HTTP beyond loopback unless the operator passes the
 explicit `--allow-insecure` override for a trusted network.
 
-The persistent dashboard, database-upload, reporting, pagination, scoped
-authorization, and web-export boundaries are fixed before implementation in
+The persistent dashboard and web-export consumers follow the database-upload,
+reporting, pagination, and scoped-authorization boundaries defined in
 [ADR 0004](decisions/0004-persistent-dashboard-contracts.md). It defines
 `DashboardQuery v1`, the minimized dataset, complete-graph selection, SQLite and
 PostgreSQL transaction behavior, concrete limits, server-first compatibility, and the
-rule that Next.js never connects directly to SQL.
+rule that Next.js never connects directly to SQL. Reporting bodies are strict and
+limited to 64 KiB; selections fail rather than truncate above 250,000 normalized rows,
+128 MiB of scalar data, or 32 MiB of JSON. Four report reads and one export may run per
+process. Pagination membership is retained in bounded process memory behind random
+opaque handles, so concurrent ingestion cannot alter an active page sequence. Handles
+are deliberately process-local: a restart expires them, and multi-replica deployments
+must use request affinity or a future shared session implementation. Clients always
+recover by restarting from the first page.
 
 `/health` is an unauthenticated liveness endpoint and deliberately performs no
 database work, so a database outage does not cause the orchestrator to restart a

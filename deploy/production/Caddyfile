@@ -29,7 +29,7 @@
 		lb_try_duration 0s
 		transport http {
 			dial_timeout 3s
-			response_header_timeout 30s
+			response_header_timeout 65s
 			max_conns_per_host 16
 		}
 	}

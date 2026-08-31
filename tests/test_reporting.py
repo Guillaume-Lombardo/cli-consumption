@@ -16,6 +16,7 @@ from cli_consumption.dashboard import _dashboard_payload
 from cli_consumption.exporting import export_csv
 from cli_consumption.reporting import (
     ExportWindow,
+    ReportFilters,
     parse_export_window,
     report_statement,
 )
@@ -234,6 +235,41 @@ def test_unbounded_reads_and_csv_rows_have_stable_primary_key_order(
     engine.dispose()
 
 
+def test_model_filter_uses_the_conversation_summary_without_subrows(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "model-filter.sqlite")
+    initialize_database(engine)
+    selected = _conversation(
+        "summary-only",
+        "2026-06-01T00:00:00Z",
+        "2026-06-01T01:00:00Z",
+    )
+    selected.models_json = '["summary-model"]'
+    with Session(engine) as session, session.begin():
+        session.add_all(
+            [
+                selected,
+                _conversation(
+                    "other",
+                    "2026-06-01T00:00:00Z",
+                    "2026-06-01T01:00:00Z",
+                ),
+            ]
+        )
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            report_statement(
+                connection,
+                "conversations",
+                filters=ReportFilters(models=("summary-model",)),
+            )
+        ).mappings()
+        assert [row["id"] for row in rows] == ["codex:summary-only"]
+    engine.dispose()
+
+
 def test_window_queries_compile_for_postgresql() -> None:
     connection = cast(
         Connection,
@@ -241,8 +277,21 @@ def test_window_queries_compile_for_postgresql() -> None:
     )
     window = parse_export_window("2026-01-01", "2026-01-31")
     for table_name in ("conversations", "turns", "subagents", "ingestion_runs"):
-        statement = report_statement(connection, table_name, window)
+        statement = report_statement(
+            connection,
+            table_name,
+            window,
+            filters=ReportFilters(
+                providers=("codex",),
+                machines=("machine",),
+                projects=("project",),
+                models=("gpt-5.6",),
+            ),
+        )
         sql = str(statement.compile(dialect=postgresql.dialect()))
         assert "ORDER BY" in sql
-        assert "CAST(" not in sql
+        assert "CAST(conversations.started_at" not in sql
         assert "datetime(" not in sql
+        if table_name == "conversations":
+            assert "EXISTS" in sql
+            assert "jsonb_array_elements_text" in sql

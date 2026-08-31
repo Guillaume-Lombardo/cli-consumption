@@ -20,6 +20,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added `upload-db` with stable per-snapshot replay keys, required capability
   negotiation, bounded retries, deterministic partial results, resumable uploads, and
   strict fail-fast automation.
+- Added scoped `read` and `export` bearer credentials plus strict, bounded reporting
+  endpoints for dashboard datasets, filter options, opaque stable pagination,
+  conversation detail, and self-contained HTML downloads.
 
 ### Fixed
 

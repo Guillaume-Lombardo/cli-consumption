@@ -40,6 +40,15 @@ from cli_consumption.models import Snapshot, empty_tokens
 
 
 @dataclass(slots=True)
+class _Part:
+    external_id: str
+    kind: str
+    created_at: datetime | None
+    updated_at: datetime | None
+    data: dict[str, Any]
+
+
+@dataclass(slots=True)
 class _Message:
     external_id: str
     kind: str
@@ -47,6 +56,7 @@ class _Message:
     created_at: datetime | None
     updated_at: datetime | None
     data: dict[str, Any]
+    parts: list[_Part]
 
 
 @dataclass(slots=True)
@@ -123,6 +133,8 @@ class OpenCodeAdapter:
                 _mapping(message.data.get("time")).get("completed")
             )
             timestamps.extend((timestamp, completed_at))
+            for part in message.parts:
+                timestamps.extend((part.created_at, part.updated_at))
 
             if message.kind == "user":
                 if active is not None:
@@ -142,48 +154,53 @@ class OpenCodeAdapter:
                     **empty_tokens(),
                 }
                 turn_models[active] = set()
-                continue
-
-            if message.kind == "model-switched":
+            elif message.kind == "model-switched":
                 effective_model = _model(message.data.get("model"))
-                continue
-
-            if message.kind == "compaction":
+            elif message.kind == "compaction":
                 compactions.append((active, timestamp))
-                continue
+            elif message.kind == "assistant":
+                model = _message_model(message.data) or effective_model or "unknown"
+                effective_model = model if model != "unknown" else effective_model
+                tokens = _usage(message.data.get("tokens"))
+                calls.append((active, timestamp, model, tokens))
+                turn = turns.get(active or "")
+                if turn:
+                    turn["model_calls"] += 1
+                    turn_models[active or ""].add(model)
+                    _add_tokens(turn, tokens)
+                    turn["ended_at"] = (
+                        _iso(completed_at or timestamp) or turn["ended_at"]
+                    )
+                    if isinstance(message.data.get("error"), dict):
+                        turn["status"] = "aborted"
+                    elif (
+                        completed_at is not None
+                        or _label(message.data.get("finish"), 255)
+                    ) and turn["status"] != "aborted":
+                        turn["status"] = "completed"
 
-            if message.kind != "assistant":
-                continue
-
-            model = _model(message.data.get("model")) or effective_model or "unknown"
-            effective_model = model if model != "unknown" else effective_model
-            tokens = _usage(message.data.get("tokens"))
-            calls.append((active, timestamp, model, tokens))
-            turn = turns.get(active or "")
-            if turn:
-                turn["model_calls"] += 1
-                turn_models[active or ""].add(model)
-                _add_tokens(turn, tokens)
-                turn["ended_at"] = _iso(completed_at or timestamp) or turn["ended_at"]
-                if isinstance(message.data.get("error"), dict):
-                    turn["status"] = "aborted"
-                elif (
-                    completed_at is not None or _label(message.data.get("finish"), 255)
-                ) and turn["status"] != "aborted":
-                    turn["status"] = "completed"
-
-            content = message.data.get("content")
-            if not isinstance(content, list):
-                continue
-            for part in content:
-                if not isinstance(part, dict) or part.get("type") != "tool":
+            for part in message.parts:
+                if part.kind == "compaction":
+                    compactions.append((active, part.created_at or timestamp))
                     continue
-                name = _label(part.get("name"), 512)
+                if part.kind != "tool":
+                    continue
+                name = _label(part.data.get("tool") or part.data.get("name"), 512)
                 if not name:
                     continue
-                part_time = _mapping(part.get("time"))
+                state_time = _mapping(_mapping(part.data.get("state")).get("time"))
+                part_time = _mapping(part.data.get("time"))
                 tools.append(
-                    (active, _timestamp(part_time.get("created")) or timestamp, name)
+                    (
+                        active,
+                        part.created_at
+                        or _timestamp(
+                            part_time.get("created") or part_time.get("start")
+                        )
+                        or _timestamp(state_time.get("start"))
+                        or timestamp,
+                        name,
+                    )
                 )
 
         ended_at = max(
@@ -295,25 +312,59 @@ def _read_database(
         connection = manager.__enter__()
         connection.row_factory = sqlite3.Row
         session_columns = _columns(connection, "session")
-        message_columns = _columns(connection, "session_message")
         required_session = {"id", "time_created", "time_updated"}
-        required_message = {
-            "id",
-            "session_id",
-            "type",
-            "seq",
-            "time_created",
-            "time_updated",
-            "data",
-        }
-        if (
-            not required_session <= session_columns
-            or not required_message <= message_columns
-        ):
+        if not required_session <= session_columns:
             raise UnsupportedProviderFormat(
                 f"Unsupported OpenCode database schema: {path}"
             )
-        ensure_provider_sqlite_fields(connection, [("session_message", "data")])
+
+        message_columns = _columns(connection, "message")
+        part_columns = _columns(connection, "part")
+        current_schema_present = bool(message_columns or part_columns)
+        if current_schema_present:
+            required_message = {
+                "id",
+                "session_id",
+                "time_created",
+                "time_updated",
+                "data",
+            }
+            required_part = {
+                "id",
+                "message_id",
+                "session_id",
+                "time_created",
+                "time_updated",
+                "data",
+            }
+            if (
+                not required_message <= message_columns
+                or not required_part <= part_columns
+            ):
+                raise UnsupportedProviderFormat(
+                    f"Unsupported OpenCode database schema: {path}"
+                )
+            ensure_provider_sqlite_fields(
+                connection, [("message", "data"), ("part", "data")]
+            )
+            read_messages = _read_current_messages
+        else:
+            projection_columns = _columns(connection, "session_message")
+            required_projection = {
+                "id",
+                "session_id",
+                "type",
+                "seq",
+                "time_created",
+                "time_updated",
+                "data",
+            }
+            if not required_projection <= projection_columns:
+                raise UnsupportedProviderFormat(
+                    f"Unsupported OpenCode database schema: {path}"
+                )
+            ensure_provider_sqlite_fields(connection, [("session_message", "data")])
+            read_messages = _read_projection_messages
 
         directory = "directory" if "directory" in session_columns else "NULL"
         rows = budget.rows(
@@ -329,39 +380,9 @@ def _read_database(
             if not external_id:
                 malformed += 1
                 continue
-            message_rows = budget.rows(
-                connection.execute(
-                    "SELECT id, type, seq, time_created, time_updated, data "
-                    "FROM session_message WHERE session_id = ? ORDER BY seq, id",
-                    (row["id"],),
-                )
-            )
             digest = hashlib.sha256()
-            messages: list[_Message] = []
-            for message_row in message_rows:
-                budget.json_field(message_row["data"])
-                digest.update(str(tuple(message_row)).encode())
-                message_id = _label(message_row["id"], 512)
-                kind = _label(message_row["type"], 64)
-                try:
-                    data = json.loads(message_row["data"])
-                except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
-                    malformed += 1
-                    continue
-                if not message_id or not kind or not isinstance(data, dict):
-                    malformed += 1
-                    continue
-                sequence = _counter(message_row["seq"])
-                messages.append(
-                    _Message(
-                        message_id,
-                        kind,
-                        sequence,
-                        _timestamp(message_row["time_created"]),
-                        _timestamp(message_row["time_updated"]),
-                        data,
-                    )
-                )
+            messages, invalid = read_messages(connection, row["id"], budget, digest)
+            malformed += invalid
             conversations.append(
                 _Conversation(
                     machine=machine,
@@ -383,9 +404,148 @@ def _read_database(
             manager.__exit__(None, None, None)
 
 
+def _read_current_messages(
+    connection: sqlite3.Connection,
+    session_id: object,
+    budget: ProviderInputBudget,
+    digest: Any,
+) -> tuple[list[_Message], int]:
+    message_rows = budget.rows(
+        connection.execute(
+            "SELECT id, time_created, time_updated, data "
+            "FROM message WHERE session_id = ? ORDER BY time_created, id",
+            (session_id,),
+        )
+    )
+    messages: list[_Message] = []
+    messages_by_id: dict[str, _Message] = {}
+    malformed = 0
+    for sequence, row in enumerate(message_rows, 1):
+        budget.json_field(row["data"])
+        digest.update(str(tuple(row)).encode())
+        message_id = _label(row["id"], 512)
+        data = _json_object(row["data"])
+        kind = _label(data.get("role"), 64) if data is not None else None
+        if not message_id or data is None or kind not in {"user", "assistant"}:
+            malformed += 1
+            continue
+        message = _Message(
+            message_id,
+            kind,
+            sequence,
+            _timestamp(row["time_created"]),
+            _timestamp(row["time_updated"]),
+            data,
+            [],
+        )
+        messages.append(message)
+        messages_by_id[message_id] = message
+
+    part_rows = budget.rows(
+        connection.execute(
+            "SELECT id, message_id, time_created, time_updated, data "
+            "FROM part WHERE session_id = ? ORDER BY message_id, id",
+            (session_id,),
+        )
+    )
+    for row in part_rows:
+        budget.json_field(row["data"])
+        digest.update(str(tuple(row)).encode())
+        part_id = _label(row["id"], 512)
+        message_id = _label(row["message_id"], 512)
+        data = _json_object(row["data"])
+        kind = _label(data.get("type"), 64) if data is not None else None
+        message = messages_by_id.get(message_id or "")
+        if not part_id or not message_id or data is None or not kind or message is None:
+            malformed += 1
+            continue
+        message.parts.append(
+            _Part(
+                part_id,
+                kind,
+                _timestamp(row["time_created"]),
+                _timestamp(row["time_updated"]),
+                data,
+            )
+        )
+    return messages, malformed
+
+
+def _read_projection_messages(
+    connection: sqlite3.Connection,
+    session_id: object,
+    budget: ProviderInputBudget,
+    digest: Any,
+) -> tuple[list[_Message], int]:
+    rows = budget.rows(
+        connection.execute(
+            "SELECT id, type, seq, time_created, time_updated, data "
+            "FROM session_message WHERE session_id = ? ORDER BY seq, id",
+            (session_id,),
+        )
+    )
+    messages: list[_Message] = []
+    malformed = 0
+    for row in rows:
+        budget.json_field(row["data"])
+        digest.update(str(tuple(row)).encode())
+        message_id = _label(row["id"], 512)
+        kind = _label(row["type"], 64)
+        data = _json_object(row["data"])
+        if not message_id or not kind or data is None:
+            malformed += 1
+            continue
+        messages.append(
+            _Message(
+                message_id,
+                kind,
+                _counter(row["seq"]),
+                _timestamp(row["time_created"]),
+                _timestamp(row["time_updated"]),
+                data,
+                _projection_parts(message_id, data),
+            )
+        )
+    return messages, malformed
+
+
+def _projection_parts(message_id: str, data: dict[str, Any]) -> list[_Part]:
+    content = data.get("content")
+    if not isinstance(content, list):
+        return []
+    result: list[_Part] = []
+    for sequence, value in enumerate(content, 1):
+        if not isinstance(value, dict):
+            continue
+        kind = _label(value.get("type"), 64)
+        if not kind:
+            continue
+        part_time = _mapping(value.get("time"))
+        result.append(
+            _Part(
+                _label(value.get("id"), 512) or f"{message_id}:part:{sequence}",
+                kind,
+                _timestamp(part_time.get("created") or part_time.get("start")),
+                _timestamp(part_time.get("completed") or part_time.get("end")),
+                value,
+            )
+        )
+    return result
+
+
+def _json_object(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, str | bytes | bytearray):
+        return None
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _rank(value: _Conversation) -> tuple[int, datetime, str]:
     return (
-        len(value.messages),
+        sum(1 + len(message.parts) for message in value.messages),
         value.updated_at or datetime.min.replace(tzinfo=UTC),
         value.digest,
     )
@@ -424,6 +584,10 @@ def _model(value: object) -> str | None:
     if provider and identifier:
         return f"{provider}/{identifier}"
     return identifier
+
+
+def _message_model(data: dict[str, Any]) -> str | None:
+    return _model(data.get("model")) or _model(data)
 
 
 def _finish_turn(turn: dict[str, Any], fallback: datetime | None) -> None:

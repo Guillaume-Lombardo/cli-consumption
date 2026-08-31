@@ -175,14 +175,18 @@ rules, arbitrary metadata, costs, and credentials. Working directories are inspe
 only for explicit project mappings.
 
 Continue reports prompt and completion totals with optional cache-read, cache-write,
-and reasoning subsets. The adapter prefers per-response usage and adds only the
-unattributed remainder of the cumulative session snapshot, preventing double counting.
+and reasoning counters. Cache semantics depend on the backend: Anthropic-compatible
+usage reports uncached prompt tokens plus separate cache counters, while OpenAI-style
+usage reports cache reads as a subset of prompt tokens. The adapter normalizes those
+forms by provider, prefers per-response usage, and adds only the unattributed remainder
+of the cumulative session snapshot, preventing double counting. Persisted
+`conversationSummary` markers are reported as compactions without retaining summaries.
 Session files do not persist reliable per-message timestamps, so model calls and turns
 have no timestamps or durations; the file modification time is retained only as the
 conversation's approximate end time. The adapter does not collect IDE-extension-only
-history stores, context-window sizes, compactions, provider-reported status, latency,
-or cost. Continue's internal session format can change without notice, and local token
-events are not billing data.
+history stores, context-window sizes, provider-reported status, latency, or cost.
+Continue's internal session format can change without notice, and local token events
+are not billing data.
 
 ## Crush
 

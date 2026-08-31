@@ -11,6 +11,17 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added deterministic, compressed offline snapshot files authenticated with Ed25519,
   with bounded verification-before-parsing and idempotent SQLite/PostgreSQL ingestion.
 
+### Fixed
+
+- Continue now applies provider-specific cache semantics, preventing Anthropic cache
+  reads and writes from being omitted from input totals, and reports persisted
+  conversation-compaction markers.
+- Codex now preserves valid token accounting when provider counters are inconsistent,
+  keeps partial work and compaction records from referencing nonexistent turns, and
+  safely handles malformed metadata and timestamps.
+- OpenCode now rejects timezone-naive text timestamps consistently while retaining its
+  OpenCode 1.18.23 message/part extraction for models, tokens, and tools.
+
 ## [0.3.2] - 2026-08-31
 
 ### Changed

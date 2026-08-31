@@ -19,6 +19,9 @@ from cli_consumption.adapters._shared import (
     read_bounded_bytes,
 )
 from cli_consumption.adapters._shared import (
+    add_tokens as _add_tokens,
+)
+from cli_consumption.adapters._shared import (
     bounded_sum as _sum,
 )
 from cli_consumption.adapters._shared import (
@@ -96,6 +99,7 @@ class ContinueAdapter:
         active: int | None = None
         raw_calls: list[tuple[int | None, str, dict[str, int]]] = []
         tools: list[tuple[int | None, str]] = []
+        compactions: list[int | None] = []
         seen_tools: set[str] = set()
 
         for item in history:
@@ -126,6 +130,8 @@ class ContinueAdapter:
 
             if role != "assistant":
                 continue
+            if isinstance(item.get("conversationSummary"), str):
+                compactions.append(active)
             model = _message_model(item) or session_model or "unknown"
             usage = _usage(message.get("usage"))
             raw_calls.append((active, model, usage))
@@ -152,7 +158,7 @@ class ContinueAdapter:
         totals = empty_tokens()
         models: set[str] = set()
         for sequence, (turn_index, model, usage) in enumerate(raw_calls, 1):
-            tokens = _tokens(usage)
+            tokens = _tokens(usage, model)
             models.add(model)
             _add_tokens(totals, tokens)
             turn = turns[turn_index] if turn_index is not None else None
@@ -184,6 +190,18 @@ class ContinueAdapter:
                     "timestamp": None,
                     "tool_name": name,
                     "outer_tool_name": name,
+                }
+            )
+
+        for sequence, turn_index in enumerate(compactions, 1):
+            turn = turns[turn_index] if turn_index is not None else None
+            snapshot.compaction_events.append(
+                {
+                    "id": f"{conversation_id}:compaction:{sequence}",
+                    "conversation_id": conversation_id,
+                    "turn_id": turn["id"] if turn else None,
+                    "sequence": sequence,
+                    "timestamp": None,
                 }
             )
 
@@ -224,7 +242,7 @@ class ContinueAdapter:
                 "iterations": len(turns),
                 "model_calls": len(raw_calls),
                 "tool_calls": len(tools),
-                "compactions": 0,
+                "compactions": len(compactions),
                 "event_count": source.event_count,
                 "content_hash": source.digest,
                 **totals,
@@ -318,11 +336,25 @@ def _residual_usage(
     }
 
 
-def _tokens(usage: dict[str, int]) -> dict[str, int]:
-    input_tokens = usage["prompt"]
-    cached = min(input_tokens, usage["cached"])
-    cache_write = min(max(0, input_tokens - cached), usage["cache_write"])
-    output_tokens = usage["completion"]
+def _tokens(usage: dict[str, int], model: str) -> dict[str, int]:
+    prompt = usage["prompt"]
+    provider = model.partition("/")[0].casefold() if "/" in model else ""
+    separate_cache = (
+        provider in {"anthropic", "bedrock"}
+        or usage["cache_write"] > 0
+        or usage["cached"] > prompt
+    )
+    if separate_cache:
+        uncached = prompt
+        cached = min(usage["cached"], MAX_BIGINT - uncached)
+        cache_write = min(usage["cache_write"], MAX_BIGINT - uncached - cached)
+        input_tokens = uncached + cached + cache_write
+    else:
+        input_tokens = prompt
+        cached = min(input_tokens, usage["cached"])
+        cache_write = min(max(0, input_tokens - cached), usage["cache_write"])
+        uncached = input_tokens - cached - cache_write
+    output_tokens = min(usage["completion"], MAX_BIGINT - input_tokens)
     reasoning = min(output_tokens, usage["reasoning"])
     return {
         "input_tokens": input_tokens,
@@ -331,7 +363,7 @@ def _tokens(usage: dict[str, int]) -> dict[str, int]:
         "output_tokens": output_tokens,
         "reasoning_output_tokens": reasoning,
         "total_tokens": _sum(input_tokens, output_tokens),
-        "uncached_input_tokens": input_tokens - cached - cache_write,
+        "uncached_input_tokens": uncached,
         "visible_output_tokens": output_tokens - reasoning,
         "unattributed_tokens": 0,
     }
@@ -366,11 +398,6 @@ def _has_visible_content(value: object) -> bool:
         isinstance(part, dict) and part.get("type") in {"text", "imageUrl"}
         for part in value
     )
-
-
-def _add_tokens(target: dict[str, Any], values: dict[str, int]) -> None:
-    for key in empty_tokens():
-        target[key] = _sum(target[key], values[key])
 
 
 def _counter(value: object) -> int:

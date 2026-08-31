@@ -166,15 +166,22 @@ def tokens(
     reasoning: object = 0,
     total: object = 0,
 ) -> dict[str, int]:
-    uncached_n = counter(uncached)
-    cached_n = counter(cached)
-    write_n = counter(cache_write)
-    visible_n = counter(visible)
-    reasoning_n = counter(reasoning)
-    input_n = bounded_sum(uncached_n, cached_n, write_n)
-    output_n = bounded_sum(visible_n, reasoning_n)
-    attributed = bounded_sum(input_n, output_n)
-    total_n = max(attributed, counter(total))
+    remaining = MAX_BIGINT
+    uncached_n = min(counter(uncached), remaining)
+    remaining -= uncached_n
+    cached_n = min(counter(cached), remaining)
+    remaining -= cached_n
+    write_n = min(counter(cache_write), remaining)
+    remaining -= write_n
+    visible_n = min(counter(visible), remaining)
+    remaining -= visible_n
+    reasoning_n = min(counter(reasoning), remaining)
+    remaining -= reasoning_n
+    input_n = uncached_n + cached_n + write_n
+    output_n = visible_n + reasoning_n
+    attributed = input_n + output_n
+    unattributed_n = min(max(0, counter(total) - attributed), remaining)
+    total_n = attributed + unattributed_n
     return {
         "input_tokens": input_n,
         "cached_input_tokens": cached_n,
@@ -184,13 +191,34 @@ def tokens(
         "total_tokens": total_n,
         "uncached_input_tokens": uncached_n,
         "visible_output_tokens": visible_n,
-        "unattributed_tokens": max(0, total_n - attributed),
+        "unattributed_tokens": unattributed_n,
     }
 
 
 def add_tokens(target: dict[str, Any], value: dict[str, int]) -> None:
-    for field, amount in value.items():
-        target[field] = bounded_sum(int(target[field]), amount)
+    remaining = MAX_BIGINT
+    for field in (
+        "uncached_input_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+        "visible_output_tokens",
+        "reasoning_output_tokens",
+        "unattributed_tokens",
+    ):
+        amount = min(remaining, int(target[field]) + value[field])
+        target[field] = amount
+        remaining -= amount
+    target["input_tokens"] = (
+        target["uncached_input_tokens"]
+        + target["cached_input_tokens"]
+        + target["cache_write_input_tokens"]
+    )
+    target["output_tokens"] = (
+        target["visible_output_tokens"] + target["reasoning_output_tokens"]
+    )
+    target["total_tokens"] = (
+        target["input_tokens"] + target["output_tokens"] + target["unattributed_tokens"]
+    )
 
 
 def new_turn(

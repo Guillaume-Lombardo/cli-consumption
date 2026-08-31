@@ -609,7 +609,10 @@ def _timestamp(value: object) -> datetime | None:
         if isinstance(value, int | float) and math.isfinite(value):
             return datetime.fromtimestamp(value / 1000, UTC)
         if isinstance(value, str) and value:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                return None
+            return parsed.astimezone(UTC)
     except (OSError, OverflowError, ValueError):
         pass
     return None

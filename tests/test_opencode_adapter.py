@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from storage_helpers import read_table
 
-from cli_consumption.adapters.opencode import OpenCodeAdapter
+from cli_consumption.adapters.opencode import OpenCodeAdapter, _timestamp
 from cli_consumption.adapters.registry import diagnose_provider, resolve_adapter_spec
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
@@ -477,6 +477,10 @@ def test_rejects_old_schema_without_exposing_records(tmp_path: Path) -> None:
     spec = resolve_adapter_spec("opencode")
     assert spec is not None
     assert diagnose_provider(spec, home).status == "unsupported-schema"
+
+
+def test_rejects_timezone_naive_timestamps() -> None:
+    assert _timestamp("2026-08-25T10:00:00") is None
 
 
 def test_rejects_incomplete_current_schema_instead_of_using_projection(

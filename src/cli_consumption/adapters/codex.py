@@ -242,7 +242,9 @@ class CodexAdapter:
                         if not isinstance(payload, dict):
                             malformed += 1
                             continue
-                        conversation_id = _safe_dimension(payload.get("id"), 512) or ""
+                        candidate_id = _safe_dimension(payload.get("id"), 512)
+                        if candidate_id and not conversation_id:
+                            conversation_id = candidate_id
                 content_hash = digest.hexdigest()
                 conversation_id = conversation_id or f"content-{content_hash}"
                 candidate = (machine, path, event_count, content_hash)
@@ -283,8 +285,15 @@ class CodexAdapter:
             ),
             {},
         )
-        conversation_id = (
-            _safe_dimension(metadata.get("id"), 512) or f"content-{digest}"
+        conversation_id = next(
+            (
+                candidate_id
+                for event in events
+                if event.get("type") == "session_meta"
+                and isinstance((payload := event.get("payload")), dict)
+                and (candidate_id := _safe_dimension(payload.get("id"), 512))
+            ),
+            f"content-{digest}",
         )
         record_id = f"codex:{conversation_id}"
         project, project_source = infer_project(metadata, mappings)
@@ -569,7 +578,7 @@ def _usage_tokens(usage: dict[str, Any]) -> dict[str, int]:
     )
     output_tokens = reasoning + visible
     unattributed = min(
-        max(0, raw["total_tokens"] - raw["input_tokens"] - raw["output_tokens"]),
+        max(0, raw["total_tokens"] - input_tokens - output_tokens),
         MAX_BIGINT - input_tokens - output_tokens,
     )
     return {

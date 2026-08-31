@@ -248,6 +248,23 @@ def test_malformed_session_metadata_uses_content_identity(tmp_path: Path) -> Non
     assert "PRIVATE_FILENAME_CANARY" not in str(snapshot.to_dict())
 
 
+def test_first_valid_session_identity_is_stable_across_metadata(
+    tmp_path: Path, rollout_factory
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    rollout_factory(first)
+    path = rollout_factory(second, extra_event=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"type":"session_meta","payload":{"id":"later-identity"}}\n')
+
+    snapshot = CodexAdapter().collect([("first", first), ("second", second)])
+
+    assert snapshot.duplicate_conversations == 1
+    assert len(snapshot.conversations) == 1
+    assert snapshot.conversations[0]["external_id"] == "conversation-1"
+
+
 def test_inconsistent_usage_and_partial_relations_stay_valid(
     tmp_path: Path, rollout_factory
 ) -> None:
@@ -266,7 +283,7 @@ def test_inconsistent_usage_and_partial_relations_stay_valid(
             '"payload":{"type":"token_count","info":{"last_token_usage":{'
             '"input_tokens":1,"cached_input_tokens":3,'
             '"cache_write_input_tokens":4,"output_tokens":1,'
-            '"reasoning_output_tokens":2,"total_tokens":1}}}}\n'
+            '"reasoning_output_tokens":2,"total_tokens":100}}}}\n'
         )
 
     snapshot = CodexAdapter().collect([("machine", home)])
@@ -277,7 +294,8 @@ def test_inconsistent_usage_and_partial_relations_stay_valid(
     call = snapshot.model_calls[-1]
     assert call["input_tokens"] == 7
     assert call["output_tokens"] == 2
-    assert call["total_tokens"] == 9
+    assert call["unattributed_tokens"] == 91
+    assert call["total_tokens"] == 100
 
 
 @pytest.mark.parametrize(

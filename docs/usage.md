@@ -171,6 +171,26 @@ uv run cli-consumption sync --provider all --strict --json \
   --endpoint https://usage.example.test
 ```
 
+Upload an existing normalized SQLite database without copying the database or its
+sidecars:
+
+```bash
+uv run cli-consumption upload-db \
+  --database ./cli-consumption.db \
+  --endpoint https://usage.example.test \
+  --since 2026-08-01T00:00:00Z \
+  --until 2026-09-01T00:00:00Z \
+  --json
+```
+
+The command validates and extracts the complete selection before opening the HTTP
+client, then uploads providers in deterministic order. Identical fragments reuse a
+stable idempotency key across invocations; a richer fragment receives a new key and
+atomically replaces the retained copy. The collector must advertise replay receipts.
+Default mode continues after an independent provider failure, while `--strict` stops
+and marks remaining providers as skipped. Output never includes the database path,
+time bounds, endpoint, token, idempotency key, payload, remote body, or exception text.
+
 Independent providers continue after an upload failure, so JSON reports ordered
 per-provider outcomes and an explicit `complete` flag. Remote failures use fixed codes
 and omit bodies, paths, payloads, tokens, and exception text. Idempotent collectors
@@ -210,6 +230,6 @@ compatibility states: `no-data`, `detected`, `compatible`, `degraded`, or
 `unsupported-schema`. They never expose paths, identifiers, record content, counts, or
 parser errors.
 
-`collect`, `snapshot create`, `snapshot ingest`, `sync`, `export`, and `retention`
+`collect`, `snapshot create`, `snapshot ingest`, `sync`, `upload-db`, `export`, and `retention`
 accept `--json`. Run
 `uv run cli-consumption COMMAND --help` for complete options.

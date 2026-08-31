@@ -96,10 +96,14 @@ transferred.
 
 Each extracted provider or coherent fragment is submitted to the existing snapshot
 ingestion boundary after capability negotiation. It receives a canonical UUIDv4
-idempotency key that is reused for bounded retries of that logical fragment. Upload
-ordering is deterministic, successful fragments survive a later independent failure,
-and the client reports only provider names, bounded status labels, fixed error codes,
-opaque ingestion-run IDs, and aggregate counts.
+idempotency key derived from a domain-separated SHA-256 digest of the canonical strict
+snapshot. The same logical fragment therefore reuses its key across invocations while
+a richer replacement receives a new key. Receipt support is required before the first
+POST. Upload ordering is deterministic; the default mode continues after an independent
+provider failure, while strict mode stops and marks remaining providers as skipped.
+Successful fragments survive later failures. The client reports only provider names,
+bounded status labels, fixed error codes, opaque ingestion-run IDs, and aggregate
+counts; idempotency keys never appear in output or logs.
 
 ### `DashboardQuery v1`
 

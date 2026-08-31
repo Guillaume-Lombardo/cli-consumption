@@ -17,6 +17,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added read-only, migration-free extraction of bounded snapshot-schema-v1 payloads
   from current local SQLite collection databases, including WAL-consistent reads,
   exact schema verification, provider grouping, and privacy-safe failures.
+- Added `upload-db` with stable per-snapshot replay keys, required capability
+  negotiation, bounded retries, deterministic partial results, resumable uploads, and
+  strict fail-fast automation.
 
 ### Fixed
 

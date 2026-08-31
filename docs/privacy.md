@@ -145,6 +145,17 @@ daily activity, durations, counts, token counters, configuration labels, statuse
 aggregate work patterns remain disclosed. Share-safe is a minimization profile, not
 anonymization.
 
+The planned persistent dashboard uses the same minimized row contract behind an
+authenticated FastAPI reporting boundary. Next.js is a server-side BFF and never
+receives a database URL or exposes FastAPI credentials to the browser. Reporting
+requests place filters in bounded POST bodies rather than URLs; responses replace SQL
+and provider identifiers with response-local keys or integrity-protected opaque
+references. Stable IDs, content hashes, source values, mapping sources, receipt keys,
+scope rows, prompts, responses, tool arguments, raw events, credentials, paths, and
+arbitrary metadata remain excluded. The exact fields, scopes, limits, cursors, generic
+errors, compatibility rules, and residual disclosures are recorded in
+[ADR 0004](decisions/0004-persistent-dashboard-contracts.md).
+
 Dashboard generation first evaluates only aggregate row counts and scalar byte
 lengths for the selected report. These internal estimates are not exported or logged.
 The command refuses selections above 250,000 rows or 128 MiB of selected scalar values,

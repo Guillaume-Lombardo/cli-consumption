@@ -35,6 +35,9 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
 - `dashboard`, `reporting`, and `exporting`: select complete conversation graphs,
   provide an offline HTML view by default, and stream deterministic portable CSV tables
   when explicitly requested.
+- the future persistent dashboard uses Next.js only as a server-side BFF and UI;
+  FastAPI remains the sole reporting/export boundary and the only service allowed to
+  open PostgreSQL.
 - `adapters.registry`: is the single source for canonical names, aliases, adapter
   classes, default homes, detection markers, support state, and token semantics.
 - `cli`: exposes the same capabilities through one executable.
@@ -98,6 +101,13 @@ success. External exceptions, response bodies, paths, and payload values are red
 to fixed error codes before they reach human or JSON output.
 The sync client refuses plain HTTP beyond loopback unless the operator passes the
 explicit `--allow-insecure` override for a trusted network.
+
+The persistent dashboard, database-upload, reporting, pagination, scoped
+authorization, and web-export boundaries are fixed before implementation in
+[ADR 0004](decisions/0004-persistent-dashboard-contracts.md). It defines
+`DashboardQuery v1`, the minimized dataset, complete-graph selection, SQLite and
+PostgreSQL transaction behavior, concrete limits, server-first compatibility, and the
+rule that Next.js never connects directly to SQL.
 
 `/health` is an unauthenticated liveness endpoint and deliberately performs no
 database work, so a database outage does not cause the orchestrator to restart a

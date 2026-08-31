@@ -12,6 +12,8 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with bounded verification-before-parsing and idempotent SQLite/PostgreSQL ingestion.
 - Added a blocking browser CI gate that opens detailed and share-safe dashboards
   directly from `file://`, exercises their controls, and rejects network activity.
+- Defined the versioned, scoped, and bounded contracts for database upload, persistent
+  dashboard reporting, conversation pagination, and standalone web export.
 
 ### Fixed
 

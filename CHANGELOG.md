@@ -10,6 +10,8 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Added deterministic, compressed offline snapshot files authenticated with Ed25519,
   with bounded verification-before-parsing and idempotent SQLite/PostgreSQL ingestion.
+- Added a blocking browser CI gate that opens detailed and share-safe dashboards
+  directly from `file://`, exercises their controls, and rejects network activity.
 
 ### Fixed
 

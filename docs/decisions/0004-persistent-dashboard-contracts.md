@@ -210,9 +210,20 @@ size from 1 to 200 (default 50). Ordering always appends a stable internal tie-b
 The response contains minimized conversation summary fields and server-minted opaque
 conversation references, never database or provider identifiers.
 
-The cursor is versioned, integrity protected, bound to the canonical query and sort,
-and rejected generically when malformed or reused with different inputs. Its external
-form discloses no labels or stable identifiers.
+The first page creates a server-side pagination session containing the selected
+conversation membership and order from one coherent database snapshot. The session
+expires five minutes after its last successful page read and no later than thirty
+minutes after creation. Every following page uses that retained selection, so
+concurrent ingestion cannot introduce duplicates or omissions. Expired sessions are
+deleted and return the fixed `pagination_expired` response; the client must restart at
+page one. Sessions count toward the reporting row, byte, duration, and concurrency
+limits and are removed after the final page or cancellation.
+
+The cursor is a versioned server-side opaque handle, or equivalently an authenticated-
+encrypted value, protected for both confidentiality and integrity and bound to the
+pagination session, canonical query, and sort. It is rejected generically when
+malformed or reused with different inputs. Its external form contains no canonical-
+query labels, sort keys, stable internal identifiers, or database values.
 
 `POST /api/v1/reporting/conversation` requires `read`, the same canonical query, and
 one opaque conversation reference from the list response. It returns only that
@@ -222,12 +233,15 @@ not-found response.
 
 ### Filter options
 
-`POST /api/v1/reporting/filters` requires `read` and accepts the window plus any
-already selected dimensions. It returns sorted distinct provider, machine, project,
-and model labels that remain available. It does not return counts, stable identifiers,
-paths, hashes, or hidden values. These labels and their existence are private
-operational metadata and receive the same authorization and response bounds as the
-dataset.
+`POST /api/v1/reporting/filters` requires `read` and accepts a strict filter request
+envelope containing exactly `version`, `window`, and `filters`. Version `1` is the only
+initial supported payload version. `window` and `filters` have the same representation
+and semantics as `DashboardQuery v1`; `filters` contains the already selected
+dimensions, and unknown or omitted fields are rejected. The response returns sorted
+distinct provider, machine, project, and model labels that remain available. It does
+not return counts, stable identifiers, paths, hashes, or hidden values. These labels
+and their existence are private operational metadata and receive the same
+authorization and response bounds as the dataset.
 
 ### Web export
 

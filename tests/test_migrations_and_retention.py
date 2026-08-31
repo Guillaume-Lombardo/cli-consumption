@@ -45,6 +45,7 @@ from cli_consumption.schema import (
     _matching_type,
     downgrade_database,
     upgrade_database,
+    verify_current_database_schema,
 )
 from cli_consumption.storage import (
     Base,
@@ -1038,6 +1039,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
                 == "0005"
             )
+            verify_current_database_schema(connection)
 
         with test_engine.begin() as connection:
             connection.execute(

@@ -14,6 +14,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   directly from `file://`, exercises their controls, and rejects network activity.
 - Defined the versioned, scoped, and bounded contracts for database upload, persistent
   dashboard reporting, conversation pagination, and standalone web export.
+- Added read-only, migration-free extraction of bounded snapshot-schema-v1 payloads
+  from current local SQLite collection databases, including WAL-consistent reads,
+  exact schema verification, provider grouping, and privacy-safe failures.
 
 ### Fixed
 

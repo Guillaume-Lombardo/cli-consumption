@@ -318,6 +318,119 @@ def _matches_current_head_layout(connection: Connection) -> bool:
     return _matches_declared_layout(connection, frozenset(SCHEMA_TABLES))
 
 
+def _matches_exact_current_layout(connection: Connection) -> bool:
+    """Return whether every published table matches the current ORM contract."""
+    from cli_consumption.storage import SCHEMA_TABLES
+
+    inspector = inspect(connection)
+    if set(inspector.get_table_names()) != {*SCHEMA_TABLES, "alembic_version"}:
+        return False
+    version_columns = inspector.get_columns("alembic_version")
+    if len(version_columns) != 1:
+        return False
+    version_column = version_columns[0]
+    if (
+        version_column["name"] != "version_num"
+        or bool(version_column["nullable"])
+        or version_column.get("default") is not None
+        or not _matching_type(version_column["type"], String(32))
+        or set(
+            inspector.get_pk_constraint("alembic_version").get("constrained_columns")
+            or ()
+        )
+        != {"version_num"}
+    ):
+        return False
+    if (
+        inspector.get_indexes("alembic_version")
+        or inspector.get_foreign_keys("alembic_version")
+        or inspector.get_check_constraints("alembic_version")
+        or inspector.get_unique_constraints("alembic_version")
+    ):
+        return False
+
+    for table_name, model in SCHEMA_TABLES.items():
+        declared = cast(Table, model.__table__)
+        columns = inspector.get_columns(table_name)
+        if [column["name"] for column in columns] != [
+            column.name for column in declared.columns
+        ]:
+            return False
+        primary_key_columns = set(
+            inspector.get_pk_constraint(table_name).get("constrained_columns") or ()
+        )
+        for column in columns:
+            expected = declared.columns[column["name"]]
+            if (
+                (column["name"] in primary_key_columns) != expected.primary_key
+                or bool(column["nullable"]) != expected.nullable
+                or not _matching_type(column["type"], expected.type)
+                or column.get("default") is not None
+            ):
+                return False
+
+        expected_indexes = {
+            (
+                index.name,
+                tuple(column.name for column in index.columns),
+                bool(index.unique),
+            )
+            for index in declared.indexes
+        }
+        actual_indexes = {
+            (
+                index["name"],
+                tuple(index["column_names"]),
+                bool(index["unique"]),
+            )
+            for index in inspector.get_indexes(table_name)
+        }
+        if actual_indexes != expected_indexes:
+            return False
+
+        expected_foreign_keys = {
+            (
+                tuple(element.parent.name for element in constraint.elements),
+                constraint.referred_table.name,
+                tuple(element.column.name for element in constraint.elements),
+                (constraint.ondelete or "").upper(),
+            )
+            for constraint in declared.foreign_key_constraints
+        }
+        actual_foreign_keys = {
+            (
+                tuple(foreign_key["constrained_columns"]),
+                foreign_key["referred_table"],
+                tuple(foreign_key["referred_columns"]),
+                str(foreign_key.get("options", {}).get("ondelete", "")).upper(),
+            )
+            for foreign_key in inspector.get_foreign_keys(table_name)
+        }
+        if actual_foreign_keys != expected_foreign_keys:
+            return False
+        if inspector.get_check_constraints(
+            table_name
+        ) or inspector.get_unique_constraints(table_name):
+            return False
+    return True
+
+
+def verify_current_database_schema(connection: Connection) -> None:
+    """Verify the exact current schema without adopting or migrating it."""
+    try:
+        current_heads = tuple(
+            MigrationContext.configure(connection).get_current_heads()
+        )
+        if current_heads != (CURRENT_DATABASE_REVISION,) or not (
+            _matches_exact_current_layout(connection)
+        ):
+            raise SchemaCompatibilityError("Database schema is incompatible")
+    except SchemaCompatibilityError:
+        raise
+    except Exception:
+        raise SchemaCompatibilityError("Database schema is incompatible") from None
+
+
 def _matches_revision_0004_layout(connection: Connection) -> bool:
     from cli_consumption.storage import SCHEMA_TABLES
 

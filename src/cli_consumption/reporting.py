@@ -130,11 +130,13 @@ def estimate_report(
 def report_estimate_statement(
     connection: Connection,
     window: ExportWindow | None = None,
+    *,
+    table_names: tuple[str, ...] = REPORT_TABLES,
 ) -> Any:
     """Build one statement so all table estimates share one database snapshot."""
     active_window = window or ExportWindow()
     estimates = []
-    for table_name in REPORT_TABLES:
+    for table_name in table_names:
         selected = report_statement(connection, table_name, active_window).order_by(
             None
         )

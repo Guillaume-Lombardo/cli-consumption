@@ -254,6 +254,20 @@ transaction for the entire output directory.
 The temporary text stream disables newline translation, so the encoded-byte counter,
 file position, and bytes written remain identical on Windows as well as POSIX systems.
 
+### Offline dashboard continuity gate
+
+Every pull request in the persistent-dashboard migration must preserve the standalone
+export before it can merge. CI generates both the detailed and share-safe dashboards
+from the installed Python package, opens each generated file directly through a
+`file://` URL in headless Chromium, exercises filters and theme changes, and fails on
+any HTTP(S) request, WebSocket, browser error, external script, stylesheet, import, or
+other network primitive. The gate needs no application server or remote database.
+
+This browser gate complements the existing deterministic-generation, privacy-canary,
+bounded-memory, complete-conversation, and atomic-replacement tests; it does not
+replace them. The standalone renderer remains supported until a later migration
+ticket demonstrates metric and interaction parity for its replacement.
+
 ## Adapter qualification
 
 Adapters are introduced one at a time because local data formats are undocumented or

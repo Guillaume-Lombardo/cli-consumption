@@ -51,6 +51,25 @@ jobs:
           uv run --isolated --no-project --python 3.14 \
             --with "${wheel}" python tests/smoke_minimal_install.py
 
+  offline-dashboard:
+    name: offline dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          python-version: "3.14"
+      - run: uv sync --locked --all-groups --all-extras
+      - name: Install the pinned Chromium browser
+        run: uv run playwright install --with-deps chromium
+      - name: Verify the generated dashboards offline
+        env:
+          CLI_CONSUMPTION_BROWSER_GATE: "1"
+        run: uv run pytest tests/test_offline_dashboard.py
+
   compatibility:
     name: compatibility
     runs-on: ubuntu-latest

@@ -47,6 +47,18 @@ def test_ci_keeps_compatibility_postgresql_build_and_minimal_smoke_coverage() ->
     assert CI.count("Smoke test the minimal wheel") == 1
 
 
+def test_ci_opens_generated_dashboards_in_an_offline_browser() -> None:
+    job = CI.split("  offline-dashboard:\n", maxsplit=1)[1].split(
+        "  compatibility:\n", maxsplit=1
+    )[0]
+
+    assert "persist-credentials: false" in job
+    assert "uv sync --locked --all-groups --all-extras" in job
+    assert "uv run playwright install --with-deps chromium" in job
+    assert 'CLI_CONSUMPTION_BROWSER_GATE: "1"' in job
+    assert "uv run pytest tests/test_offline_dashboard.py" in job
+
+
 def test_release_keeps_tests_build_and_minimal_wheel_smoke_test() -> None:
     assert RELEASE.count("uv run pytest --cov --cov-report=term-missing") == 1
     assert RELEASE.count("uv build") == 1

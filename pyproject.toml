@@ -54,6 +54,7 @@ dev = [
   "httpx>=0.27",
   "hypothesis>=6.165.10",
   "pip-audit>=2.10.1",
+  "playwright>=1.55",
   "pre-commit>=4.6.2",
   "psycopg[binary]>=3.2",
   "pytest>=8.3",

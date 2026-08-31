@@ -13,6 +13,12 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Version releases now attach the validated wheel and source distribution to an
   automatically generated GitHub Release after PyPI publication succeeds.
 
+### Fixed
+
+- OpenCode 1.18.23 SQLite stores now extract model calls and token usage from
+  `message.data` and tool calls from `part.data`; incomplete current schemas are
+  reported as incompatible instead of silently producing zero usage.
+
 ## [0.3.1] - 2026-08-31
 
 ### Changed
@@ -47,9 +53,6 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- OpenCode 1.18.23 SQLite stores now extract model calls and token usage from
-  `message.data` and tool calls from `part.data`; incomplete current schemas are
-  reported as incompatible instead of silently producing zero usage.
 - Reject timezone-naive provider timestamps instead of interpreting them in the host
   timezone.
 

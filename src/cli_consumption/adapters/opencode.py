@@ -587,7 +587,12 @@ def _model(value: object) -> str | None:
 
 
 def _message_model(data: dict[str, Any]) -> str | None:
-    return _model(data.get("model")) or _model(data)
+    return _model(data.get("model")) or _model(
+        {
+            "providerID": data.get("providerID"),
+            "modelID": data.get("modelID"),
+        }
+    )
 
 
 def _finish_turn(turn: dict[str, Any], fallback: datetime | None) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -244,6 +245,7 @@ def current_database(home: Path, *, malformed: bool = False) -> Path:
             "msg_assistant_1",
             1_777_114_801_000,
             {
+                "id": "msg_payload_id_must_not_be_used_as_model",
                 "role": "assistant",
                 "parentID": "msg_user_1",
                 "providerID": "anthropic",
@@ -497,9 +499,12 @@ def test_rejects_incomplete_current_schema_instead_of_using_projection(
     assert diagnose_provider(spec, home).status == "unsupported-schema"
 
 
-def test_privacy_canary_is_absent_from_storage_and_exports(tmp_path: Path) -> None:
+@pytest.mark.parametrize("build", [database, current_database])
+def test_privacy_canary_is_absent_from_storage_and_exports(
+    tmp_path: Path, build: Callable[[Path], Path]
+) -> None:
     home = tmp_path / "opencode"
-    current_database(home)
+    build(home)
     snapshot = OpenCodeAdapter().collect([("machine", home)])
     engine = create_database_engine(tmp_path / "usage.sqlite")
     try:

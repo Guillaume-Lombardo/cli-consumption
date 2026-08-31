@@ -47,6 +47,20 @@ def test_ci_keeps_compatibility_postgresql_build_and_minimal_smoke_coverage() ->
     assert CI.count("Smoke test the minimal wheel") == 1
 
 
+def test_ci_builds_and_verifies_the_locked_typescript_workspace() -> None:
+    job = CI.split("  typescript-workspace:\n", maxsplit=1)[1].split(
+        "  quality:\n", maxsplit=1
+    )[0]
+
+    assert "persist-credentials: false" in job
+    assert "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in job
+    assert "node-version-file: .node-version" in job
+    assert "cache: npm" in job
+    assert "npm ci" in job
+    assert "npm run verify" in job
+    assert "npm audit --audit-level=high" in job
+
+
 def test_ci_opens_generated_dashboards_in_an_offline_browser() -> None:
     job = CI.split("  offline-dashboard:\n", maxsplit=1)[1].split(
         "  compatibility:\n", maxsplit=1

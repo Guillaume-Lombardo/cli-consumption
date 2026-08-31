@@ -19,6 +19,7 @@ from storage_helpers import read_table
 from cli_consumption.adapters.codex import CodexAdapter
 from cli_consumption.adapters.registry import ADAPTER_SPECS
 from cli_consumption.dashboard import (
+    DASHBOARD_CONTRACT_VERSION,
     _dashboard_payload,
     _round_epoch_day,
     _round_timestamp,
@@ -98,6 +99,7 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     assert "external_id" not in html
     assert "agent_nickname" not in html
     assert html.count("<script>") == 1
+    assert f'"contractVersion":{DASHBOARD_CONTRACT_VERSION}' in html
     assert "<script src" not in html
     assert "<link" not in html
     assert "@import" not in html
@@ -128,6 +130,7 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
 
     payload = _dashboard_payload(engine)
     assert set(payload) == {
+        "contractVersion",
         "meta",
         "conversations",
         "turns",
@@ -140,6 +143,7 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
         "subagents",
         "ingestionRuns",
     }
+    assert payload["contractVersion"] == DASHBOARD_CONTRACT_VERSION
     assert payload["meta"] == {"shareSafe": False}
     assert payload["conversations"][0]["tokenSemantics"] == "additive"
     assert set(payload["conversations"][0]) == {

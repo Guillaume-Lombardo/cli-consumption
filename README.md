@@ -58,6 +58,10 @@ uv run cli-consumption export --output reports
 Open `reports/dashboard.html` locally. It makes no network requests. Detailed CSV
 tables are generated only when `--csv` is passed.
 
+Dashboard calculation development lives in the locked npm workspace under `packages/`.
+It builds a provider-neutral ESM analytics package and the browser asset that Python
+embeds in the wheel; installing or using the Python CLI does not require Node.js.
+
 To collect one provider or select another database:
 
 ```bash
@@ -150,6 +154,8 @@ uv run ruff check .
 uv run ty check
 uv run pytest --cov --cov-report=term-missing
 uv build
+npm ci
+npm run verify
 ```
 
 Development uses short-lived branches and squash-merged pull requests into protected

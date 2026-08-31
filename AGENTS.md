@@ -46,6 +46,8 @@ uv run ruff check .
 uv run ty check
 uv run pytest --cov --cov-report=term-missing
 uv build
+npm ci
+npm run verify
 ```
 
 Add tests for every behavioral change. Include malformed and adversarial provider data

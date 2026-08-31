@@ -28,6 +28,7 @@ from sqlalchemy.engine import Engine
 from starlette.background import BackgroundTask
 
 from cli_consumption.dashboard import (
+    DASHBOARD_CONTRACT_VERSION,
     MAX_DASHBOARD_ESTIMATED_BYTES,
     MAX_DASHBOARD_HTML_BYTES,
     MAX_DASHBOARD_RECORDS,
@@ -384,7 +385,7 @@ class ReportingRuntime:
                 filters=query.filters.filters(),
                 timeout_seconds=REPORTING_TIMEOUT_SECONDS,
             )
-            payload["contractVersion"] = 1
+            payload["contractVersion"] = DASHBOARD_CONTRACT_VERSION
             payload["window"] = window.metadata(
                 day_precision=query.profile == "share-safe"
             )
@@ -416,7 +417,7 @@ class ReportingRuntime:
                 for model in json.loads(row["models_json"]):
                     models.add(str(model))
             return {
-                "contractVersion": 1,
+                "contractVersion": DASHBOARD_CONTRACT_VERSION,
                 "filters": {
                     "providers": sorted(providers),
                     "machines": sorted(machines),
@@ -451,7 +452,7 @@ class ReportingRuntime:
             else None
         )
         return {
-            "contractVersion": 1,
+            "contractVersion": DASHBOARD_CONTRACT_VERSION,
             "items": items,
             "nextCursor": next_cursor,
         }
@@ -697,7 +698,7 @@ def _conversation_detail(
         turn["conversationKey"] = 0
 
     detail: dict[str, Any] = {
-        "contractVersion": 1,
+        "contractVersion": DASHBOARD_CONTRACT_VERSION,
         "conversation": conversation,
         "turns": turns,
     }

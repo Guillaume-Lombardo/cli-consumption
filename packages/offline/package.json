@@ -1,0 +1,12 @@
+{
+  "name": "@cli-consumption/offline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@cli-consumption/analytics": "0.0.0"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=iife --platform=browser --target=es2020 --legal-comments=none --outfile=../../src/cli_consumption/dashboard_calculations.js"
+  }
+}

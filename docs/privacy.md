@@ -224,6 +224,14 @@ checks privacy canaries and network primitives are absent, and validates the tra
 PNG preview. The packaging contract excludes `docs/`, tests, generated demo assets,
 and every other repository-only file from wheels and source distributions.
 
+The TypeScript workspace consumes only the already minimized, response-local
+`DashboardDataset v1` contract. Its analytics package has no DOM, storage, or network
+primitive and cannot open provider files or databases. Only the generated classic
+browser calculation asset enters Python distributions; workspace sources, tests,
+dependency caches, and ESM build directories remain repository-only. Synthetic
+fixtures contain invented operational labels and assert contract rejection without
+copying prompts, responses, tool arguments, credentials, paths, or stable identifiers.
+
 Time filters select complete conversations that overlap the requested window. They do
 not redact child records whose individual timestamps fall outside it; related subagent
 edges can also reveal activity around the boundary. Ingestion-run rows are selected by

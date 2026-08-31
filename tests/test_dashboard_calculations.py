@@ -140,6 +140,7 @@ def _payload() -> dict[str, Any]:
         }
 
     return {
+        "contractVersion": 1,
         "meta": {
             "shareSafe": False,
             "exportWindow": {

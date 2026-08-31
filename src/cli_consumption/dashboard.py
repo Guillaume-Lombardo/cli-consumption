@@ -40,6 +40,7 @@ TOKEN_FIELDS = (
     "unattributed_tokens",
     "total_tokens",
 )
+DASHBOARD_CONTRACT_VERSION = 1
 MAX_DASHBOARD_RECORDS = 250_000
 MAX_DASHBOARD_ESTIMATED_BYTES = 128 * 1024 * 1024
 MAX_DASHBOARD_HTML_BYTES = 128 * 1024 * 1024
@@ -504,7 +505,7 @@ def _dashboard_payload(
         filters=filters or ReportFilters(),
     )
     payload: dict[str, Any] = {
-        "contractVersion": 1,
+        "contractVersion": DASHBOARD_CONTRACT_VERSION,
         "meta": _dashboard_metadata(context),
     }
     for table_name, section_name in DASHBOARD_SECTIONS:
@@ -541,7 +542,7 @@ def _stream_dashboard(
     prefix, suffix = _document_parts()
     writer = _BudgetedWriter(handle)
     writer.write(prefix)
-    writer.write('{"contractVersion":1,"meta":')
+    writer.write(f'{{"contractVersion":{DASHBOARD_CONTRACT_VERSION},"meta":')
     writer.write(_encode_json(_dashboard_metadata(context)))
     for table_name, section_name in DASHBOARD_SECTIONS:
         writer.write(f',"{section_name}":[')

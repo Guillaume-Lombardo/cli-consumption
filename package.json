@@ -21,7 +21,8 @@
     "lint": "biome lint .",
     "smoke:esm": "node tools/smoke-esm.mjs",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck:packages",
+    "typecheck:packages": "tsc --ignoreConfig --noEmit --strict --module ESNext --moduleResolution Bundler --target ES2024 tools/typecheck-packages.ts",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run check:generated && npm run build:esm && npm run smoke:esm"
   },
   "devDependencies": {

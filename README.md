@@ -154,6 +154,8 @@ uv run ruff check .
 uv run ty check
 uv run pytest --cov --cov-report=term-missing
 uv build
+npm ci
+npm run verify
 ```
 
 Development uses short-lived branches and squash-merged pull requests into protected

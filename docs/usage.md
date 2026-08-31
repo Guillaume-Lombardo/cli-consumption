@@ -216,7 +216,9 @@ curl --fail --silent --show-error \
   https://usage.example.test/api/v1/reporting/dashboard
 ```
 
-The related routes are `/filters`, `/conversations`, `/conversation`, and `/export`.
+The related routes are `/api/v1/reporting/filters`,
+`/api/v1/reporting/conversations`, `/api/v1/reporting/conversation`, and
+`/api/v1/reporting/export`.
 Conversation cursors and references are opaque and expire; restart pagination after a
 fixed `pagination_expired` response. They are process-local and therefore also expire
 when the service restarts. All reporting responses disable caching. Requests,

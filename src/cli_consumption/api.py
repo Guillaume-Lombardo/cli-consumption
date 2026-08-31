@@ -407,6 +407,7 @@ def _configured_credentials(
     export_token: str | None,
 ) -> list[tuple[str, frozenset[str]]]:
     credentials: list[tuple[str, frozenset[str]]] = []
+    configured_values: set[str] = set()
     for credential, scopes in (
         (api_token, frozenset({"ingest"})),
         (read_token, frozenset({"read"})),
@@ -422,6 +423,9 @@ def _configured_credentials(
             )
         ):
             raise ValueError("invalid API credential configuration")
+        if credential in configured_values:
+            raise ValueError("invalid API credential configuration")
+        configured_values.add(credential)
         credentials.append((credential, scopes))
     return credentials
 
@@ -491,7 +495,9 @@ def create_app(
         def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
             if not credentials:
                 return
-            supplied = authorization.removeprefix("Bearer ") if authorization else ""
+            scheme, separator, supplied = (authorization or "").partition(" ")
+            if not separator or scheme.casefold() != "bearer":
+                supplied = ""
             matched_scopes: set[str] = set()
             for credential, scopes in credentials:
                 if secrets.compare_digest(supplied, credential):

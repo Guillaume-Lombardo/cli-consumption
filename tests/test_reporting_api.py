@@ -178,6 +178,16 @@ async def test_reporting_scopes_capabilities_and_cache_policy(tmp_path: Path) ->
         read = await client.post(
             "/api/v1/reporting/dashboard", json=_query(), headers=READ_HEADERS
         )
+        lowercase_bearer = await client.post(
+            "/api/v1/reporting/dashboard",
+            json=_query(),
+            headers={"Authorization": f"bearer {READ_VALUE}"},
+        )
+        missing_scheme = await client.post(
+            "/api/v1/reporting/dashboard",
+            json=_query(),
+            headers={"Authorization": READ_VALUE},
+        )
         read_export = await client.post(
             "/api/v1/reporting/export", json=_query(), headers=READ_HEADERS
         )
@@ -196,6 +206,8 @@ async def test_reporting_scopes_capabilities_and_cache_policy(tmp_path: Path) ->
     assert ingestion_only.json() == {"detail": "authorization_denied"}
     assert read.status_code == 200
     assert read.headers["cache-control"] == "no-store"
+    assert lowercase_bearer.status_code == 200
+    assert missing_scheme.status_code == 401
     assert read_export.status_code == 403
     assert export.status_code == 200
     assert export.headers["cache-control"] == "no-store"
@@ -215,6 +227,20 @@ def test_empty_or_whitespace_credentials_are_rejected_generically(
     for invalid_value in ("", " ", "line\nbreak"):
         with pytest.raises(ValueError, match="invalid API credential configuration"):
             create_app(engine, read_token=invalid_value)
+
+    engine.dispose()
+
+
+def test_duplicate_credentials_are_rejected_generically(tmp_path: Path) -> None:
+    engine = create_database_engine(tmp_path / "duplicate-credential.sqlite")
+
+    for credentials in (
+        {"api_token": READ_VALUE, "read_token": READ_VALUE},
+        {"read_token": READ_VALUE, "export_token": READ_VALUE},
+        {"api_token": READ_VALUE, "export_token": READ_VALUE},
+    ):
+        with pytest.raises(ValueError, match="invalid API credential configuration"):
+            create_app(engine, **credentials)
 
     engine.dispose()
 
@@ -356,6 +382,7 @@ async def test_reporting_concurrency_fails_immediately_without_a_queue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = _engine(tmp_path)
+    slots = reporting_api_module.MAX_CONCURRENT_REPORTS
     started = threading.Event()
     release = threading.Event()
     lock = threading.Lock()
@@ -365,7 +392,7 @@ async def test_reporting_concurrency_fails_immediately_without_a_queue(
         nonlocal active
         with lock:
             active += 1
-            if active == 4:
+            if active == slots:
                 started.set()
         assert release.wait(timeout=5)
         return {
@@ -397,7 +424,7 @@ async def test_reporting_concurrency_fails_immediately_without_a_queue(
                     headers=READ_HEADERS,
                 )
             )
-            for _ in range(4)
+            for _ in range(slots)
         ]
         assert await asyncio.to_thread(started.wait, 5)
         busy = await client.post(

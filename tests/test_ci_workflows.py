@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 RELEASE = (ROOT / ".github" / "workflows" / "release.yaml").read_text(encoding="utf-8")
+SECURITY = (ROOT / ".github" / "workflows" / "security.yml").read_text(encoding="utf-8")
 PRE_COMMIT = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
 AGENT_INSTRUCTIONS = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
@@ -52,3 +53,8 @@ def test_release_keeps_tests_build_and_minimal_wheel_smoke_test() -> None:
     assert RELEASE.count("Smoke test the minimal wheel") == 1
     assert "Upload distributions" in RELEASE
     assert "Publish distributions to PyPI" in RELEASE
+
+
+def test_security_audits_locked_dependencies_without_the_editable_project() -> None:
+    assert "uv export --locked --all-extras --all-groups --no-emit-project" in SECURITY
+    assert "uv run pip-audit --strict" in SECURITY

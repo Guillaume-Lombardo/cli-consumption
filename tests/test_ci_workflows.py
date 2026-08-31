@@ -55,6 +55,26 @@ def test_release_keeps_tests_build_and_minimal_wheel_smoke_test() -> None:
     assert "Publish distributions to PyPI" in RELEASE
 
 
+def test_release_publishes_built_distributions_on_github_after_pypi() -> None:
+    publish = RELEASE.index("  publish:\n")
+    github_release = RELEASE.index("  github-release:\n")
+    assert publish < github_release
+
+    job = RELEASE[github_release:]
+    assert "needs: [detect-version, build, tag, publish]" in job
+    assert "contents: write" in job
+    assert "actions/download-artifact@" in job
+    assert "GH_REPO: ${{ github.repository }}" in job
+    assert 'gh release create "${tag}" --draft --verify-tag' in job
+    assert "wheels=(dist/*.whl)" in job
+    assert "sdists=(dist/*.tar.gz)" in job
+    assert '[[ "${#wheels[@]}" -ne 1 || "${#sdists[@]}" -ne 1 ]]' in job
+    assert 'artifacts=("${wheels[@]}" "${sdists[@]}")' in job
+    assert 'gh release upload "${tag}" "${artifact}"' in job
+    assert '[[ "${actual_assets}" != "${expected_assets}" ]]' in job
+    assert 'gh release edit "${tag}" --draft=false --latest --verify-tag' in job
+
+
 def test_security_audits_locked_dependencies_without_the_editable_project() -> None:
     step = SECURITY.split(
         "      - name: Audit installed locked dependencies\n", maxsplit=1

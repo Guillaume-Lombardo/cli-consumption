@@ -86,8 +86,15 @@ Update the project version with `uv version <version>` and include the resulting
 `pyproject.toml` and `uv.lock` changes in a pull request. When that version change is
 squash-merged into `main`, the release workflow reruns the quality gates, builds the
 distributions, tags the merge commit as `v<version>`, and publishes to PyPI through
-Trusted Publishing. Do not create the release tag manually.
+Trusted Publishing. After PyPI succeeds, it creates a GitHub Release with generated
+notes and attaches the exact wheel and source distribution from the validated build.
+Do not create the release tag or GitHub Release manually.
 
 If a release fails before publication, rerun it for the original version commit with
 `gh workflow run release.yaml --ref main -f release_sha=<merge-commit>`. The workflow
 rejects commits outside `main` and conflicting existing tags.
+
+If only the GitHub Release job fails after PyPI publication, use
+`gh run rerun <run-id> --failed`. The job safely resumes an existing draft, uploads
+only missing distribution assets, verifies the complete asset set, and treats an
+already published release with the expected assets as complete.

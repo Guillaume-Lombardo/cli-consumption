@@ -6,6 +6,11 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Version releases now attach the validated wheel and source distribution to an
+  automatically generated GitHub Release after PyPI publication succeeds.
+
 ## [0.3.1] - 2026-08-31
 
 ### Changed

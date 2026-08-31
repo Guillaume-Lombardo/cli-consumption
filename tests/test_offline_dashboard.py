@@ -9,6 +9,7 @@ from playwright.sync_api import Request, Route, WebSocket, sync_playwright
 
 from cli_consumption.adapters.codex import CodexAdapter
 from cli_consumption.dashboard import generate_dashboard
+from cli_consumption.models import Snapshot, empty_tokens
 from cli_consumption.storage import (
     create_database_engine,
     ingest_snapshot,
@@ -36,6 +37,34 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         CodexAdapter().collect(
             [("offline-machine", home)],
             [("offline-project", "/srv/work")],
+        ),
+    )
+    ingest_snapshot(
+        engine,
+        Snapshot(
+            provider="gemini",
+            conversations=[
+                {
+                    "id": "gemini:offline-conversation",
+                    "provider": "gemini",
+                    "external_id": "offline-conversation",
+                    "source_machine": "offline-machine",
+                    "project": "offline-project",
+                    "project_source": "none",
+                    "started_at": "2026-08-25T11:00:00Z",
+                    "ended_at": "2026-08-25T11:01:00Z",
+                    "duration_seconds": 60.0,
+                    "source": "synthetic",
+                    "models": [],
+                    "iterations": 0,
+                    "model_calls": 0,
+                    "tool_calls": 0,
+                    "compactions": 0,
+                    "event_count": 1,
+                    "content_hash": "1" * 64,
+                    **empty_tokens(),
+                }
+            ],
         ),
     )
     output = tmp_path / ("share-safe.html" if share_safe else "detailed.html")
@@ -96,9 +125,13 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         page.wait_for_function("document.querySelectorAll('#cards .card').length >= 8")
         assert page.title() == "CLI Consumption"
         assert page.locator("#provider").input_value() == ""
+        assert page.locator("#conversationCount").text_content() == "2 conversations"
+        assert page.locator("#table tbody tr").count() == 2
         page.locator("#provider").select_option("codex")
         assert page.locator("#provider").input_value() == "codex"
         assert page.locator("#cards .card").count() >= 8
+        assert page.locator("#conversationCount").text_content() == "1 conversations"
+        assert page.locator("#table tbody tr").count() == 1
 
         page.locator("#period").select_option("custom")
         assert "visible" in (page.locator("#customDates").get_attribute("class") or "")
@@ -110,7 +143,6 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         assert second_theme != first_theme
 
         assert page.locator("#privacyBadge").is_visible() is share_safe
-        assert page.locator("#conversationCount").text_content()
         assert page.locator("a[href], script[src], link[href]").count() == 0
 
         context.close()

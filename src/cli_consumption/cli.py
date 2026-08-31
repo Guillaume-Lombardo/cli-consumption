@@ -26,6 +26,10 @@ from cli_consumption.exporting import export_csv
 from cli_consumption.models import Snapshot, SnapshotValidationError
 from cli_consumption.reporting import parse_export_window
 from cli_consumption.retention import retain_before
+from cli_consumption.snapshot_extraction import (
+    SnapshotExtractionError,
+    extract_snapshots,
+)
 from cli_consumption.storage import (
     MissingOptionalDependencyError,
     create_database_engine,
@@ -497,6 +501,166 @@ def sync(
         raise typer.Exit(code=2)
 
 
+@app.command("upload-db")
+def upload_database(
+    endpoint: Annotated[
+        str,
+        typer.Option(
+            help="Collector base URL, for example https://usage.example.test."
+        ),
+    ],
+    database: Annotated[
+        str,
+        typer.Option(
+            "--database",
+            "-d",
+            envvar="CLI_CONSUMPTION_DATABASE",
+            help="Existing local SQLite database created by collect.",
+        ),
+    ] = "cli-consumption.sqlite",
+    since: Annotated[
+        str | None,
+        typer.Option(help="Include conversations overlapping this date or timestamp."),
+    ] = None,
+    until: Annotated[
+        str | None,
+        typer.Option(help="Exclude conversations at or after this date or timestamp."),
+    ] = None,
+    token_env: Annotated[
+        str,
+        typer.Option(help="Environment variable containing the API bearer token."),
+    ] = "CLI_CONSUMPTION_API_TOKEN",
+    allow_insecure: Annotated[
+        bool,
+        typer.Option(
+            "--allow-insecure",
+            help="Allow plain HTTP to a non-loopback collector on a trusted network.",
+        ),
+    ] = False,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help="Stop after the first failed provider instead of continuing.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit a deterministic JSON result.")
+    ] = False,
+) -> None:
+    """Upload validated snapshots reconstructed from a local collection database."""
+    try:
+        from cli_consumption.sync import (
+            IdempotencyUnsupportedError,
+            SyncClient,
+            snapshot_idempotency_key,
+        )
+    except ModuleNotFoundError:
+        _abort_database_upload(
+            [],
+            code="upload_dependency_missing",
+            json_output=json_output,
+        )
+
+    try:
+        snapshots = extract_snapshots(database, since=since, until=until)
+    except SnapshotExtractionError as error:
+        _abort_database_upload([], code=error.code, json_output=json_output)
+    except Exception:
+        _abort_database_upload(
+            [],
+            code="database_unavailable",
+            json_output=json_output,
+        )
+
+    if not snapshots:
+        if json_output:
+            _emit_database_upload_json([], complete=True)
+        else:
+            typer.echo("No matching snapshots to upload.")
+        return
+
+    token = os.environ.get(token_env)
+    outcomes: list[dict[str, object]] = []
+    ordered_snapshots = sorted(snapshots, key=lambda snapshot: snapshot.provider)
+    try:
+        with SyncClient(
+            endpoint, token, allow_insecure=allow_insecure
+        ) as upload_client:
+            upload_client.require_idempotent_uploads()
+            for index, snapshot in enumerate(ordered_snapshots):
+                try:
+                    result = upload_client.send_snapshot(
+                        snapshot,
+                        idempotency_key=snapshot_idempotency_key(snapshot),
+                    )
+                except Exception:
+                    outcomes.append(
+                        {
+                            "provider": snapshot.provider,
+                            "status": "failed",
+                            "error": {"code": "remote_upload_failed"},
+                        }
+                    )
+                    if not json_output:
+                        typer.echo(
+                            f"Database upload {snapshot.provider} failed.", err=True
+                        )
+                    if strict:
+                        outcomes.extend(
+                            {
+                                "provider": remaining.provider,
+                                "status": "skipped",
+                                "error": {"code": "strict_upload_stopped"},
+                            }
+                            for remaining in ordered_snapshots[index + 1 :]
+                        )
+                        break
+                    continue
+                outcomes.append(
+                    {
+                        "provider": snapshot.provider,
+                        "status": "succeeded",
+                        "run_id": result["run_id"],
+                        "received": result["received"],
+                        "written": result["written"],
+                        "skipped": result["skipped"],
+                    }
+                )
+                if not json_output:
+                    typer.echo(
+                        f"Uploaded {snapshot.provider} {result['run_id']}: "
+                        f"{result['written']} written, "
+                        f"{result['skipped']} unchanged."
+                    )
+    except IdempotencyUnsupportedError:
+        _abort_database_upload(
+            outcomes,
+            code="idempotency_unsupported",
+            json_output=json_output,
+        )
+    except Exception:
+        _abort_database_upload(
+            outcomes,
+            code="remote_upload_failed",
+            json_output=json_output,
+        )
+
+    complete = all(outcome["status"] == "succeeded" for outcome in outcomes)
+    if json_output:
+        _emit_database_upload_json(outcomes, complete=complete)
+    elif not complete:
+        succeeded = sum(outcome["status"] == "succeeded" for outcome in outcomes)
+        failed = sum(outcome["status"] == "failed" for outcome in outcomes)
+        typer.echo(
+            f"Database upload partially completed: {succeeded} succeeded, "
+            f"{failed} failed.",
+            err=True,
+        )
+    if not complete:
+        raise typer.Exit(code=2)
+
+
 def _sync_diagnostics(snapshot: Snapshot, *, status: str) -> dict[str, object]:
     """Return the bounded local diagnostics allowed in sync results."""
     return {
@@ -517,6 +681,61 @@ def _emit_sync_json(
     payload: dict[str, object] = {
         "complete": complete,
         "synchronizations": outcomes,
+    }
+    if error_code is not None:
+        payload["error"] = {"code": error_code}
+    typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+_DATABASE_UPLOAD_ERROR_CODES = frozenset(
+    {
+        "database_unavailable",
+        "idempotency_unsupported",
+        "incompatible_database",
+        "invalid_database",
+        "invalid_window",
+        "remote_upload_failed",
+        "snapshot_too_large",
+        "upload_dependency_missing",
+    }
+)
+
+
+def _abort_database_upload(
+    outcomes: list[dict[str, object]],
+    *,
+    code: str,
+    json_output: bool,
+) -> Never:
+    bounded_code = (
+        code if code in _DATABASE_UPLOAD_ERROR_CODES else "database_unavailable"
+    )
+    if json_output:
+        _emit_database_upload_json(
+            outcomes,
+            complete=False,
+            error_code=bounded_code,
+        )
+    elif bounded_code == "upload_dependency_missing":
+        typer.echo(
+            "Database upload requires optional dependencies; "
+            "install cli-consumption[sync].",
+            err=True,
+        )
+    else:
+        typer.echo(f"Database upload failed ({bounded_code}).", err=True)
+    raise typer.Exit(code=2) from None
+
+
+def _emit_database_upload_json(
+    outcomes: list[dict[str, object]],
+    *,
+    complete: bool,
+    error_code: str | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "complete": complete,
+        "uploads": outcomes,
     }
     if error_code is not None:
         payload["error"] = {"code": error_code}

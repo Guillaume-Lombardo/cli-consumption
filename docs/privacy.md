@@ -82,6 +82,14 @@ are negotiated once per endpoint. Retries are limited to three attempts and are
 enabled only when the collector advertises this receipt mechanism, so a legacy server
 is never retried after an ambiguous transport failure.
 
+`upload-db` uses a distinct content-bound UUIDv4 derived from a domain-separated digest
+of each canonical minimized snapshot. This lets separate invocations resume safely and
+lets richer snapshots replace older copies without duplicating identical uploads. The
+key discloses equality of identical provider fragments to the collector, which already
+receives those fragments, but reveals neither their content nor the local database path.
+It is sent only in the idempotency header and is never printed or logged. Receipt
+capability is required before the first upload.
+
 Sync automation output contains only provider names, opaque ingestion-run IDs,
 received/written/skipped counts, local malformed and duplicate counts, bounded status
 labels, and fixed error codes. Partial multi-provider results preserve successful
@@ -130,6 +138,13 @@ rows. Strict snapshot validation rejects invalid identifiers, relationships, tok
 composition, timestamps, models, and labels after reconstruction. Tests place a
 synthetic secret in excluded ingestion, receipt, and scope rows and assert that it is
 absent from snapshots, errors, and logs.
+
+Database upload output contains only provider names, bounded status labels, fixed error
+codes, opaque ingestion-run IDs, and aggregate counts. It excludes the database path,
+time-bound values, endpoint URL, token and token environment value, idempotency key,
+snapshot payload, remote response body, and exception text. Default mode preserves
+successful provider results after another provider fails; strict mode stops before later
+providers and reports only the fixed `strict_upload_stopped` code for them.
 
 The unauthenticated liveness endpoint does not touch the database. The unauthenticated
 readiness endpoint reads only a bounded schema revision and fixed table probes. It

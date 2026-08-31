@@ -8,7 +8,11 @@ import httpx
 import pytest
 
 from cli_consumption.models import Snapshot
-from cli_consumption.sync import SyncClient
+from cli_consumption.sync import (
+    IdempotencyUnsupportedError,
+    SyncClient,
+    snapshot_idempotency_key,
+)
 
 RUN_ID = "12345678-1234-4abc-8def-123456789abc"
 
@@ -79,6 +83,49 @@ def test_sync_client_reuses_http_client_and_negotiates_capabilities_once() -> No
     keys = [request["headers"]["Idempotency-Key"] for _, request in fake.post_calls]
     assert all(str(uuid.UUID(key)) == key for key in keys)
     assert keys[0] != keys[1]
+
+
+def test_database_upload_requires_idempotency_before_first_post() -> None:
+    fake = FakeClient(idempotency=False)
+    client = sync_client(fake)
+
+    with pytest.raises(IdempotencyUnsupportedError):
+        client.require_idempotent_uploads()
+
+    assert fake.get_calls == ["https://collector.test/api/v1/capabilities"]
+    assert fake.post_calls == []
+
+
+def test_snapshot_idempotency_key_is_stable_canonical_and_content_bound() -> None:
+    first = Snapshot(provider="codex")
+    same = Snapshot.from_dict(first.to_dict())
+    changed = Snapshot(provider="codex", duplicate_conversations=1)
+
+    first_key = snapshot_idempotency_key(first)
+
+    assert snapshot_idempotency_key(same) == first_key
+    assert snapshot_idempotency_key(changed) != first_key
+    assert uuid.UUID(first_key).version == 4
+    assert "codex" not in first_key
+
+
+def test_explicit_idempotency_key_is_reused_across_calls_and_validated() -> None:
+    fake = FakeClient(idempotency=True)
+    client = sync_client(fake)
+    snapshot = Snapshot(provider="codex")
+    key = snapshot_idempotency_key(snapshot)
+
+    client.require_idempotent_uploads()
+    client.send_snapshot(snapshot, idempotency_key=key)
+    client.send_snapshot(snapshot, idempotency_key=key)
+
+    assert fake.get_calls == ["https://collector.test/api/v1/capabilities"]
+    assert [
+        request["headers"]["Idempotency-Key"] for _, request in fake.post_calls
+    ] == [key, key]
+    with pytest.raises(ValueError, match="Invalid idempotency key"):
+        client.send_snapshot(snapshot, idempotency_key="PROMPT_SECRET_CANARY")
+    assert len(fake.post_calls) == 2
 
 
 def test_sync_client_rejects_incompatible_collector() -> None:

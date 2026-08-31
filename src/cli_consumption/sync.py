@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
 import time
 import uuid
 from collections.abc import Callable
@@ -47,10 +49,23 @@ class SyncClient:
         if self._owns_client:
             self._client.close()
 
-    def send_snapshot(self, snapshot: Snapshot) -> dict[str, int | str]:
+    def require_idempotent_uploads(self) -> None:
+        """Fail before upload when replay receipts are unavailable."""
+        self._negotiate_capabilities()
+        if not self._supports_idempotency:
+            raise IdempotencyUnsupportedError
+
+    def send_snapshot(
+        self,
+        snapshot: Snapshot,
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, int | str]:
         payload_to_send = Snapshot.from_dict(snapshot.to_dict()).to_dict()
         self._negotiate_capabilities()
-        idempotency_key = str(uuid.uuid4())
+        idempotency_key = _canonical_idempotency_key(
+            idempotency_key or str(uuid.uuid4())
+        )
         headers = {**self._headers, "Idempotency-Key": idempotency_key}
         attempts = MAX_UPLOAD_ATTEMPTS if self._supports_idempotency else 1
 
@@ -87,6 +102,23 @@ class SyncClient:
         response.raise_for_status()
         self._supports_idempotency = _require_compatible_schema(response.json())
         self._capabilities_checked = True
+
+
+class IdempotencyUnsupportedError(RuntimeError):
+    """The collector cannot safely replay a database upload."""
+
+
+def snapshot_idempotency_key(snapshot: Snapshot) -> str:
+    """Return a deterministic canonical UUIDv4 for one logical snapshot."""
+    payload = Snapshot.from_dict(snapshot.to_dict()).to_dict()
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    digest = hashlib.sha256(b"cli-consumption:upload-db:v1\0" + canonical).digest()
+    return str(uuid.UUID(bytes=digest[:16], version=4))
 
 
 def send_snapshot(
@@ -128,6 +160,16 @@ def _validated_response(payload: object) -> dict[str, int | str]:
         "written": payload["written"],
         "skipped": payload["skipped"],
     }
+
+
+def _canonical_idempotency_key(value: str) -> str:
+    try:
+        parsed = uuid.UUID(value)
+    except (AttributeError, ValueError):
+        raise ValueError("Invalid idempotency key") from None
+    if parsed.version != 4 or str(parsed) != value:
+        raise ValueError("Invalid idempotency key")
+    return value
 
 
 def _require_secure_endpoint(endpoint: str, *, allow_insecure: bool) -> None:

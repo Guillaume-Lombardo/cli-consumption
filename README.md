@@ -118,6 +118,7 @@ for ingestion, idempotency, migrations, report limits, and collector behavior.
 | `collect` | Collect local or copied provider data into SQL. |
 | `snapshot` | Create or ingest signed, compressed offline snapshot files. |
 | `sync` | Collect and send metadata-only snapshots to a central API. |
+| `upload-db` | Upload validated snapshots reconstructed from a local collect database. |
 | `serve` | Run the central collection API. |
 | `export` | Write the HTML dashboard and optional CSV tables. |
 | `providers` | List provider names and compatibility status. |

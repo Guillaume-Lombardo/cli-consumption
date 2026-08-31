@@ -64,7 +64,7 @@ class SyncClient:
         payload_to_send = Snapshot.from_dict(snapshot.to_dict()).to_dict()
         self._negotiate_capabilities()
         idempotency_key = _canonical_idempotency_key(
-            idempotency_key or str(uuid.uuid4())
+            str(uuid.uuid4()) if idempotency_key is None else idempotency_key
         )
         headers = {**self._headers, "Idempotency-Key": idempotency_key}
         attempts = MAX_UPLOAD_ATTEMPTS if self._supports_idempotency else 1

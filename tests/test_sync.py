@@ -123,8 +123,9 @@ def test_explicit_idempotency_key_is_reused_across_calls_and_validated() -> None
     assert [
         request["headers"]["Idempotency-Key"] for _, request in fake.post_calls
     ] == [key, key]
-    with pytest.raises(ValueError, match="Invalid idempotency key"):
-        client.send_snapshot(snapshot, idempotency_key="PROMPT_SECRET_CANARY")
+    for invalid_key in ("", "PROMPT_SECRET_CANARY"):
+        with pytest.raises(ValueError, match="Invalid idempotency key"):
+            client.send_snapshot(snapshot, idempotency_key=invalid_key)
     assert len(fake.post_calls) == 2
 
 

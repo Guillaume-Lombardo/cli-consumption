@@ -176,6 +176,7 @@ jobs:
       - name: Publish GitHub release with distributions
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ needs.detect-version.outputs.version }}
         run: |
           set -euo pipefail
@@ -190,11 +191,13 @@ jobs:
           fi
 
           shopt -s nullglob
-          artifacts=(dist/*.whl dist/*.tar.gz)
-          if [[ "${#artifacts[@]}" -ne 2 ]]; then
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          if [[ "${#wheels[@]}" -ne 1 || "${#sdists[@]}" -ne 1 ]]; then
             echo "Expected exactly one wheel and one source distribution." >&2
             exit 1
           fi
+          artifacts=("${wheels[@]}" "${sdists[@]}")
 
           existing_assets="$(
             gh release view "${tag}" --json assets --jq '.assets[].name'

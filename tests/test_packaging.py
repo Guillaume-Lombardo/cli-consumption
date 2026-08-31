@@ -26,6 +26,7 @@ def test_python_support_and_optional_dependencies_are_declared() -> None:
     assert project["optional-dependencies"] == {
         "postgres": ["psycopg[binary]>=3.2"],
         "server": ["fastapi>=0.115", "uvicorn>=0.34"],
+        "snapshots": ["cryptography>=45"],
         "sync": ["httpx>=0.27"],
     }
     assert project["urls"]["Changelog"] == (
@@ -94,7 +95,8 @@ def test_distribution_artifact_contract(tmp_path: Path) -> None:
             (
                 "import sys; "
                 f"sys.path.insert(0, {str(wheel)!r}); "
-                "import cli_consumption, cli_consumption.migrations; "
+                "import cli_consumption, cli_consumption.migrations, "
+                "cli_consumption.snapshot_files; "
                 "from cli_consumption.dashboard import "
                 "_dashboard_calculations_script; "
                 "assert cli_consumption.__version__ != '0.0.0'; "

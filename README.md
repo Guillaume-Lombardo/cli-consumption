@@ -38,7 +38,8 @@ the optional runtime capabilities you use:
 
 - `cli-consumption[sync]` for the sync client;
 - `cli-consumption[server]` for the collector service;
-- `cli-consumption[postgres]` for PostgreSQL.
+- `cli-consumption[postgres]` for PostgreSQL;
+- `cli-consumption[snapshots]` for signed, compressed offline snapshot files.
 
 Extras can be combined, for example `cli-consumption[server,postgres]` on a central
 collector.
@@ -66,7 +67,7 @@ uv run cli-consumption collect --provider codex --database usage.sqlite
 Use `--source [LABEL=]PATH` for trusted offline copies and repeated
 `--project NAME=PATH_PREFIX` mappings for stable project labels. See the
 [usage and operations guide](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/usage.md)
-for multi-machine collection, reporting,
+for signed offline transfers, multi-machine collection, reporting,
 PostgreSQL, retention, synchronization, readiness, and automation.
 
 ## Supported CLIs
@@ -115,6 +116,7 @@ for ingestion, idempotency, migrations, report limits, and collector behavior.
 | Command | Purpose |
 | --- | --- |
 | `collect` | Collect local or copied provider data into SQL. |
+| `snapshot` | Create or ingest signed, compressed offline snapshot files. |
 | `sync` | Collect and send metadata-only snapshots to a central API. |
 | `serve` | Run the central collection API. |
 | `export` | Write the HTML dashboard and optional CSV tables. |

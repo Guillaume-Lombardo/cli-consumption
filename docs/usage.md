@@ -48,6 +48,40 @@ fields. A snapshot may contain at most 250,000 normalized records. Direct provid
 symlinks are refused. Add `--strict` to refuse ingestion when malformed records were
 skipped.
 
+## Transfer signed offline snapshots
+
+Install the `snapshots` extra on both machines. Generate an Ed25519 PEM key pair with
+your approved key-management tooling, keep the private key only on the source machine,
+and copy the public key to the destination through a trusted channel. Then create a
+compressed metadata-only file without copying the raw provider store:
+
+```bash
+uv run cli-consumption snapshot create --provider all --strict \
+  --signing-key /secure/source-private.pem \
+  --output /transfer/usage.snapshot
+```
+
+Verify the signature and ingest every included provider snapshot through the same
+idempotent storage path as `collect`:
+
+```bash
+uv run cli-consumption snapshot ingest \
+  --input /transfer/usage.snapshot \
+  --verification-key /secure/source-public.pem \
+  --database usage.sqlite
+```
+
+Signature verification happens before decompression and parsing. Signed files are
+limited to 64 MiB, with 256 MiB decompressed, 64 snapshots, and 250,000 normalized
+records in total. New outputs use mode `0600`; replacing an existing regular file
+preserves its mode and leaves the previous file intact if installation fails. The
+envelope is deterministic for identical snapshots and key, but it is signed rather
+than encrypted: anyone holding the file can read its private operational metadata.
+Protect snapshot files like detailed CSV or a normalized database, rotate signing
+keys according to local policy, and remove transferred copies according to the
+applicable retention policy. The application never prints or stores private-key
+contents.
+
 ## Explore and share reports
 
 The dashboard filters by time, provider, machine, project, and model. It covers token
@@ -176,5 +210,6 @@ compatibility states: `no-data`, `detected`, `compatible`, `degraded`, or
 `unsupported-schema`. They never expose paths, identifiers, record content, counts, or
 parser errors.
 
-`collect`, `sync`, `export`, and `retention` accept `--json`. Run
+`collect`, `snapshot create`, `snapshot ingest`, `sync`, `export`, and `retention`
+accept `--json`. Run
 `uv run cli-consumption COMMAND --help` for complete options.

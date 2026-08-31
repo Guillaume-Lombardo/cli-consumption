@@ -47,6 +47,19 @@ counters, unconstrained analytics labels, broken relationships, snapshots above
 use generic codes and do not echo rejected values. Snapshot schema v1 is advertised by
 the collector capabilities endpoint so an incompatible client can stop before upload.
 
+Signed offline snapshot files contain exactly one or more instances of that existing
+snapshot schema plus a fixed format name and version. Their Ed25519 signature protects
+integrity and authenticity, not confidentiality: provider and machine labels, project
+names, stable IDs, model and tool names, timestamps, token counters, statuses, and
+activity aggregates remain visible to anyone who obtains the file. Private-key bytes
+are read only to sign and are never written to the envelope, database, output, or log.
+Verification occurs before bounded decompression and strict parsing. Signed files are
+capped at 64 MiB, with 256 MiB decompressed, 64 snapshots, and 250,000 normalized
+records in total; malformed inputs and key failures produce fixed error codes without
+paths, payload values, or key contents. Newly created files use private permissions,
+but operators remain responsible for trusted public-key distribution, key rotation,
+access controls, retention, and secure deletion of transferred copies.
+
 The collector transiently reads an optional `X-Request-ID` only when it matches a
 bounded identifier grammar and otherwise replaces it with a generated identifier.
 The identifier is returned as a response header and may appear in structured

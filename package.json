@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "build": "npm run build:esm && npm run build:offline",
-    "build:web": "npm run build -w @cli-consumption/web",
+    "build:web": "npm run build:esm && npm run build -w @cli-consumption/web",
     "build:esm": "npm run build -w @cli-consumption/contracts && npm run build -w @cli-consumption/analytics && npm run build -w @cli-consumption/ui",
     "build:offline": "npm run build -w @cli-consumption/offline",
     "check:generated": "node tools/check-generated.mjs",

@@ -13,6 +13,10 @@ reports/
 *.sqlite3
 .env
 node_modules/
+apps/*/.next/
+playwright-report/
+test-results/
+*.tsbuildinfo
 packages/*/dist/
 
 # Machine-specific orchestration context. These files must never be committed.

@@ -62,6 +62,13 @@ Dashboard calculation development lives in the locked npm workspace under `packa
 It builds a provider-neutral ESM analytics package and the browser asset that Python
 embeds in the wheel; installing or using the Python CLI does not require Node.js.
 
+The authenticated persistent dashboard lives in `apps/web/`. It reads the same
+minimized reporting contract through a server-side Next.js BFF: the browser never
+receives the collector credential or a database connection string. For a production
+setup, required environment variables, reverse-proxy constraints, and startup commands
+are documented in the
+[deployment guide](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/deployment.md#run-the-persistent-dashboard).
+
 To collect one provider or select another database:
 
 ```bash
@@ -156,6 +163,9 @@ uv run pytest --cov --cov-report=term-missing
 uv build
 npm ci
 npm run verify
+npm audit --audit-level=high
+npm run build:web
+npm run test:e2e
 ```
 
 Development uses short-lived branches and squash-merged pull requests into protected

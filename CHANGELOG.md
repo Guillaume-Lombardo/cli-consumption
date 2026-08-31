@@ -26,6 +26,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added a locked TypeScript workspace with versioned dashboard contracts, pure shared
   analytics, presentation helpers, Vitest parity coverage, ESM output, and a
   reproducible network-free browser bundle included in Python wheels.
+- Added an authenticated responsive Next.js dashboard with a server-only collector
+  credential, bounded reporting BFF, URL-safe filters, conversation pagination and
+  detail, shared analytics, accessibility checks, and desktop/mobile browser coverage.
 
 ### Fixed
 

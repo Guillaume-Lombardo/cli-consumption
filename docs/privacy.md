@@ -182,8 +182,8 @@ anonymization.
 
 The reporting API uses the same minimized row contract behind scoped FastAPI bearer
 credentials. The ingestion credential never gains read access implicitly, and export
-requires a credential carrying both `read` and `export`. Next.js is a server-side BFF and never
-receives a database URL or exposes FastAPI credentials to the browser. Reporting
+requires a credential carrying both `read` and `export`. Next.js is a server-side BFF
+and never receives a database URL or exposes FastAPI credentials to the browser. Reporting
 requests place filters in bounded POST bodies rather than URLs; responses replace SQL
 and provider identifiers with response-local keys or integrity-protected opaque
 references. Stable IDs, content hashes, source values, mapping sources, receipt keys,
@@ -191,6 +191,20 @@ scope rows, prompts, responses, tool arguments, raw events, credentials, paths, 
 arbitrary metadata remain excluded. The exact fields, scopes, limits, cursors, generic
 errors, compatibility rules, and residual disclosures are recorded in
 [ADR 0004](decisions/0004-persistent-dashboard-contracts.md).
+
+The persistent dashboard renders project, machine, provider, model, tool, role, status,
+timestamp, token, and workflow aggregates only after authentication; those values
+remain private operational metadata. Its URL may contain the selected period and UTC
+date bounds, which can consequently reach browser history or an explicitly enabled
+access log, but never operational labels, opaque conversation references, or cursors.
+The BFF uses an eight-hour signed HTTP-only, same-site session cookie and stores no
+collector token or session value in browser storage. Only the theme preference is kept
+in local storage. Login and reporting mutations require an exact configured origin;
+responses are `no-store`, bodies are bounded, and upstream response bodies, exception
+text, credentials, and request values are reduced to fixed generic errors. The server
+still receives selected operational labels in POST bodies and returns them to the
+authenticated browser, so TLS, log minimization, session-secret rotation, workstation
+access control, and an appropriate collector retention policy remain operator duties.
 
 Dashboard generation first evaluates only aggregate row counts and scalar byte
 lengths for the selected report. These internal estimates are not exported or logged.

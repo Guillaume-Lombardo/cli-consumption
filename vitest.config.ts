@@ -1,8 +1,10 @@
 import { fileURLToPath } from "node:url";
 
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  plugins: [react()],
   resolve: {
     alias: {
       "@cli-consumption/analytics": fileURLToPath(
@@ -14,10 +16,13 @@ export default defineConfig({
       "@cli-consumption/ui": fileURLToPath(
         new URL("./packages/ui/src/index.ts", import.meta.url),
       ),
+      "server-only": fileURLToPath(
+        new URL("./tools/server-only-test-stub.ts", import.meta.url),
+      ),
     },
   },
   test: {
     coverage: { enabled: false },
-    include: ["packages/**/*.test.ts"],
+    include: ["apps/**/*.test.ts", "apps/**/*.test.tsx", "packages/**/*.test.ts"],
   },
 });

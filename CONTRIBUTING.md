@@ -71,9 +71,9 @@ the comparison links.
 
 ## Validate and review
 
-Run the Python quality gates and `npm ci && npm run verify` documented in `AGENTS.md`,
-inspect the complete diff, then open a pull request. The pull request must explain the
-behavior, privacy impact, storage
+Run the Python quality gates and the locked npm verification, audit, web build, and
+Playwright gates documented in `AGENTS.md`, inspect the complete diff, then open a pull
+request. The pull request must explain the behavior, privacy impact, storage
 compatibility, tests, and any remaining limitation. Merge by squash after required
 checks pass and review is complete.
 

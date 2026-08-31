@@ -48,6 +48,9 @@ uv run pytest --cov --cov-report=term-missing
 uv build
 npm ci
 npm run verify
+npm audit --audit-level=high
+npm run build:web
+npm run test:e2e
 ```
 
 Add tests for every behavioral change. Include malformed and adversarial provider data

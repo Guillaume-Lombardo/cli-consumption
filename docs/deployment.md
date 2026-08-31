@@ -100,6 +100,48 @@ Revoke the old value after clients use the new one. A lost or exposed database p
 requires a coordinated PostgreSQL role-password change and collector recreation; do
 not merely edit `.env`, because that would strand the application.
 
+## Run the persistent dashboard
+
+The persistent dashboard is an optional Node service in `apps/web/`. It must reach the
+collector over a private or TLS-protected route, but it must never receive the database
+URL or ingestion/export credentials. Install and build it from the locked workspace:
+
+```bash
+npm ci
+NEXT_TELEMETRY_DISABLED=1 npm run build:web
+```
+
+Inject these server-only values through the deployment platform's secret manager:
+
+- `CLI_CONSUMPTION_API_URL`: the collector origin, without credentials or a path;
+- `CLI_CONSUMPTION_DASHBOARD_ORIGIN`: the exact public HTTPS dashboard origin;
+- `CLI_CONSUMPTION_DASHBOARD_PASSWORD`: an independent operator password of at least
+  12 characters;
+- `CLI_CONSUMPTION_READ_TOKEN`: the collector's read-scoped token, never the ingestion
+  or export token;
+- `CLI_CONSUMPTION_SESSION_SECRET`: an independent random value of at least 32 bytes.
+
+Start the built service without placing secrets on the command line:
+
+```bash
+NEXT_TELEMETRY_DISABLED=1 npm run start --workspace @cli-consumption/web -- \
+  --hostname 127.0.0.1 --port 3000
+```
+
+Terminate TLS at a reverse proxy and forward the original `Host` and scheme. Keep the
+Node listener private, reject request bodies above 64 KiB, rate-limit login attempts,
+and do not log headers, cookies, POST bodies, full URLs, or query strings. Set
+`CLI_CONSUMPTION_DASHBOARD_ORIGIN` to exactly the browser-visible origin so the BFF can
+reject cross-origin mutations. The session lasts eight hours and is held in a signed,
+HTTP-only, same-site cookie; rotate the password, read token, and session secret through
+normal secret-manager replacement and service restart procedures.
+
+The browser initially requests only the latest 30 days. Project, machine, provider,
+model, and other operational labels travel in POST bodies rather than URL query
+parameters. The dashboard intentionally exposes those private labels and usage metrics
+to authenticated users; it is not a public or share-safe surface. Keep the standalone
+`export --share-safe` workflow for minimized files intended for controlled sharing.
+
 ## Back up and restore
 
 Backups contain private operational metadata. Write them to encrypted, access-controlled

@@ -61,6 +61,20 @@ def test_ci_builds_and_verifies_the_locked_typescript_workspace() -> None:
     assert "npm audit --audit-level=high" in job
 
 
+def test_ci_builds_and_tests_the_persistent_dashboard_in_a_browser() -> None:
+    job = CI.split("  persistent-dashboard:\n", maxsplit=1)[1].split(
+        "  quality:\n", maxsplit=1
+    )[0]
+
+    assert "persist-credentials: false" in job
+    assert "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in job
+    assert "node-version-file: .node-version" in job
+    assert 'NEXT_TELEMETRY_DISABLED: "1"' in job
+    assert "npm ci" in job
+    assert "npx playwright install --with-deps chromium" in job
+    assert "npm run test:e2e" in job
+
+
 def test_ci_opens_generated_dashboards_in_an_offline_browser() -> None:
     job = CI.split("  offline-dashboard:\n", maxsplit=1)[1].split(
         "  compatibility:\n", maxsplit=1

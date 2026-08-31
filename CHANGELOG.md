@@ -23,6 +23,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added scoped `read` and `export` bearer credentials plus strict, bounded reporting
   endpoints for dashboard datasets, filter options, opaque stable pagination,
   conversation detail, and self-contained HTML downloads.
+- Added a locked TypeScript workspace with versioned dashboard contracts, pure shared
+  analytics, presentation helpers, Vitest parity coverage, ESM output, and a
+  reproducible network-free browser bundle included in Python wheels.
 
 ### Fixed
 

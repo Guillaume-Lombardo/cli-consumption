@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["ES2024"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@cli-consumption/analytics": ["./packages/analytics/src/index.ts"],
+      "@cli-consumption/contracts": ["./packages/contracts/src/index.ts"],
+      "@cli-consumption/ui": ["./packages/ui/src/index.ts"]
+    },
+    "strict": true,
+    "target": "ES2024",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["packages/**/*.ts"]
+}

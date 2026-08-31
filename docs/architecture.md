@@ -311,6 +311,21 @@ bounded-memory, complete-conversation, and atomic-replacement tests; it does not
 replace them. The standalone renderer remains supported until a later migration
 ticket demonstrates metric and interaction parity for its replacement.
 
+### Shared TypeScript calculation workspace
+
+The repository pins Node and npm and contains four private workspaces: versioned
+dashboard contracts, pure analytics, presentation helpers, and the offline browser
+entry point. Python still owns SQL selection, bounds, privacy transforms, and HTML
+generation. The analytics package accepts only `DashboardDataset v1`, validates the
+version and required sections, and contains no DOM, storage, or network primitive.
+
+The analytics and contracts packages build provider-neutral ESM for the persistent
+web application. The offline package bundles the same factory as one classic browser
+script at `src/cli_consumption/dashboard_calculations.js`; Python embeds that tracked
+asset directly, so generated reports remain self-contained and downstream wheel users
+do not need Node. CI rebuilds the asset from the lockfile and fails on any diff, while
+the Python reference fixtures and Vitest assert identical metric semantics.
+
 ## Adapter qualification
 
 Adapters are introduced one at a time because local data formats are undocumented or

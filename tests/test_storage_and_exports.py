@@ -128,6 +128,7 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
 
     payload = _dashboard_payload(engine)
     assert set(payload) == {
+        "contractVersion",
         "meta",
         "conversations",
         "turns",
@@ -140,6 +141,7 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
         "subagents",
         "ingestionRuns",
     }
+    assert payload["contractVersion"] == 1
     assert payload["meta"] == {"shareSafe": False}
     assert payload["conversations"][0]["tokenSemantics"] == "additive"
     assert set(payload["conversations"][0]) == {

@@ -1,0 +1,37 @@
+{
+  "name": "cli-consumption-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": "24.18.1",
+    "npm": "11.16.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build:esm && npm run build:offline",
+    "build:esm": "npm run build -w @cli-consumption/contracts && npm run build -w @cli-consumption/analytics && npm run build -w @cli-consumption/ui",
+    "build:offline": "npm run build -w @cli-consumption/offline",
+    "check:generated": "node tools/check-generated.mjs",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "smoke:esm": "node tools/smoke-esm.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run check:generated && npm run build:esm && npm run smoke:esm"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.11",
+    "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

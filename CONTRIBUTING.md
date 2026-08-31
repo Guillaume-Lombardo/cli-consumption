@@ -21,10 +21,13 @@ git pull --ff-only
 git switch -c feat/G1L-123-short-description
 uv sync --all-extras --all-groups
 uv run pre-commit install
+npm ci
 ```
 
 Use `uv add`, `uv remove`, and `uv lock` for dependency changes. Do not edit the lock
-file manually.
+file manually. The TypeScript workspace uses the exact Node and npm versions declared
+in `.node-version` and `package.json`; use `npm install --save-exact` for dependency
+changes and commit the generated `package-lock.json`.
 
 ## Make a change
 
@@ -68,8 +71,9 @@ the comparison links.
 
 ## Validate and review
 
-Run the quality gates documented in `AGENTS.md`, inspect the complete diff, then open a
-pull request. The pull request must explain the behavior, privacy impact, storage
+Run the Python quality gates and `npm ci && npm run verify` documented in `AGENTS.md`,
+inspect the complete diff, then open a pull request. The pull request must explain the
+behavior, privacy impact, storage
 compatibility, tests, and any remaining limitation. Merge by squash after required
 checks pass and review is complete.
 

@@ -1,0 +1,14 @@
+{
+  "name": "@cli-consumption/analytics",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/index.js",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@cli-consumption/contracts": "0.0.0"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=neutral --target=es2024 --outfile=dist/index.js"
+  }
+}

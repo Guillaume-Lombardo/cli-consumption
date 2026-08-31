@@ -12,6 +12,8 @@ reports/
 *.sqlite
 *.sqlite3
 .env
+node_modules/
+packages/*/dist/
 
 # Machine-specific orchestration context. These files must never be committed.
 .agents/orchestrator.md

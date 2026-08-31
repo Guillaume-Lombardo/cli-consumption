@@ -42,7 +42,7 @@ def test_compose_requires_external_values_and_exposes_only_proxy() -> None:
     compose = (DEPLOYMENT / "compose.yaml").read_text(encoding="utf-8")
     example = (DEPLOYMENT / ".env.example").read_text(encoding="utf-8")
 
-    assert compose.count(":?") == 5
+    assert compose.count(":?") == 7
     assert '"80:80"' in compose
     assert '"443:443"' in compose
     assert "8765:8765" not in compose
@@ -51,6 +51,8 @@ def test_compose_requires_external_values_and_exposes_only_proxy() -> None:
     assert "log_parameter_max_length_on_error=0" in compose
     assert "max_connections=30" in compose
     assert "CLI_CONSUMPTION_API_TOKEN=\n" in example
+    assert "CLI_CONSUMPTION_READ_TOKEN=\n" in example
+    assert "CLI_CONSUMPTION_EXPORT_TOKEN=\n" in example
     assert "POSTGRES_PASSWORD=\n" in example
 
 

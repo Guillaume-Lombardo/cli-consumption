@@ -18,10 +18,16 @@ from sqlalchemy import (
     select,
     union_all,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql import Select
 
-from cli_consumption.storage import TABLES, Conversation
+from cli_consumption.storage import (
+    TABLES,
+    Conversation,
+    ModelCall,
+    TurnSetting,
+)
 from cli_consumption.timestamps import canonical_timestamp
 
 DATE_VALUE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -89,6 +95,14 @@ class ReportEstimate:
     scalar_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class ReportFilters:
+    providers: tuple[str, ...] = ()
+    machines: tuple[str, ...] = ()
+    projects: tuple[str, ...] = ()
+    models: tuple[str, ...] = ()
+
+
 def parse_export_window(
     since: str | None = None, until: str | None = None
 ) -> ExportWindow:
@@ -104,8 +118,9 @@ def iter_report_rows(
     window: ExportWindow | None = None,
     *,
     batch_size: int = 1_000,
+    filters: ReportFilters | None = None,
 ) -> Iterator[dict[str, Any]]:
-    statement = report_statement(connection, table_name, window)
+    statement = report_statement(connection, table_name, window, filters=filters)
     result = connection.execution_options(
         stream_results=True, yield_per=batch_size
     ).execute(statement)
@@ -116,9 +131,13 @@ def iter_report_rows(
 def estimate_report(
     connection: Connection,
     window: ExportWindow | None = None,
+    *,
+    filters: ReportFilters | None = None,
 ) -> ReportEstimate:
     """Estimate a complete report selection without materializing its rows."""
-    result = connection.execute(report_estimate_statement(connection, window))
+    result = connection.execute(
+        report_estimate_statement(connection, window, filters=filters)
+    )
     records = 0
     scalar_bytes = 0
     for row in result.mappings():
@@ -132,14 +151,18 @@ def report_estimate_statement(
     window: ExportWindow | None = None,
     *,
     table_names: tuple[str, ...] = REPORT_TABLES,
+    filters: ReportFilters | None = None,
 ) -> Any:
     """Build one statement so all table estimates share one database snapshot."""
     active_window = window or ExportWindow()
     estimates = []
     for table_name in table_names:
-        selected = report_statement(connection, table_name, active_window).order_by(
-            None
-        )
+        selected = report_statement(
+            connection,
+            table_name,
+            active_window,
+            filters=filters,
+        ).order_by(None)
         rows = selected.subquery(f"selected_{table_name}")
         byte_lengths = [_byte_length(column, connection) for column in rows.c]
         row_bytes = sum(byte_lengths[1:], byte_lengths[0])
@@ -165,45 +188,106 @@ def report_statement(
     connection: Connection,
     table_name: str,
     window: ExportWindow | None = None,
+    *,
+    filters: ReportFilters | None = None,
 ) -> Select[Any]:
     model = TABLES.get(table_name)
     if model is None:
         raise ValueError(f"Unknown table: {table_name}")
     table = model.__table__
-    selected = _selected_conversations(connection, window or ExportWindow())
+    active_filters = filters or ReportFilters()
+    selected = _selected_conversations(
+        connection,
+        window or ExportWindow(),
+        active_filters,
+    )
     statement = select(table)
     active_window = window or ExportWindow()
-    if active_window.bounded:
+    selection_is_filtered = active_window.bounded or active_filters != ReportFilters()
+    if selection_is_filtered:
         if table_name == "conversations":
             statement = statement.where(table.c.id.in_(selected))
         elif table_name in CONVERSATION_CHILDREN:
             statement = statement.where(table.c.conversation_id.in_(selected))
         elif table_name == "subagents":
             statement = statement.where(_subagent_belongs_to_selection(table, selected))
-        elif table_name == "ingestion_runs":
+        elif table_name == "ingestion_runs" and active_window.bounded:
             statement = statement.where(
                 _timestamp_conditions(table.c.ingested_at, active_window)
             )
+    if table_name == "ingestion_runs" and active_filters.providers:
+        statement = statement.where(table.c.provider.in_(active_filters.providers))
     return statement.order_by(*table.primary_key)
 
 
 def _selected_conversations(
-    connection: Connection, window: ExportWindow
+    connection: Connection,
+    window: ExportWindow,
+    filters: ReportFilters,
 ) -> Select[Any]:
     table = Conversation.__table__
     statement = select(table.c.id)
-    if not window.bounded:
-        return statement
-    started = table.c.started_at
-    ended = table.c.ended_at
-    conditions = [or_(started.is_not(None), ended.is_not(None))]
-    if window.since is not None:
-        bound = canonical_timestamp(window.since)
-        conditions.append(or_(ended >= bound, and_(ended.is_(None), started >= bound)))
-    if window.until is not None:
-        bound = canonical_timestamp(window.until)
-        conditions.append(or_(started < bound, and_(started.is_(None), ended < bound)))
-    return statement.where(and_(*conditions))
+    conditions = []
+    if window.bounded:
+        started = table.c.started_at
+        ended = table.c.ended_at
+        conditions.append(or_(started.is_not(None), ended.is_not(None)))
+        if window.since is not None:
+            bound = canonical_timestamp(window.since)
+            conditions.append(
+                or_(ended >= bound, and_(ended.is_(None), started >= bound))
+            )
+        if window.until is not None:
+            bound = canonical_timestamp(window.until)
+            conditions.append(
+                or_(started < bound, and_(started.is_(None), ended < bound))
+            )
+    if filters.providers:
+        conditions.append(table.c.provider.in_(filters.providers))
+    if filters.machines:
+        conditions.append(table.c.source_machine.in_(filters.machines))
+    if filters.projects:
+        conditions.append(table.c.project.in_(filters.projects))
+    if filters.models:
+        model_call = ModelCall.__table__
+        turn_setting = TurnSetting.__table__
+        model_summary = _conversation_model_membership(
+            connection,
+            table.c.models_json,
+            filters.models,
+        )
+        conditions.append(
+            or_(
+                model_summary,
+                exists(
+                    select(1).where(
+                        model_call.c.conversation_id == table.c.id,
+                        model_call.c.model.in_(filters.models),
+                    )
+                ),
+                exists(
+                    select(1).where(
+                        turn_setting.c.conversation_id == table.c.id,
+                        turn_setting.c.model.in_(filters.models),
+                    )
+                ),
+            )
+        )
+    return statement.where(and_(*conditions)) if conditions else statement
+
+
+def _conversation_model_membership(
+    connection: Connection,
+    models_json: Any,
+    models: tuple[str, ...],
+) -> Any:
+    if connection.dialect.name == "postgresql":
+        values = func.jsonb_array_elements_text(cast(models_json, JSONB)).table_valued(
+            "value"
+        )
+    else:
+        values = func.json_each(models_json).table_valued("key", "value")
+    return exists(select(1).select_from(values).where(values.c.value.in_(models)))
 
 
 def _subagent_belongs_to_selection(table: Any, selected: Select[Any]) -> Any:

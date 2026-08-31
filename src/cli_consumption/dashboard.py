@@ -5,6 +5,7 @@ import json
 import math
 import os
 import tempfile
+import time as time_module
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from cli_consumption.adapters.registry import ADAPTER_SPECS
 from cli_consumption.reporting import (
     ExportWindow,
     ReportEstimate,
+    ReportFilters,
     estimate_report,
     iter_report_rows,
     report_statement,
@@ -84,14 +86,17 @@ def generate_dashboard(
     *,
     share_safe: bool = False,
     window: ExportWindow | None = None,
+    filters: ReportFilters | None = None,
+    timeout_seconds: float | None = None,
 ) -> None:
     initialize_database(engine)
-    with _dashboard_snapshot(engine) as connection:
-        _enforce_estimate(estimate_report(connection, window))
+    with _dashboard_snapshot(engine, timeout_seconds=timeout_seconds) as connection:
+        _enforce_estimate(_estimate_selection(connection, window, filters))
         context = _dashboard_context(
             connection,
             share_safe=share_safe,
             window=window or ExportWindow(),
+            filters=filters or ReportFilters(),
         )
         _atomic_write(
             output,
@@ -99,15 +104,51 @@ def generate_dashboard(
         )
 
 
+def build_dashboard_dataset(
+    engine: Engine,
+    *,
+    share_safe: bool = False,
+    window: ExportWindow | None = None,
+    filters: ReportFilters | None = None,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
+    """Build one bounded dashboard dataset from a coherent database snapshot."""
+    initialize_database(engine)
+    active_window = window or ExportWindow()
+    active_filters = filters or ReportFilters()
+    with _dashboard_snapshot(engine, timeout_seconds=timeout_seconds) as connection:
+        _enforce_estimate(
+            _estimate_selection(connection, active_window, active_filters)
+        )
+        return _dashboard_payload(
+            engine,
+            share_safe=share_safe,
+            window=active_window,
+            filters=active_filters,
+            _connection=connection,
+        )
+
+
 def _preflight_dashboard(
     engine: Engine,
     *,
     window: ExportWindow | None = None,
+    filters: ReportFilters | None = None,
 ) -> None:
     initialize_database(engine)
     with _dashboard_snapshot(engine) as connection:
-        estimate = estimate_report(connection, window)
+        estimate = _estimate_selection(connection, window, filters)
     _enforce_estimate(estimate)
+
+
+def _estimate_selection(
+    connection: Connection,
+    window: ExportWindow | None,
+    filters: ReportFilters | None,
+) -> ReportEstimate:
+    if filters is None or filters == ReportFilters():
+        return estimate_report(connection, window)
+    return estimate_report(connection, window, filters=filters)
 
 
 def _enforce_estimate(estimate: ReportEstimate) -> None:
@@ -118,19 +159,42 @@ def _enforce_estimate(estimate: ReportEstimate) -> None:
 
 
 @contextmanager
-def _dashboard_snapshot(engine: Engine) -> Iterator[Connection]:
+def _dashboard_snapshot(
+    engine: Engine,
+    *,
+    timeout_seconds: float | None = None,
+) -> Iterator[Connection]:
     with engine.connect() as original_connection:
         connection = original_connection
         if connection.dialect.name == "postgresql":
             connection = connection.execution_options(isolation_level="REPEATABLE READ")
         if connection.dialect.name == "sqlite":
             connection.exec_driver_sql("BEGIN DEFERRED")
+            driver_connection = connection.connection.driver_connection
+            set_progress_handler = getattr(
+                driver_connection,
+                "set_progress_handler",
+                None,
+            )
+            if timeout_seconds is not None and set_progress_handler is not None:
+                deadline = time_module.monotonic() + timeout_seconds
+                set_progress_handler(
+                    lambda: int(time_module.monotonic() >= deadline),
+                    10_000,
+                )
             try:
                 yield connection
             finally:
+                if timeout_seconds is not None and set_progress_handler is not None:
+                    set_progress_handler(None, 0)
                 connection.rollback()
             return
         with connection.begin():
+            if timeout_seconds is not None and connection.dialect.name == "postgresql":
+                connection.exec_driver_sql(
+                    "SET LOCAL statement_timeout = "
+                    f"{max(1, int(timeout_seconds * 1_000))}"
+                )
             yield connection
 
 
@@ -188,6 +252,7 @@ def _fsync_directory(directory: Path) -> None:
 @dataclass(frozen=True, slots=True)
 class _DashboardContext:
     window: ExportWindow
+    filters: ReportFilters
     share_safe: bool
     conversation_keys: dict[str, int]
     external_keys: dict[tuple[str, str, str], int]
@@ -257,6 +322,7 @@ def _dashboard_context(
     *,
     share_safe: bool,
     window: ExportWindow,
+    filters: ReportFilters,
 ) -> _DashboardContext:
     budget = _IndexBudget()
     conversation_keys: dict[str, int] = {}
@@ -264,7 +330,9 @@ def _dashboard_context(
     turn_keys: dict[str, int] = {}
     model_names: set[str] = set()
 
-    for index, row in enumerate(iter_report_rows(connection, "conversations", window)):
+    for index, row in enumerate(
+        iter_report_rows(connection, "conversations", window, filters=filters)
+    ):
         identifier = str(row["id"])
         external = (
             str(row["provider"]),
@@ -277,17 +345,19 @@ def _dashboard_context(
         if share_safe:
             for model in json.loads(row["models_json"]):
                 _add_bounded_model(model_names, str(model), budget)
-    for index, row in enumerate(iter_report_rows(connection, "turns", window)):
+    for index, row in enumerate(
+        iter_report_rows(connection, "turns", window, filters=filters)
+    ):
         identifier = str(row["id"])
         budget.charge_turn(identifier)
         turn_keys[identifier] = index
     if share_safe:
         for model in _distinct_report_values(
-            connection, "model_calls", "model", window
+            connection, "model_calls", "model", window, filters
         ):
             _add_bounded_model(model_names, model, budget)
         for model in _distinct_report_values(
-            connection, "turn_settings", "model", window
+            connection, "turn_settings", "model", window, filters
         ):
             _add_bounded_model(model_names, model, budget)
     token_semantics: dict[str, str] = {
@@ -296,13 +366,20 @@ def _dashboard_context(
     budget.charge_token_semantics(len(token_semantics))
     return _DashboardContext(
         window=window,
+        filters=filters,
         share_safe=share_safe,
         conversation_keys=conversation_keys,
         external_keys=external_keys,
         turn_keys=turn_keys,
         projects=(
             _distinct_aliases(
-                connection, "conversations", "project", "project", window, budget
+                connection,
+                "conversations",
+                "project",
+                "project",
+                window,
+                filters,
+                budget,
             )
             if share_safe
             else {}
@@ -314,6 +391,7 @@ def _dashboard_context(
                 "source_machine",
                 "machine",
                 window,
+                filters,
                 budget,
             )
             if share_safe
@@ -327,6 +405,7 @@ def _dashboard_context(
                 "agent_role",
                 "role",
                 window,
+                filters,
                 budget,
                 normalize_empty="unspecified",
             )
@@ -348,9 +427,12 @@ def _distinct_report_values(
     table_name: str,
     column_name: str,
     window: ExportWindow,
+    filters: ReportFilters,
 ) -> Iterator[str]:
     selected = (
-        report_statement(connection, table_name, window).order_by(None).subquery()
+        report_statement(connection, table_name, window, filters=filters)
+        .order_by(None)
+        .subquery()
     )
     column = selected.c[column_name]
     statement = select(column).where(column.is_not(None)).distinct().order_by(column)
@@ -367,12 +449,15 @@ def _distinct_aliases(
     column_name: str,
     prefix: str,
     window: ExportWindow,
+    filters: ReportFilters,
     budget: _IndexBudget,
     *,
     normalize_empty: str | None = None,
 ) -> dict[str, str]:
     aliases: dict[str, str] = {}
-    for source in _distinct_report_values(connection, table_name, column_name, window):
+    for source in _distinct_report_values(
+        connection, table_name, column_name, window, filters
+    ):
         normalized = source or normalize_empty
         if normalized is None or normalized in aliases:
             continue
@@ -397,6 +482,7 @@ def _dashboard_payload(
     *,
     share_safe: bool = False,
     window: ExportWindow | None = None,
+    filters: ReportFilters | None = None,
     _connection: Connection | None = None,
 ) -> dict[str, Any]:
     """Materialize a small payload for tests and direct library callers."""
@@ -408,18 +494,25 @@ def _dashboard_payload(
                 engine,
                 share_safe=share_safe,
                 window=active_window,
+                filters=filters,
                 _connection=connection,
             )
     context = _dashboard_context(
         _connection,
         share_safe=share_safe,
         window=active_window,
+        filters=filters or ReportFilters(),
     )
     payload: dict[str, Any] = {"meta": _dashboard_metadata(context)}
     for table_name, section_name in DASHBOARD_SECTIONS:
         payload[section_name] = [
             _transform_row(table_name, row, context)
-            for row in iter_report_rows(_connection, table_name, active_window)
+            for row in iter_report_rows(
+                _connection,
+                table_name,
+                active_window,
+                filters=context.filters,
+            )
         ]
     return payload
 
@@ -451,7 +544,12 @@ def _stream_dashboard(
     for table_name, section_name in DASHBOARD_SECTIONS:
         writer.write(f',"{section_name}":[')
         first = True
-        for row in iter_report_rows(connection, table_name, context.window):
+        for row in iter_report_rows(
+            connection,
+            table_name,
+            context.window,
+            filters=context.filters,
+        ):
             encoded = _encode_json(_transform_row(table_name, row, context))
             if not first:
                 writer.write(",")

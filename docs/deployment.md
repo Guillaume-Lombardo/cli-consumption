@@ -18,13 +18,13 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Generate the two secret values through the organization's secret manager. The
+Generate the four secret values through the organization's secret manager. The
 PostgreSQL password must use only URL-safe unreserved characters because Compose
-places it in a SQLAlchemy URL. Use independent, high-entropy values and fill the public
-domain and ACME contact address. Never pass the secrets as command-line arguments or
-commit the resolved Compose configuration.
+places it in a SQLAlchemy URL. Use independent, high-entropy ingestion, read, and
+export tokens, then fill the public domain and ACME contact address. Never pass the
+secrets as command-line arguments or commit the resolved Compose configuration.
 
-This minimal Compose example injects both secrets into container environment variables;
+This minimal Compose example injects all four secrets into container environment variables;
 Docker API and host-root access can inspect them. Restrict Docker daemon access as
 equivalent to secret access. Use the platform's native secret-file integration for a
 stronger boundary; the reference stack deliberately does not claim that integration.
@@ -54,10 +54,16 @@ One collector uses SQLAlchemy's default pool: at most 5 persistent connections p
 overflow connections. Readiness has one separately bounded, unpooled probe. Caddy
 allows at most 16 upstream connections and PostgreSQL is capped at 30, leaving headroom
 for maintenance. Do not scale the collector replicas without recalculating all three
-limits and testing the database workload. The example also bounds request bodies at
-32 MiB, process counts, header size, and proxy timeouts. Add an infrastructure rate
-limiter and network policy appropriate to the trust boundary; the application has no
-rate limiter by design.
+limits and testing the database workload. The example also bounds snapshot bodies at
+32 MiB, reporting bodies at 64 KiB in the application, report/export concurrency,
+process counts, temporary export storage, header size, and proxy timeouts. Add an
+infrastructure rate limiter and network policy appropriate to the trust boundary; the
+application has no rate limiter by design.
+
+Pagination sessions are process-local and expire on collector restart. Keep this
+reference deployment at one collector replica; a multi-replica topology needs request
+affinity until a shared session backend exists. Clients must restart at page one after
+the fixed `pagination_expired` response.
 
 The proxy discards access logs so tokens, request targets, headers, and query strings
 cannot leak there. Application error logs contain only fixed event fields and bounded
@@ -76,12 +82,14 @@ capacity, disk space, certificate renewal, and backup age. The endpoints are
 unauthenticated and reveal availability, so restrict them by network policy when the
 deployment is not meant to be public.
 
-## Rotate the API token
+## Rotate scoped API tokens
 
-The collector accepts exactly one bearer token; overlapping tokens and zero-downtime
-rotation are not supported by this single-replica example. Schedule a brief ingestion
-pause, replace `CLI_CONSUMPTION_API_TOKEN` in the protected `.env`, recreate the
-collector, and then update clients from the same secret manager:
+The service accepts separate ingestion, read, and export bearer tokens. The ingestion
+token has only `ingest`, the read token only `read`, and the export token both `read`
+and `export`. Overlapping values and zero-downtime rotation are not supported by this
+single-replica example. Schedule a brief pause for the affected operation, replace the
+corresponding protected `.env` value, recreate the collector, and then update clients
+or the server-side BFF from the same secret manager:
 
 ```bash
 docker compose up -d --force-recreate collector

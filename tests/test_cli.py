@@ -619,6 +619,44 @@ def test_serve_disposes_engine_when_server_stops_or_fails(monkeypatch) -> None:
     }
 
 
+def test_serve_passes_separate_reporting_credentials(monkeypatch) -> None:
+    class FakeEngine:
+        def dispose(self) -> None: ...
+
+    observed: dict[str, object] = {}
+
+    def create(_engine, ingestion, **kwargs):
+        observed.update(ingestion=ingestion, **kwargs)
+        return "application"
+
+    monkeypatch.setenv("INGEST_VALUE", "ingest-value")
+    monkeypatch.setenv("READ_VALUE", "read-value")
+    monkeypatch.setenv("EXPORT_VALUE", "export-value")
+    monkeypatch.setattr(cli_module, "_open_database", lambda _database: FakeEngine())
+    monkeypatch.setattr("cli_consumption.api.create_app", create)
+    monkeypatch.setattr("uvicorn.run", lambda *_args, **_kwargs: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            "--token-env",
+            "INGEST_VALUE",
+            "--read-token-env",
+            "READ_VALUE",
+            "--export-token-env",
+            "EXPORT_VALUE",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed == {
+        "ingestion": "ingest-value",
+        "read_token": "read-value",
+        "export_token": "export-value",
+    }
+
+
 def test_postgres_reports_missing_optional_dependencies_without_a_traceback(
     tmp_path: Path, monkeypatch
 ) -> None:

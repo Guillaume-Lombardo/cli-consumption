@@ -43,7 +43,7 @@ Turn configuration labels accept only bounded identifier-like values. Snapshot
 validation rejects unknown fields, unknown work categories, arbitrary roles or
 statuses, malformed timestamps, inconsistent token compositions, out-of-range
 counters, unconstrained analytics labels, broken relationships, snapshots above
-250,000 records, and API requests above 32 MiB before opening a transaction. Errors
+250,000 records, and snapshot API requests above 32 MiB before opening a transaction. Errors
 use generic codes and do not echo rejected values. Snapshot schema v1 is advertised by
 the collector capabilities endpoint so an incompatible client can stop before upload.
 
@@ -180,8 +180,9 @@ daily activity, durations, counts, token counters, configuration labels, statuse
 aggregate work patterns remain disclosed. Share-safe is a minimization profile, not
 anonymization.
 
-The planned persistent dashboard uses the same minimized row contract behind an
-authenticated FastAPI reporting boundary. Next.js is a server-side BFF and never
+The reporting API uses the same minimized row contract behind scoped FastAPI bearer
+credentials. The ingestion credential never gains read access implicitly, and export
+requires a credential carrying both `read` and `export`. Next.js is a server-side BFF and never
 receives a database URL or exposes FastAPI credentials to the browser. Reporting
 requests place filters in bounded POST bodies rather than URLs; responses replace SQL
 and provider identifiers with response-local keys or integrity-protected opaque
@@ -201,7 +202,11 @@ insertion and avoids set-and-sort duplication for project, machine, and role ali
 it reveals no labels because only its private byte counter is retained. Its public
 limit error is generic and recommends a bounded time
 window without echoing project or machine labels, identifiers, paths, or other database
-values. `--json` returns only a deterministic error code and generic hint. Atomic
+values. Reporting pagination keeps stable internal membership and database identifiers
+only in bounded, expiring process memory; external cursors and conversation references
+are random opaque handles. Responses use `Cache-Control: no-store`, and validation,
+authorization, cursor, limit, timeout, busy, and database failures expose fixed codes
+without request values or exception text. `--json` returns only a deterministic error code and generic hint. Atomic
 replacement prevents a failed generation from truncating a previous dashboard. Each
 CSV also replaces its own previous file atomically, but CSV files remain separate
 detailed exports and earlier tables may have been replaced before a later table or

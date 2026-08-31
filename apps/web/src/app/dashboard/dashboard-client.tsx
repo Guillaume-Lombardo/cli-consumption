@@ -415,7 +415,12 @@ function Cohorts({
         </select>
       </label>
       {rows.length ? (
-        <div className="table-scroll">
+        <section
+          className="table-scroll"
+          aria-label="Scrollable cohort comparison"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: overflow regions need keyboard access in Safari.
+          tabIndex={0}
+        >
           <table>
             <caption className="sr-only">Cohort metric comparison</caption>
             <thead>
@@ -439,7 +444,7 @@ function Cohorts({
               ))}
             </tbody>
           </table>
-        </div>
+        </section>
       ) : (
         <p className="empty">No cohort has enough data for this selection.</p>
       )}
@@ -518,7 +523,12 @@ function ConversationExplorer({ query }: { query: DashboardQueryV1 }) {
       ) : null}
       {page?.items.length ? (
         <>
-          <div className="table-scroll conversation-table">
+          <section
+            className="table-scroll conversation-table"
+            aria-label="Scrollable conversation page"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: overflow regions need keyboard access in Safari.
+            tabIndex={0}
+          >
             <table>
               <caption className="sr-only">Conversation page</caption>
               <thead>
@@ -562,7 +572,7 @@ function ConversationExplorer({ query }: { query: DashboardQueryV1 }) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </section>
           <div className="conversation-cards">
             {page.items.map((conversation) => (
               <article className="conversation-card" key={conversation.conversationRef}>

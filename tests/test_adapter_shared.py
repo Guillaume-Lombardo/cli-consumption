@@ -22,7 +22,6 @@ from cli_consumption.adapters._shared import (
     timestamp,
     tokens,
 )
-from cli_consumption.models import empty_tokens
 
 SHARED_ALIAS_CONTRACTS: dict[str, dict[str, Any]] = {
     "aider": {"_add_tokens": add_tokens, "_sum": bounded_sum},
@@ -221,11 +220,12 @@ def test_tokens_and_add_tokens_saturate_without_changing_composition() -> None:
         "unattributed_tokens": 3,
     }
 
-    aggregate = empty_tokens()
-    aggregate["input_tokens"] = MAX_BIGINT
+    aggregate = tokens(uncached=MAX_BIGINT)
     add_tokens(aggregate, value)
     assert aggregate["input_tokens"] == MAX_BIGINT
-    assert aggregate["total_tokens"] == 30
+    assert aggregate["uncached_input_tokens"] == MAX_BIGINT
+    assert aggregate["cached_input_tokens"] == 0
+    assert aggregate["total_tokens"] == MAX_BIGINT
 
 
 @pytest.mark.parametrize(

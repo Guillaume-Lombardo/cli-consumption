@@ -198,7 +198,8 @@ ADAPTER_SPECS = (
             "session schema (unversioned)",
             "session JSON",
             "https://github.com/continuedev/continue/tree/5522c6f44ca0ac3528b37244818fbfa39b5af470",
-            "No reliable message timing, context windows, compactions, or latency.",
+            "No reliable message timing, context windows, compaction timing, "
+            "or latency.",
         ),
     ),
     AdapterSpec(

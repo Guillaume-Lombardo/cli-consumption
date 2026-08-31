@@ -76,7 +76,7 @@ changed between releases.
 | `amp` | thread mirror (unversioned) | `2026-08-30` | thread JSON | [fixture](../tests/test_amp_adapter.py) | [Amp manual](https://web.archive.org/web/20260825165815id_/https://ampcode.com/manual) | No subthreads, compactions, reasoning split, or latency. |
 | `codex` | rollout schema (unversioned) | `2026-08-30` | session rollout JSONL | [fixture](../tests/test_codex_adapter.py) | [Codex](https://github.com/openai/codex/tree/0a12b855a0b21068108a8a3b311d492712737e0f) | Local rollout metadata only; provider internals may evolve. |
 | `copilot` | CLI 1.0.80 / event schema v1 | `2026-08-30` | session event JSONL | [fixture](../tests/test_copilot_adapter.py) | [GitHub Copilot CLI](https://github.com/github/copilot-cli/tree/v1.0.80) | Shutdown aggregates only; no per-turn token attribution. |
-| `continue` | session schema (unversioned) | `2026-08-30` | session JSON | [fixture](../tests/test_continue_adapter.py) | [Continue](https://github.com/continuedev/continue/tree/5522c6f44ca0ac3528b37244818fbfa39b5af470) | No reliable message timing, context windows, compactions, or latency. |
+| `continue` | session schema (unversioned) | `2026-08-30` | session JSON | [fixture](../tests/test_continue_adapter.py) | [Continue](https://github.com/continuedev/continue/tree/5522c6f44ca0ac3528b37244818fbfa39b5af470) | No reliable message timing, context windows, compaction timing, or latency. |
 | `crush` | CLI 0.91.2 | `2026-08-30` | project registry and additive SQLite migrations | [fixture](../tests/test_crush_adapter.py) | [Crush](https://github.com/charmbracelet/crush/tree/v0.91.2) | Latest context snapshot only; no additive per-call usage. |
 | `cursor` | Composer 2 | `2026-08-30` | transcript JSONL and chat SQLite | [fixture](../tests/test_cursor_adapter.py) | [Cursor CLI](https://web.archive.org/web/20260815113223id_/https://cursor.com/docs/cli/overview) | No per-message timing or tokens; model attribution is incomplete. |
 | `gemini` | session history (unversioned) | `2026-08-30` | active history JSON and JSONL | [fixture](../tests/test_gemini_adapter.py) | [Gemini CLI](https://github.com/google-gemini/gemini-cli/tree/0bd1d439751478771c45d3d0895a6a9760554bf4) | Nested agents excluded; hashed projects are not reversed. |
@@ -175,14 +175,18 @@ rules, arbitrary metadata, costs, and credentials. Working directories are inspe
 only for explicit project mappings.
 
 Continue reports prompt and completion totals with optional cache-read, cache-write,
-and reasoning subsets. The adapter prefers per-response usage and adds only the
-unattributed remainder of the cumulative session snapshot, preventing double counting.
+and reasoning counters. Cache semantics depend on the backend: Anthropic-compatible
+usage reports uncached prompt tokens plus separate cache counters, while OpenAI-style
+usage reports cache reads as a subset of prompt tokens. The adapter normalizes those
+forms by provider, prefers per-response usage, and adds only the unattributed remainder
+of the cumulative session snapshot, preventing double counting. Persisted
+`conversationSummary` markers are reported as compactions without retaining summaries.
 Session files do not persist reliable per-message timestamps, so model calls and turns
 have no timestamps or durations; the file modification time is retained only as the
 conversation's approximate end time. The adapter does not collect IDE-extension-only
-history stores, context-window sizes, compactions, provider-reported status, latency,
-or cost. Continue's internal session format can change without notice, and local token
-events are not billing data.
+history stores, context-window sizes, provider-reported status, latency, or cost.
+Continue's internal session format can change without notice, and local token events
+are not billing data.
 
 ## Crush
 

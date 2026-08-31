@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from storage_helpers import read_table
 
-from cli_consumption.adapters.continue_cli import ContinueAdapter
+from cli_consumption.adapters.continue_cli import ContinueAdapter, _tokens
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
 from cli_consumption.storage import (
@@ -150,14 +150,14 @@ def test_collects_continue_turns_models_tokens_tools_and_project(
     assert conversation["iterations"] == 2
     assert conversation["model_calls"] == 3
     assert conversation["tool_calls"] == 2
-    assert conversation["input_tokens"] == 160
-    assert conversation["uncached_input_tokens"] == 80
+    assert conversation["input_tokens"] == 240
+    assert conversation["uncached_input_tokens"] == 160
     assert conversation["cached_input_tokens"] == 50
     assert conversation["cache_write_input_tokens"] == 30
     assert conversation["output_tokens"] == 65
     assert conversation["reasoning_output_tokens"] == 15
     assert conversation["visible_output_tokens"] == 50
-    assert conversation["total_tokens"] == 225
+    assert conversation["total_tokens"] == 305
     assert [turn["status"] for turn in snapshot.turns] == [
         "completed",
         "completed",
@@ -169,6 +169,40 @@ def test_collects_continue_turns_models_tokens_tools_and_project(
     ]
     assert snapshot.model_calls[-1]["turn_id"] is None
     assert [call["tool_name"] for call in snapshot.tool_calls] == ["Read", "Bash"]
+    assert CANARY not in str(snapshot.to_dict())
+
+
+def test_normalizes_provider_specific_cache_semantics() -> None:
+    usage = {
+        "prompt": 100,
+        "completion": 20,
+        "cached": 30,
+        "cache_write": 10,
+        "reasoning": 5,
+    }
+
+    anthropic = _tokens(usage, "anthropic/claude-sonnet-4")
+    openai = _tokens({**usage, "cache_write": 0}, "openai/gpt-5")
+
+    assert anthropic["input_tokens"] == 140
+    assert anthropic["uncached_input_tokens"] == 100
+    assert anthropic["total_tokens"] == 160
+    assert openai["input_tokens"] == 100
+    assert openai["uncached_input_tokens"] == 70
+    assert openai["total_tokens"] == 120
+
+
+def test_collects_persisted_compaction_markers(tmp_path: Path) -> None:
+    home = tmp_path / "continue"
+    path = session(home)
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["history"][1]["conversationSummary"] = CANARY
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+    snapshot = ContinueAdapter().collect([("machine", home)])
+
+    assert snapshot.conversations[0]["compactions"] == 1
+    assert snapshot.compaction_events[0]["turn_id"] == snapshot.turns[0]["id"]
     assert CANARY not in str(snapshot.to_dict())
 
 

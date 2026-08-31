@@ -87,11 +87,14 @@ AGENT_ROLE_ALIASES = {
 SAFE_DIMENSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
-def parse_timestamp(value: str | None) -> datetime | None:
-    if not value:
+def parse_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return parsed.astimezone(UTC)
     except ValueError:
         return None
 
@@ -99,7 +102,8 @@ def parse_timestamp(value: str | None) -> datetime | None:
 def infer_project(
     metadata: dict[str, Any], mappings: list[tuple[str, str]]
 ) -> tuple[str, str]:
-    cwd = str(metadata.get("cwd") or "").rstrip("/\\")
+    raw_cwd = metadata.get("cwd")
+    cwd = raw_cwd.rstrip("/\\") if isinstance(raw_cwd, str) else ""
     normalized_cwd = cwd.replace("\\", "/")
     for name, prefix in sorted(mappings, key=lambda item: len(item[1]), reverse=True):
         normalized_prefix = prefix.replace("\\", "/").rstrip("/")
@@ -109,17 +113,18 @@ def infer_project(
             return name, "mapping"
     git = metadata.get("git")
     if isinstance(git, dict):
-        repository = str(git.get("repository_url") or git.get("repository") or "")
+        raw_repository = git.get("repository_url") or git.get("repository")
+        repository = raw_repository if isinstance(raw_repository, str) else ""
         slug = re.split(r"[/\\:]", repository.rstrip("/\\"))[-1]
         if slug.endswith(".git"):
             slug = slug[:-4]
-        if slug:
+        if _safe_dimension(slug, 255):
             return slug, "git"
     return OUTSIDE_PROJECT, "none"
 
 
 def extract_tools(payload: dict[str, Any]) -> list[tuple[str, str]]:
-    outer_name = str(payload.get("name", "unknown"))
+    outer_name = _safe_dimension(payload.get("name"), 512) or "unknown"
     if outer_name != "exec":
         return [(outer_name, outer_name)]
     raw_input = payload.get("input", "")
@@ -233,9 +238,16 @@ class CodexAdapter:
                         continue
                     event_count += 1
                     if event.get("type") == "session_meta":
-                        conversation_id = str(event.get("payload", {}).get("id", ""))
-                conversation_id = conversation_id or path.stem
-                candidate = (machine, path, event_count, digest.hexdigest())
+                        payload = event.get("payload")
+                        if not isinstance(payload, dict):
+                            malformed += 1
+                            continue
+                        candidate_id = _safe_dimension(payload.get("id"), 512)
+                        if candidate_id and not conversation_id:
+                            conversation_id = candidate_id
+                content_hash = digest.hexdigest()
+                conversation_id = conversation_id or f"content-{content_hash}"
+                candidate = (machine, path, event_count, content_hash)
                 previous = selected.get(conversation_id)
                 if previous is None:
                     selected[conversation_id] = candidate
@@ -273,7 +285,16 @@ class CodexAdapter:
             ),
             {},
         )
-        conversation_id = str(metadata.get("id") or path.stem)
+        conversation_id = next(
+            (
+                candidate_id
+                for event in events
+                if event.get("type") == "session_meta"
+                and isinstance((payload := event.get("payload")), dict)
+                and (candidate_id := _safe_dimension(payload.get("id"), 512))
+            ),
+            f"content-{digest}",
+        )
         record_id = f"codex:{conversation_id}"
         project, project_source = infer_project(metadata, mappings)
         timestamps = [
@@ -316,9 +337,7 @@ class CodexAdapter:
                     {
                         "id": f"{record_id}:compaction:{compaction_sequence}",
                         "conversation_id": record_id,
-                        "turn_id": (
-                            f"{record_id}:{active_turn_id}" if active_turn_id else None
-                        ),
+                        "turn_id": turns.get(active_turn_id or "", {}).get("id"),
                         "sequence": compaction_sequence,
                         "timestamp": _iso(timestamp),
                     }
@@ -343,7 +362,7 @@ class CodexAdapter:
                         _merge_present(settings_by_turn[active_turn_id], updates)
             if event_type == "turn_context":
                 active_turn_id = (
-                    str(payload.get("turn_id") or active_turn_id or "") or None
+                    _safe_dimension(payload.get("turn_id"), 512) or active_turn_id
                 )
                 active_model = (
                     _safe_dimension(payload.get("model"), 255) or active_model
@@ -362,7 +381,7 @@ class CodexAdapter:
                         or setting_defaults["collaboration_mode"],
                     }
             if event_type == "event_msg" and payload_type == "task_started":
-                active_turn_id = str(payload.get("turn_id") or "") or None
+                active_turn_id = _safe_dimension(payload.get("turn_id"), 512)
                 if active_turn_id:
                     settings = settings_by_turn.setdefault(
                         active_turn_id, dict(setting_defaults)
@@ -391,7 +410,9 @@ class CodexAdapter:
                 "task_complete",
                 "turn_aborted",
             }:
-                turn_id = str(payload.get("turn_id") or active_turn_id or "")
+                turn_id = (
+                    _safe_dimension(payload.get("turn_id"), 512) or active_turn_id or ""
+                )
                 if turn_id in turns:
                     turns[turn_id].update(
                         ended_at=_iso(timestamp),
@@ -412,12 +433,13 @@ class CodexAdapter:
                 work_sequence += 1
                 started_at_ms = _integer_or_none(payload.get("started_at_ms"))
                 completed_at_ms = _integer_or_none(payload.get("completed_at_ms"))
-                turn_id = str(payload.get("turn_id") or active_turn_id or "") or None
+                turn_id = _safe_dimension(payload.get("turn_id") or active_turn_id, 512)
+                turn = turns.get(turn_id or "")
                 snapshot.work_items.append(
                     {
                         "id": f"{record_id}:work:{work_sequence}",
                         "conversation_id": record_id,
-                        "turn_id": f"{record_id}:{turn_id}" if turn_id else None,
+                        "turn_id": turn["id"] if turn else None,
                         "sequence": work_sequence,
                         "kind": WORK_ITEM_KINDS.get(
                             str(item.get("type") or ""), "other"
@@ -438,18 +460,12 @@ class CodexAdapter:
                 if not isinstance(usage, dict):
                     continue
                 call_sequence += 1
-                tokens = {
-                    field: _nonnegative_integer(usage.get(field))
-                    for field in TOKEN_FIELDS
-                }
-                tokens.update(_derived_tokens(tokens))
-                for field, value in tokens.items():
-                    totals[field] += value
+                tokens = _usage_tokens(usage)
+                _accumulate_tokens(totals, tokens)
                 turn = turns.get(active_turn_id or "")
                 if turn:
                     turn["model_calls"] += 1
-                    for field, value in tokens.items():
-                        turn[field] += value
+                    _accumulate_tokens(turn, tokens)
                 snapshot.model_calls.append(
                     {
                         "id": f"{record_id}:model:{call_sequence}",
@@ -548,22 +564,60 @@ class CodexAdapter:
         )
 
 
-def _derived_tokens(tokens: dict[str, int]) -> dict[str, int]:
+def _usage_tokens(usage: dict[str, Any]) -> dict[str, int]:
+    raw = {field: _nonnegative_integer(usage.get(field)) for field in TOKEN_FIELDS}
+    cached = raw["cached_input_tokens"]
+    cache_write = min(raw["cache_write_input_tokens"], MAX_BIGINT - cached)
+    input_tokens = max(raw["input_tokens"], cached + cache_write)
+    uncached = input_tokens - cached - cache_write
+    remaining = MAX_BIGINT - input_tokens
+    reasoning = min(raw["reasoning_output_tokens"], remaining)
+    visible = min(
+        max(0, raw["output_tokens"] - raw["reasoning_output_tokens"]),
+        remaining - reasoning,
+    )
+    output_tokens = reasoning + visible
+    unattributed = min(
+        max(0, raw["total_tokens"] - input_tokens - output_tokens),
+        MAX_BIGINT - input_tokens - output_tokens,
+    )
     return {
-        "uncached_input_tokens": max(
-            0,
-            tokens["input_tokens"]
-            - tokens["cached_input_tokens"]
-            - tokens["cache_write_input_tokens"],
-        ),
-        "visible_output_tokens": max(
-            0, tokens["output_tokens"] - tokens["reasoning_output_tokens"]
-        ),
-        "unattributed_tokens": max(
-            0,
-            tokens["total_tokens"] - tokens["input_tokens"] - tokens["output_tokens"],
-        ),
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached,
+        "cache_write_input_tokens": cache_write,
+        "output_tokens": output_tokens,
+        "reasoning_output_tokens": reasoning,
+        "total_tokens": input_tokens + output_tokens + unattributed,
+        "uncached_input_tokens": uncached,
+        "visible_output_tokens": visible,
+        "unattributed_tokens": unattributed,
     }
+
+
+def _accumulate_tokens(target: dict[str, Any], value: dict[str, int]) -> None:
+    remaining = MAX_BIGINT
+    for field in (
+        "uncached_input_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+        "visible_output_tokens",
+        "reasoning_output_tokens",
+        "unattributed_tokens",
+    ):
+        amount = min(remaining, int(target[field]) + value[field])
+        target[field] = amount
+        remaining -= amount
+    target["input_tokens"] = (
+        target["uncached_input_tokens"]
+        + target["cached_input_tokens"]
+        + target["cache_write_input_tokens"]
+    )
+    target["output_tokens"] = (
+        target["visible_output_tokens"] + target["reasoning_output_tokens"]
+    )
+    target["total_tokens"] = (
+        target["input_tokens"] + target["output_tokens"] + target["unattributed_tokens"]
+    )
 
 
 def _safe_dimension(value: object, maximum: int) -> str | None:
@@ -650,5 +704,9 @@ def _integer_or_none(value: object) -> int | None:
 
 
 def _nonnegative_integer(value: object) -> int:
-    parsed = _integer_or_none(value)
+    parsed = (
+        _integer_or_none(value)
+        if not isinstance(value, float) or value.is_integer()
+        else None
+    )
     return max(0, parsed or 0)

@@ -15,7 +15,9 @@ from cli_consumption.adapters.codex import (
     _subagent_status,
     _work_item_status,
     infer_project,
+    parse_timestamp,
 )
+from cli_consumption.models import Snapshot
 
 
 def test_collects_and_deduplicates_copied_rollouts(
@@ -222,6 +224,78 @@ def test_numeric_and_work_status_normalizers_are_bounded() -> None:
     assert _work_item_status({"status": "running"}) == "in-progress"
     assert _work_item_status({"status": "unexpected"}) == "unknown"
     assert _work_item_status({"success": False}) == "failed"
+
+
+def test_rejects_naive_or_non_string_timestamps() -> None:
+    assert parse_timestamp("2026-08-25T10:00:00") is None
+    assert parse_timestamp({"value": "2026-08-25T10:00:00Z"}) is None
+
+
+def test_malformed_session_metadata_uses_content_identity(tmp_path: Path) -> None:
+    home = tmp_path / "codex"
+    path = home / "sessions" / "PRIVATE_FILENAME_CANARY.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"type":"session_meta","payload":[]}\n'
+        '{"timestamp":42,"type":"event_msg","payload":{"type":"other"}}\n',
+        encoding="utf-8",
+    )
+
+    snapshot = CodexAdapter().collect([("machine", home)])
+
+    assert snapshot.malformed_records == 1
+    assert snapshot.conversations[0]["external_id"].startswith("content-")
+    assert "PRIVATE_FILENAME_CANARY" not in str(snapshot.to_dict())
+
+
+def test_first_valid_session_identity_is_stable_across_metadata(
+    tmp_path: Path, rollout_factory
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    rollout_factory(first)
+    path = rollout_factory(second, extra_event=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"type":"session_meta","payload":{"id":"later-identity"}}\n')
+
+    snapshot = CodexAdapter().collect([("first", first), ("second", second)])
+
+    assert snapshot.duplicate_conversations == 1
+    assert len(snapshot.conversations) == 1
+    assert snapshot.conversations[0]["external_id"] == "conversation-1"
+
+
+def test_inconsistent_usage_and_partial_relations_stay_valid(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    path = rollout_factory(home)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            '{"timestamp":"2026-08-25T10:00:09Z","type":"turn_context",'
+            '"payload":{"turn_id":"missing-turn","model":"gpt-5.6"}}\n'
+            '{"timestamp":"2026-08-25T10:00:10Z","type":"compacted",'
+            '"payload":{}}\n'
+            '{"timestamp":"2026-08-25T10:00:11Z","type":"event_msg",'
+            '"payload":{"type":"item_completed","turn_id":"missing-turn",'
+            '"item":{"type":"CommandExecution"}}}\n'
+            '{"timestamp":"2026-08-25T10:00:12Z","type":"event_msg",'
+            '"payload":{"type":"token_count","info":{"last_token_usage":{'
+            '"input_tokens":1,"cached_input_tokens":3,'
+            '"cache_write_input_tokens":4,"output_tokens":1,'
+            '"reasoning_output_tokens":2,"total_tokens":100}}}}\n'
+        )
+
+    snapshot = CodexAdapter().collect([("machine", home)])
+    Snapshot.from_dict(snapshot.to_dict())
+
+    assert snapshot.compaction_events[-1]["turn_id"] is None
+    assert snapshot.work_items[-1]["turn_id"] is None
+    call = snapshot.model_calls[-1]
+    assert call["input_tokens"] == 7
+    assert call["output_tokens"] == 2
+    assert call["unattributed_tokens"] == 91
+    assert call["total_tokens"] == 100
 
 
 @pytest.mark.parametrize(

@@ -38,6 +38,11 @@ app = typer.Typer(
     help="Analyze AI coding CLI consumption without exporting conversation content.",
     no_args_is_help=True,
 )
+snapshot_app = typer.Typer(
+    help="Create and ingest signed, compressed metadata-only snapshot files.",
+    no_args_is_help=True,
+)
+app.add_typer(snapshot_app, name="snapshot")
 
 
 class CollectionFailure(RuntimeError):
@@ -191,6 +196,152 @@ def collect(
             f"{result.written} written, {result.skipped} unchanged, "
             f"{snapshot.malformed_records} malformed skipped."
         )
+
+
+@snapshot_app.command("create")
+def snapshot_create(
+    signing_key: Annotated[Path, typer.Option(help="Ed25519 private key in PEM form.")],
+    output: Annotated[Path, typer.Option("--output", "-o")],
+    source: Annotated[
+        list[str] | None,
+        typer.Option("--source", "-s", help="[LABEL=]PROVIDER_HOME. Repeat as needed."),
+    ] = None,
+    provider: Annotated[
+        str, typer.Option(help="CLI provider to collect, or 'all' to auto-detect.")
+    ] = "codex",
+    project: Annotated[
+        list[str] | None,
+        typer.Option("--project", help="NAME=PATH_PREFIX project mapping."),
+    ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help="Refuse creation when any malformed provider record was skipped.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit a deterministic JSON result.")
+    ] = False,
+) -> None:
+    """Collect metadata and write one authenticated offline snapshot file."""
+    from cli_consumption.snapshot_files import SnapshotFileError, write_snapshot_file
+
+    try:
+        snapshots = _collect_snapshots(provider, source, project)
+    except CollectionFailure as error:
+        _abort_snapshot(error.code, json_output=json_output)
+    except Exception:
+        _abort_snapshot("local_collection_failed", json_output=json_output)
+    if strict and any(snapshot.malformed_records for snapshot in snapshots):
+        _abort_snapshot("malformed_records", json_output=json_output)
+    try:
+        write_snapshot_file(snapshots, output, signing_key)
+    except (SnapshotFileError, SnapshotValidationError) as error:
+        _abort_snapshot(
+            getattr(error, "code", "snapshot_file_invalid"),
+            json_output=json_output,
+        )
+    result = {
+        "providers": [snapshot.provider for snapshot in snapshots],
+        "snapshots": len(snapshots),
+    }
+    if json_output:
+        typer.echo(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    else:
+        typer.echo(f"Wrote {len(snapshots)} signed metadata snapshots.")
+
+
+@snapshot_app.command("ingest")
+def snapshot_ingest(
+    input_path: Annotated[Path, typer.Option("--input", "-i")],
+    verification_key: Annotated[
+        Path, typer.Option(help="Trusted Ed25519 public key in PEM form.")
+    ],
+    database: Annotated[
+        str,
+        typer.Option(
+            "--database",
+            "-d",
+            envvar="CLI_CONSUMPTION_DATABASE",
+            help="SQLite path or SQLAlchemy PostgreSQL URL.",
+        ),
+    ] = "cli-consumption.sqlite",
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit a deterministic JSON result.")
+    ] = False,
+) -> None:
+    """Verify and ingest an authenticated offline snapshot file."""
+    from cli_consumption.snapshot_files import SnapshotFileError, read_snapshot_file
+
+    try:
+        snapshots = read_snapshot_file(input_path, verification_key)
+    except (SnapshotFileError, SnapshotValidationError) as error:
+        _abort_snapshot(
+            getattr(error, "code", "snapshot_file_invalid"),
+            json_output=json_output,
+        )
+    engine = _open_database(database)
+    try:
+        results = [
+            (snapshot, ingest_snapshot(engine, snapshot)) for snapshot in snapshots
+        ]
+    except SnapshotValidationError:
+        _abort_snapshot("snapshot_file_invalid", json_output=json_output)
+    finally:
+        engine.dispose()
+    payload = {
+        "ingestions": [
+            {
+                "provider": snapshot.provider,
+                "run_id": result.run_id,
+                "received": result.received,
+                "written": result.written,
+                "skipped": result.skipped,
+                "malformed": snapshot.malformed_records,
+                "duplicates": snapshot.duplicate_conversations,
+            }
+            for snapshot, result in results
+        ]
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    else:
+        typer.echo(f"Ingested {len(results)} verified metadata snapshots.")
+
+
+def _abort_snapshot(code: str, *, json_output: bool) -> Never:
+    safe_codes = {
+        "local_collection_failed",
+        "malformed_records",
+        "provider_format_incompatible",
+        "provider_limit_exceeded",
+        "snapshot_dependency_missing",
+        "snapshot_file_invalid",
+        "snapshot_file_too_large",
+        "snapshot_key_invalid",
+        "snapshot_payload_too_large",
+        "snapshot_signature_invalid",
+    }
+    bounded_code = code if code in safe_codes else "snapshot_file_invalid"
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {"error": {"code": bounded_code}},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        if bounded_code == "snapshot_dependency_missing":
+            typer.echo(
+                "Snapshot files require optional dependencies; "
+                "install cli-consumption[snapshots].",
+                err=True,
+            )
+        else:
+            typer.echo(f"Snapshot operation failed ({bounded_code}).", err=True)
+    raise typer.Exit(code=2) from None
 
 
 @app.command()

@@ -37,8 +37,10 @@ def test_ci_and_release_run_static_quality_gates_once_via_pre_commit() -> None:
 
 def test_ci_keeps_compatibility_postgresql_build_and_minimal_smoke_coverage() -> None:
     assert "postgres:" in CI
-    assert 'python-version: ["3.12", "3.13", "3.14"]' in CI
+    assert 'python-version: ["3.11", "3.12", "3.13", "3.14"]' in CI
     assert "minimum-server-stack:" in CI
+    assert 'python-version: "3.11"' in CI
+    assert "--python 3.11" in CI
     assert "fastapi==0.115.0" in CI
     assert CI.count("uv build") == 1
     assert CI.count("Smoke test the minimal wheel") == 1

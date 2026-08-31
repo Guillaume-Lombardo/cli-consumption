@@ -59,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,10 +81,10 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-          python-version: "3.12"
+          python-version: "3.11"
       - name: Test the minimum supported FastAPI and Uvicorn stack
         run: >-
-          uv run --isolated --no-project --python 3.12
+          uv run --isolated --no-project --python 3.11
           --with-editable .
           --with 'fastapi==0.115.0'
           --with 'uvicorn==0.34.0'

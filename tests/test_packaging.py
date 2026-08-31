@@ -15,7 +15,8 @@ def test_python_support_and_optional_dependencies_are_declared() -> None:
     )
     project = configuration["project"]
 
-    assert project["requires-python"] == ">=3.12"
+    assert project["requires-python"] == ">=3.11"
+    assert "Programming Language :: Python :: 3.11" in project["classifiers"]
     assert project["dependencies"] == [
         "alembic>=1.14",
         "pydantic>=2.10",
@@ -30,7 +31,7 @@ def test_python_support_and_optional_dependencies_are_declared() -> None:
     assert project["urls"]["Changelog"] == (
         "https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/CHANGELOG.md"
     )
-    assert configuration["tool"]["ruff"]["target-version"] == "py312"
+    assert configuration["tool"]["ruff"]["target-version"] == "py311"
 
 
 def test_distribution_artifact_contract(tmp_path: Path) -> None:

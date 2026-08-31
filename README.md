@@ -27,7 +27,7 @@ repository assets are excluded from Python distribution artifacts.
 
 ## Installation
 
-CLI Consumption requires Python 3.12 or newer. Run it directly from PyPI with `uv`:
+CLI Consumption requires Python 3.11 or newer. Run it directly from PyPI with `uv`:
 
 ```bash
 uv tool run cli-consumption providers

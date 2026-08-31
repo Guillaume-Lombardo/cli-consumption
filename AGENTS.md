@@ -6,7 +6,7 @@ Read this file, `README.md`, `CONTRIBUTING.md`, and the relevant documents under
 `docs/` before changing the repository. Keep changes scoped to one short-lived branch
 and one coherent pull request.
 
-The project is a Python 3.12+ package managed exclusively with `uv`. Do not introduce
+The project is a Python 3.11+ package managed exclusively with `uv`. Do not introduce
 another package manager, task runner, ORM, web framework, or migration tool without an
 accepted architecture decision.
 

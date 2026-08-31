@@ -56,7 +56,24 @@ def test_release_keeps_tests_build_and_minimal_wheel_smoke_test() -> None:
 
 
 def test_security_audits_locked_dependencies_without_the_editable_project() -> None:
-    assert "uv export --locked --all-extras --all-groups --no-emit-project" in SECURITY
-    assert '--output-file "${RUNNER_TEMP}/locked-requirements.txt"' in SECURITY
-    assert "uv run pip-audit --strict" in SECURITY
-    assert '--requirement "${RUNNER_TEMP}/locked-requirements.txt"' in SECURITY
+    step = SECURITY.split(
+        "      - name: Audit installed locked dependencies\n", maxsplit=1
+    )[1].split("      - name:", maxsplit=1)[0]
+    run_script = step.split("        run: |\n", maxsplit=1)[1]
+    commands: list[str] = []
+    command = ""
+    for line in run_script.splitlines():
+        part = line.strip()
+        command = f"{command} {part}".strip()
+        if part.endswith("\\"):
+            command = command[:-1].rstrip()
+        else:
+            commands.append(command)
+            command = ""
+
+    assert commands == [
+        "uv export --locked --all-extras --all-groups --no-emit-project "
+        '--no-hashes --output-file "${RUNNER_TEMP}/locked-requirements.txt"',
+        "uv run pip-audit --strict "
+        '--requirement "${RUNNER_TEMP}/locked-requirements.txt"',
+    ]

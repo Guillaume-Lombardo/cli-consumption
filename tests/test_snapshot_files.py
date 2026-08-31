@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import zlib
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 from typer.testing import CliRunner
 
-from cli_consumption.cli import app
+from cli_consumption.cli import CollectionFailure, app
 from cli_consumption.models import Snapshot
 from cli_consumption.snapshot_files import (
     FILE_MAGIC,
@@ -88,6 +89,21 @@ def test_signature_is_checked_before_decompression(
     with pytest.raises(SnapshotFileError, match="snapshot_signature_invalid"):
         read_snapshot_file(output, public_path)
     assert not decompressed
+
+
+def test_corrupt_deflate_errors_are_reduced_to_a_generic_file_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_path, public_path, _ = _keys(tmp_path)
+    output = tmp_path / "usage.snapshot"
+    write_snapshot_file([Snapshot(provider="codex")], output, private_path)
+
+    def corrupt_deflate(*_: object, **__: object) -> bytes:
+        raise zlib.error("synthetic private canary")
+
+    monkeypatch.setattr(gzip.GzipFile, "read", corrupt_deflate)
+    with pytest.raises(SnapshotFileError, match="snapshot_file_invalid"):
+        read_snapshot_file(output, public_path)
 
 
 def test_wrong_key_and_malformed_signed_envelope_are_rejected(tmp_path: Path) -> None:
@@ -269,3 +285,29 @@ def test_cli_snapshot_errors_do_not_expose_paths_or_key_contents(
     assert result.exit_code == 2
     assert json.loads(result.stdout) == {"error": {"code": "snapshot_file_invalid"}}
     assert canary not in result.stdout
+
+
+@pytest.mark.parametrize("code", ["invalid_snapshot", "provider_collection_failed"])
+def test_cli_snapshot_preserves_bounded_collection_error_codes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    def fail_collection(*_: object) -> list[Snapshot]:
+        raise CollectionFailure("codex", code, "synthetic private canary")
+
+    monkeypatch.setattr("cli_consumption.cli._collect_snapshots", fail_collection)
+    result = CliRunner().invoke(
+        app,
+        [
+            "snapshot",
+            "create",
+            "--signing-key",
+            str(tmp_path / "private-canary.pem"),
+            "--output",
+            str(tmp_path / "private-canary.snapshot"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout) == {"error": {"code": code}}
+    assert "synthetic private canary" not in result.stdout

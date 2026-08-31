@@ -312,8 +312,10 @@ def snapshot_ingest(
 
 def _abort_snapshot(code: str, *, json_output: bool) -> Never:
     safe_codes = {
+        "invalid_snapshot",
         "local_collection_failed",
         "malformed_records",
+        "provider_collection_failed",
         "provider_format_incompatible",
         "provider_limit_exceeded",
         "snapshot_dependency_missing",

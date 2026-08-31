@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import tempfile
+import zlib
 from contextlib import suppress
 from io import BytesIO
 from pathlib import Path
@@ -182,7 +183,7 @@ def _decompress_bounded(compressed: bytes) -> bytes:
     try:
         with gzip.GzipFile(fileobj=BytesIO(compressed), mode="rb") as handle:
             payload = handle.read(MAX_DECOMPRESSED_BYTES + 1)
-    except (EOFError, OSError):
+    except (EOFError, OSError, zlib.error):
         raise SnapshotFileError("snapshot_file_invalid") from None
     if len(payload) > MAX_DECOMPRESSED_BYTES:
         raise SnapshotFileError("snapshot_payload_too_large")

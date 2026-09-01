@@ -29,9 +29,10 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added an authenticated responsive Next.js dashboard with a server-only collector
   credential, bounded reporting BFF, URL-safe filters, conversation pagination and
   detail, shared analytics, accessibility checks, and desktop/mobile browser coverage.
-- Added an opt-in self-contained React/Tailwind offline renderer with shared web
-  primitives, streamed bounded dataset injection, reproducible packaged assets, and
-  detailed/share-safe `file://` browser coverage while retaining the classic default.
+- Replaced the classic offline renderer with the self-contained React/Tailwind runtime,
+  shared web primitives, streamed bounded dataset injection, reproducible packaged
+  assets, and detailed/share-safe `file://` browser coverage. The temporary
+  `--renderer` migration option was removed.
 - Added persistent-dashboard offline downloads for the exact visible selection, with
   detailed/share-safe profiles, a credential-isolating bounded BFF, private temporary
   cleanup, fixed failures, and self-contained browser coverage.

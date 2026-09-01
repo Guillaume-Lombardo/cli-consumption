@@ -100,6 +100,42 @@ def test_database_upload_replays_identical_snapshot_and_replaces_richer_copy(
         assert conversation is not None
         assert conversation.event_count == 2
         assert conversation.content_hash == "2" * 64
+
+    query = {
+        "version": 1,
+        "window": {"since": None, "until": None},
+        "filters": {
+            "providers": [],
+            "machines": [],
+            "projects": [],
+            "models": [],
+        },
+        "profile": "detailed",
+    }
+    read_token = str(uuid.uuid4())
+    export_token = str(uuid.uuid4())
+    reporting_app = create_app(
+        central_engine,
+        "ingest-token",
+        read_token=read_token,
+        export_token=export_token,
+    )
+    with TestClient(reporting_app) as reporting:
+        dashboard = reporting.post(
+            "/api/v1/reporting/dashboard",
+            json=query,
+            headers={"Authorization": f"Bearer {read_token}"},
+        )
+        exported = reporting.post(
+            "/api/v1/reporting/export",
+            json=query,
+            headers={"Authorization": f"Bearer {export_token}"},
+        )
+    assert dashboard.status_code == 200
+    assert dashboard.json()["conversations"][0]["project"] == "project"
+    assert exported.status_code == 200
+    assert '<div id="root"></div>' in exported.text
+    assert "https://" not in exported.text
     local_engine.dispose()
     central_engine.dispose()
 

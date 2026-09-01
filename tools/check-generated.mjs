@@ -6,10 +6,7 @@ import { promisify } from "node:util";
 import { build } from "esbuild";
 
 const execute = promisify(execFile);
-const assets = [
-  ["src/cli_consumption/dashboard_calculations.js", "src/index.ts", false],
-  ["src/cli_consumption/dashboard_react.js", "src/app.tsx", true],
-];
+const assets = [["src/cli_consumption/dashboard_react.js", "src/app.tsx", true]];
 
 for (const [path, entryPoint, react] of assets) {
   const result = await build({

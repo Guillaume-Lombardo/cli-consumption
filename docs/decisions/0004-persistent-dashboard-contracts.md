@@ -338,6 +338,13 @@ Every phase can roll back its new consumer while the Python offline exporter rem
 No database downgrade is needed for this decision. A later schema change still follows
 ADR 0001 and preserves both SQLite and PostgreSQL.
 
+The migration completed with the React/Tailwind runtime as the sole standalone
+renderer. Python continues to own dataset selection, minimization, limits, streaming,
+atomic replacement, and the offline file contract; only the browser presentation
+implementation changed. Detailed/share-safe Chromium gates, shared analytics fixtures,
+packaging reproducibility, privacy assertions, and measured generation overhead passed
+before the compatibility renderer and CLI selector were removed.
+
 ## Privacy and threat analysis
 
 The approved inputs are only the normalized metadata fields enumerated in the dataset

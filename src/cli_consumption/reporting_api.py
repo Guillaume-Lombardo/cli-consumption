@@ -561,7 +561,6 @@ class ReportingRuntime:
                     window=query.window.window(),
                     filters=query.filters.filters(),
                     timeout_seconds=EXPORT_TIMEOUT_SECONDS,
-                    renderer="react",
                 )
             return path
         except BaseException:

@@ -58,18 +58,10 @@ uv run cli-consumption export --output reports
 Open `reports/dashboard.html` locally. It makes no network requests. Detailed CSV
 tables are generated only when `--csv` is passed.
 
-The classic offline renderer remains the default during the dashboard migration. The
-packaged React/Tailwind renderer can be exercised without Node or a server after
-installation:
-
-```bash
-uv run cli-consumption export --output reports-react --renderer react
-```
-
 Dashboard development lives in the locked npm workspace under `packages/`. It builds
 provider-neutral ESM analytics, shared React presentation primitives, and deterministic
-classic and React/Tailwind browser assets that Python embeds in the wheel; installing
-or using the Python CLI does not require Node.js.
+React/Tailwind browser assets that Python embeds in the wheel. The React runtime is the
+only offline renderer; installing or using the Python CLI does not require Node.js.
 
 The authenticated persistent dashboard lives in `apps/web/`. It reads the same
 minimized reporting contract through a server-side Next.js BFF: the browser never

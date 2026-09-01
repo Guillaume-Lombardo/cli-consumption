@@ -2,8 +2,8 @@
 
 CLI Consumption measures activity; it does not archive conversations.
 
-Both standalone renderers receive exactly the minimized dashboard dataset described
-below. Their JavaScript and CSS are compiled locally, embedded in the HTML, and contain
+The standalone renderer receives exactly the minimized dashboard dataset described
+below. Its JavaScript and CSS are compiled locally, embedded in the HTML, and contain
 no credential, environment value, provider file, request primitive, or external asset.
 The React renderer adds no storage or API surface; filters and theme live only in the
 open document. Detailed HTML still discloses approved project, machine, model, tool,
@@ -258,9 +258,9 @@ and every other repository-only file from wheels and source distributions.
 
 The TypeScript workspace consumes only the already minimized, response-local
 `DashboardDataset v1` contract. Its analytics package has no DOM, storage, or network
-primitive and cannot open provider files or databases. Only the generated classic
-browser calculation asset enters Python distributions; workspace sources, tests,
-dependency caches, and ESM build directories remain repository-only. Synthetic
+primitive and cannot open provider files or databases. Only the generated React
+browser bundle and Tailwind stylesheet enter Python distributions; workspace sources,
+tests, dependency caches, and ESM build directories remain repository-only. Synthetic
 fixtures contain invented operational labels and assert contract rejection without
 copying prompts, responses, tool arguments, credentials, paths, or stable identifiers.
 

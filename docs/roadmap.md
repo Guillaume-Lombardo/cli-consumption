@@ -27,6 +27,8 @@ its acceptance criteria and validation are complete.
 - Deterministic JSON results for collection, export, and retention automation
 - Canonical fixed-width UTC timestamp storage with bounded legacy migration and
   indexable reporting and retention predicates
+- Authenticated persistent Next.js dashboard backed only by bounded FastAPI reporting,
+  with exact-selection offline downloads and a self-contained React/Tailwind export
 
 ## Next provider increments
 
@@ -39,6 +41,6 @@ its acceptance criteria and validation are complete.
 
 ## Later operational work
 
-- Server deployment examples and read-only reporting API
+- High-availability reporting sessions and managed-secret deployment integrations
 - Cost estimates driven by explicit, versioned pricing inputs, deferred until token
   semantics are sufficiently comparable across providers

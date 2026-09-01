@@ -104,6 +104,73 @@ function fixture(): DashboardDatasetV1 {
 }
 
 describe("shared dashboard analytics", () => {
+  it("keeps percentile and comparison edge cases explicit", () => {
+    const calculations = createDashboardCalculations(fixture());
+
+    expect(calculations.percentile([], 0.5)).toBeNull();
+    expect(calculations.percentile([20, 10], 0.5)).toBe(15);
+    expect(calculations.percentile([10, "invalid", 30], 0.75)).toBe(25);
+    expect(calculations.compareMetric(120, 100, "higher")).toEqual({
+      change: 20,
+      style: "better",
+    });
+    expect(calculations.compareMetric(80, 100, "lower")).toEqual({
+      change: -20,
+      style: "better",
+    });
+    expect(calculations.compareMetric(80, 100)).toEqual({
+      change: -20,
+      style: "neutral",
+    });
+    expect(calculations.compareMetric(80, 0, "lower")).toBeNull();
+  });
+
+  it("clips periods to the export window without using wall-clock time", () => {
+    const data = fixture();
+    const calculations = createDashboardCalculations(data);
+    const latest = calculations.rangeFor("2");
+    const custom = calculations.rangeFor("custom", {
+      from: "2026-07-01",
+      to: "2026-09-01",
+    });
+
+    expect(latest?.start?.toISOString()).toBe("2026-08-01T00:00:00.000Z");
+    expect(latest?.end.toISOString()).toBe("2026-08-02T23:59:59.999Z");
+    expect(latest?.previous).toBeNull();
+    expect(custom?.start?.toISOString()).toBe("2026-08-01T00:00:00.000Z");
+    expect(custom?.end.toISOString()).toBe("2026-08-02T23:59:59.999Z");
+
+    const empty = fixture();
+    empty.conversations = [];
+    empty.turns = [];
+    empty.modelCalls = [];
+    empty.toolCalls = [];
+    empty.workItems = [];
+    empty.contextSamples = [];
+    empty.turnSettings = [];
+    empty.compactions = [];
+    empty.subagents = [];
+    empty.ingestionRuns = [];
+    expect(createDashboardCalculations(empty).rangeFor("30")).toBeNull();
+  });
+
+  it("handles the maximum timestamped selection without argument spreading", () => {
+    const data = fixture();
+    data.workItems = Array.from({ length: 150_000 }, (_, index) => ({
+      conversationKey: 1,
+      turnKey: 10,
+      startedAtMs: Date.parse("2026-08-01T00:00:00Z") + index,
+      durationMs: 1,
+      kind: "tool",
+      tool: null,
+      status: "completed",
+    }));
+
+    const range = createDashboardCalculations(data).rangeFor("30");
+    expect(range?.start?.toISOString()).toBe("2026-08-01T00:00:00.000Z");
+    expect(range?.end.toISOString()).toBe("2026-08-02T23:59:59.999Z");
+  });
+
   it("matches the reference metric semantics without mutating the dataset", () => {
     const data = fixture();
     const before = structuredClone(data);

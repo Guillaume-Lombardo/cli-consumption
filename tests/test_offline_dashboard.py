@@ -46,6 +46,7 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         engine,
         Snapshot(
             provider="gemini",
+            malformed_records=7,
             conversations=[
                 {
                     "id": "gemini:offline-conversation",
@@ -130,11 +131,26 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         assert page.locator("#provider").input_value() == ""
         assert page.locator("#conversationCount").text_content() == "2 conversations"
         assert page.locator("#table tbody tr").count() == 2
+        if renderer == "react" and not share_safe:
+            tools_per_turn = (
+                page.locator("section:has(h2:text-is('Cohort comparison')) tbody tr")
+                .first.locator("td")
+                .nth(4)
+            )
+            assert tools_per_turn.text_content() is not None
+            assert "." in (tools_per_turn.text_content() or "")
         page.locator("#provider").select_option("codex")
         assert page.locator("#provider").input_value() == "codex"
         assert page.locator("#cards .card").count() >= 8
         assert page.locator("#conversationCount").text_content() == "1 conversations"
         assert page.locator("#table tbody tr").count() == 1
+        if renderer == "react":
+            assert (
+                page.locator(
+                    ".metric-card:has(> span:text-is('Malformed records')) strong"
+                ).text_content()
+                == "0"
+            )
 
         page.locator("#period").select_option("custom")
         assert "visible" in (page.locator("#customDates").get_attribute("class") or "")

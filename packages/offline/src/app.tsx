@@ -110,7 +110,7 @@ function Cohorts({
                   <td>{number(row.turns)}</td>
                   <td>{formatDuration(row.durationP50)}</td>
                   <td>{short(row.tokensP50)}</td>
-                  <td>{number(row.toolsPerTurn)}</td>
+                  <td>{row.toolsPerTurn.toFixed(1)}</td>
                   <td>{formatPercent(row.pressureP95)}</td>
                   <td>{formatPercent(row.abortRate)}</td>
                 </tr>
@@ -141,10 +141,8 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
   const [selectedConversation, setSelectedConversation] = useState<number | null>(null);
   document.documentElement.dataset.theme = theme;
 
-  const slice = calculations.selectSlice({
-    ...filters,
-    range: calculations.rangeFor(period, custom),
-  });
+  const range = calculations.rangeFor(period, custom);
+  const slice = calculations.selectSlice({ ...filters, range });
   const metrics = calculations.metrics(slice);
   const calls = calculations.semanticTokenCalls(slice);
   const activity = group(
@@ -167,7 +165,13 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
   const selected = slice.conversations.find(
     (conversation) => conversation.key === selectedConversation,
   );
-  const malformed = data.ingestionRuns.reduce((sum, run) => sum + run.malformed, 0);
+  const malformed = data.ingestionRuns
+    .filter(
+      (run) =>
+        (!filters.provider || run.provider === filters.provider) &&
+        calculations.inRange(run.ingestedAt, range),
+    )
+    .reduce((sum, run) => sum + run.malformed, 0);
   const durationCoverage = calculations.ratio(
     slice.turns.filter((turn) => turn.durationMs !== null).length,
     slice.turns.length,

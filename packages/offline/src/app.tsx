@@ -194,18 +194,20 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
   return (
     <main className="dashboard-shell">
       <header className="hero">
-        <div>
-          <p className="eyebrow">Portable local-first report</p>
+        <div className="hero-intro">
           <h1>CLI Consumption</h1>
-          <p>
-            Activity, responsiveness, token composition, and workflows — never prompts,
-            responses, or tool arguments.
-          </p>
-          {data.meta.shareSafe ? (
-            <strong className="privacy-badge" id="privacyBadge">
-              Share-safe dashboard
-            </strong>
-          ) : null}
+          <div className="hero-copy">
+            <p className="eyebrow">Portable local-first report</p>
+            <p>
+              Activity, responsiveness, token composition, and workflows — never
+              prompts, responses, or tool arguments.
+            </p>
+            {data.meta.shareSafe ? (
+              <strong className="privacy-badge" id="privacyBadge">
+                Share-safe dashboard
+              </strong>
+            ) : null}
+          </div>
         </div>
         <button
           className="secondary"

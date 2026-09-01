@@ -16,6 +16,27 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
     page.getByRole("heading", { name: "Conversation explorer" }),
   ).toBeVisible();
 
+  const cardIsInvisible = await page
+    .locator(".metric-card")
+    .first()
+    .evaluate((card) => {
+      const body = getComputedStyle(document.body);
+      const style = getComputedStyle(card);
+      return (
+        style.backgroundColor === body.backgroundColor && style.borderTopWidth === "0px"
+      );
+    });
+  expect(cardIsInvisible).toBe(true);
+
+  const viewport = page.viewportSize();
+  const titleBox = await page.locator(".hero h1").boundingBox();
+  const eyebrowBox = await page.locator(".hero .eyebrow").boundingBox();
+  expect(titleBox).not.toBeNull();
+  expect(eyebrowBox).not.toBeNull();
+  if (viewport && viewport.width > 832 && titleBox && eyebrowBox) {
+    expect(eyebrowBox.x).toBeGreaterThan(titleBox.x + titleBox.width);
+  }
+
   await page.getByRole("combobox", { name: "Project" }).selectOption("project-a");
   await expect(page).toHaveURL(/\/dashboard\?range=30$/);
   expect(page.url()).not.toContain("project-a");

@@ -82,10 +82,10 @@ label {
   text-transform: uppercase;
 }
 h1 {
-  font-size: clamp(2.2rem, 6vw, 4.8rem);
-  letter-spacing: -0.06em;
-  line-height: 0.95;
-  margin: 0.2rem 0 1rem;
+  font-size: clamp(2.4rem, 5vw, 4rem);
+  letter-spacing: -0.045em;
+  line-height: 1;
+  margin: 0;
 }
 h2 {
   font-size: 1.15rem;
@@ -100,11 +100,22 @@ h3 {
   padding: clamp(1rem, 3vw, 3rem);
 }
 .hero {
+  display: grid;
+  gap: 1.25rem;
+  margin: 1rem 0 2.25rem;
+}
+.hero-intro {
   align-items: end;
-  display: flex;
-  gap: 2rem;
-  justify-content: space-between;
-  margin: 1rem 0 2rem;
+  display: grid;
+  gap: clamp(1.5rem, 4vw, 4rem);
+  grid-template-columns: auto minmax(18rem, 42rem);
+}
+.hero-copy > p:last-of-type {
+  line-height: 1.5;
+  margin: 0;
+}
+.hero > .secondary {
+  justify-self: end;
 }
 .hero p:not(.eyebrow),
 .muted,
@@ -119,8 +130,8 @@ details {
   color: var(--accent);
   font-size: 0.73rem;
   font-weight: 850;
-  letter-spacing: 0.16em;
-  margin: 0;
+  letter-spacing: 0.11em;
+  margin: 0 0 0.45rem;
   text-transform: uppercase;
 }
 .privacy-badge {
@@ -132,13 +143,12 @@ details {
 }
 .filter-panel {
   align-items: end;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 1rem;
+  background: var(--background);
+  border: 0;
   display: grid;
   gap: 0.8rem;
   grid-template-columns: repeat(5, minmax(8rem, 1fr));
-  padding: 1rem;
+  padding: 0;
 }
 .custom-dates {
   display: none;
@@ -153,10 +163,10 @@ details {
 .mini-grid,
 .panel-grid {
   display: grid;
-  gap: 1rem;
+  gap: 1.5rem 2rem;
 }
 .metric-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 1rem 0;
 }
 .mini-grid {
@@ -168,13 +178,13 @@ details {
 .panel,
 .metric-card,
 .detail-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 1rem;
-  padding: 1rem;
+  background: var(--background);
+  border: 0;
+  border-radius: 0;
+  padding: 0.75rem 0;
 }
 .panel {
-  margin: 1rem 0;
+  margin: 1.5rem 0;
   min-width: 0;
 }
 .panel-grid > .panel {
@@ -245,7 +255,7 @@ th {
   padding: 0.3rem 0.55rem;
 }
 .detail-card {
-  margin-top: 1rem;
+  margin-top: 1.5rem;
 }
 .empty {
   color: var(--muted);
@@ -264,15 +274,21 @@ footer {
   }
 }
 @media (max-width: 600px) {
-  .hero {
+  .hero-intro {
     align-items: start;
-    flex-direction: column;
+    gap: 0.85rem;
+    grid-template-columns: 1fr;
+  }
+  .hero > .secondary {
+    justify-self: stretch;
   }
   .filter-panel,
-  .metric-grid,
   .mini-grid,
   .panel-grid {
     grid-template-columns: 1fr;
+  }
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .bar {
     grid-template-columns: minmax(6rem, 1fr) 2fr auto;

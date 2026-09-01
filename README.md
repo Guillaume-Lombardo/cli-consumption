@@ -73,7 +73,9 @@ or using the Python CLI does not require Node.js.
 
 The authenticated persistent dashboard lives in `apps/web/`. It reads the same
 minimized reporting contract through a server-side Next.js BFF: the browser never
-receives the collector credential or a database connection string. For a production
+receives a collector credential or a database connection string. Its **Export
+offline** action downloads the exact visible selection as a self-contained detailed or
+share-safe HTML file. For a production
 setup, required environment variables, reverse-proxy constraints, and startup commands
 are documented in the
 [deployment guide](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/deployment.md#run-the-persistent-dashboard).

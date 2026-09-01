@@ -15,6 +15,7 @@ import {
   type DashboardDatasetResponse,
   type DashboardQueryV1,
   type RangeChoice,
+  fetchOfflineExport,
   postReporting,
   queryForRange,
 } from "../../lib/reporting";
@@ -40,8 +41,11 @@ const ERROR_MESSAGES: Record<string, string> = {
     "This selection is too large. Narrow the date range or filters.",
   pagination_expired: "The conversation page expired. Start again from the first page.",
   reporting_busy: "Reporting is busy. Try again in a moment.",
+  export_unavailable: "Offline export is not configured for this dashboard.",
   reporting_limit_exceeded:
     "This selection exceeds the reporting limit. Narrow it and retry.",
+  reporting_response_too_large:
+    "The offline file is too large. Narrow the date range or filters and retry.",
   reporting_timeout: "Reporting timed out. Narrow the selection and retry.",
   reporting_unavailable: "Reporting is temporarily unavailable.",
 };
@@ -610,6 +614,11 @@ export function DashboardClient() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [exportProfile, setExportProfile] = useState<"detailed" | "share-safe">(
+    "detailed",
+  );
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
@@ -693,6 +702,28 @@ export function DashboardClient() {
     setError("Sign-out failed. Check the connection and try again.");
   }
 
+  async function exportOffline() {
+    setExporting(true);
+    setExportError("");
+    try {
+      const blob = await fetchOfflineExport({ ...query, profile: exportProfile });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "cli-consumption-dashboard.html";
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "session_expired") {
+        window.location.assign("/login?reason=session");
+        return;
+      }
+      setExportError(messageFor(caught));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <main className="dashboard-shell">
       <header className="hero">
@@ -705,6 +736,27 @@ export function DashboardClient() {
           </p>
         </div>
         <div className="hero-actions">
+          <label className="inline-control">
+            <span>Offline profile</span>
+            <select
+              aria-label="Offline export profile"
+              value={exportProfile}
+              onChange={(event) =>
+                setExportProfile(event.target.value as "detailed" | "share-safe")
+              }
+            >
+              <option value="detailed">Detailed</option>
+              <option value="share-safe">Share-safe</option>
+            </select>
+          </label>
+          <button
+            className="secondary"
+            disabled={exporting}
+            type="button"
+            onClick={() => void exportOffline()}
+          >
+            {exporting ? "Exporting…" : "Export offline"}
+          </button>
           <button
             className="secondary"
             type="button"
@@ -717,6 +769,12 @@ export function DashboardClient() {
           </button>
         </div>
       </header>
+      {exportError ? (
+        <section className="callout error" role="alert">
+          <strong>Offline export failed.</strong>
+          <span>{exportError}</span>
+        </section>
+      ) : null}
       <Filters
         custom={custom}
         filters={filters}

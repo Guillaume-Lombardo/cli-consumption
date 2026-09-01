@@ -31,6 +31,7 @@ export async function readBoundedBytes(
       chunks.push(value);
     }
   } catch {
+    await reader.cancel().catch(() => undefined);
     return { status: "invalid" };
   }
 

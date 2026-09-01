@@ -25,7 +25,6 @@ from pydantic import (
     model_validator,
 )
 from sqlalchemy.engine import Engine
-from starlette.background import BackgroundTask
 
 from cli_consumption.dashboard import (
     DASHBOARD_CONTRACT_VERSION,
@@ -68,6 +67,25 @@ CACHE_HEADERS = {
     "Cache-Control": "no-store",
     "Pragma": "no-cache",
 }
+
+
+class PrivateExportResponse(FileResponse):
+    """Stream one private export and remove it after success or interruption."""
+
+    def __init__(self, path: Path) -> None:
+        self._private_path = path
+        super().__init__(
+            path,
+            media_type="text/html; charset=utf-8",
+            filename="cli-consumption-dashboard.html",
+            headers=CACHE_HEADERS,
+        )
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._private_path.unlink(missing_ok=True)
 
 
 class StrictRequest(BaseModel):
@@ -543,6 +561,7 @@ class ReportingRuntime:
                     window=query.window.window(),
                     filters=query.filters.filters(),
                     timeout_seconds=EXPORT_TIMEOUT_SECONDS,
+                    renderer="react",
                 )
             return path
         except BaseException:
@@ -612,13 +631,7 @@ def install_reporting_routes(
     )
     def export(query: DashboardQuery) -> FileResponse:
         path = runtime.export(query)
-        return FileResponse(
-            path,
-            media_type="text/html; charset=utf-8",
-            filename="cli-consumption-dashboard.html",
-            headers=CACHE_HEADERS,
-            background=BackgroundTask(path.unlink, missing_ok=True),
-        )
+        return PrivateExportResponse(path)
 
     return runtime
 

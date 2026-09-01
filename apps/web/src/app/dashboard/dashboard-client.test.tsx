@@ -119,6 +119,7 @@ function dataset(): DashboardDatasetResponse {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/");
   window.localStorage.clear();
 });
@@ -182,5 +183,50 @@ describe("persistent dashboard", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Reporting is temporarily unavailable.");
     expect(alert).not.toHaveTextContent(canary);
+  });
+
+  it("exports the exact visible query with the selected privacy profile", async () => {
+    const requests: unknown[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations")) {
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      }
+      if (url.endsWith("/export")) {
+        requests.push(JSON.parse(String(init?.body)));
+        return new Response("<!doctype html><title>Offline</title>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      throw new Error("unexpected_test_request");
+    });
+    const createObjectURL = vi.fn(() => "blob:offline-export");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    render(<DashboardClient />);
+
+    const project = await screen.findByRole("combobox", { name: "Project" });
+    await user.selectOptions(project, PROJECT);
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Offline export profile" }),
+      "share-safe",
+    );
+    await user.click(screen.getByRole("button", { name: "Export offline" }));
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({
+      filters: { machines: [], models: [], projects: [PROJECT], providers: [] },
+      profile: "share-safe",
+      version: 1,
+    });
+    expect(window.location.href).not.toContain(PROJECT);
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:offline-export");
+    expect(click).toHaveBeenCalledOnce();
   });
 });

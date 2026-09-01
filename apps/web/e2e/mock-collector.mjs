@@ -108,9 +108,11 @@ function send(response, status, payload) {
 }
 
 createServer((request, response) => {
+  const isExport = request.url === "/api/v1/reporting/export";
   if (
     request.method !== "POST" ||
-    request.headers.authorization !== "Bearer e2e-read-token"
+    request.headers.authorization !==
+      (isExport ? "Bearer e2e-export-token" : "Bearer e2e-read-token")
   ) {
     send(response, 401, { detail: "authentication_required" });
     return;
@@ -129,7 +131,15 @@ createServer((request, response) => {
       send(response, 400, { detail: "invalid_reporting_request" });
       return;
     }
-    if (request.url === "/api/v1/reporting/dashboard") {
+    if (isExport) {
+      const html = `<!doctype html><meta charset="utf-8"><title>CLI Consumption offline</title><main data-profile="${JSON.parse(body).profile}">project-a offline export</main>`;
+      response.writeHead(200, {
+        "Cache-Control": "no-store",
+        "Content-Length": Buffer.byteLength(html),
+        "Content-Type": "text/html; charset=utf-8",
+      });
+      response.end(html);
+    } else if (request.url === "/api/v1/reporting/dashboard") {
       send(response, 200, dataset);
     } else if (request.url === "/api/v1/reporting/conversations") {
       const { key: _key, ...summary } = conversation;

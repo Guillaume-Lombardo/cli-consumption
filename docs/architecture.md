@@ -338,6 +338,13 @@ file and downstream wheel users do not need Node. CI rebuilds all three assets f
 lockfile and fails on any diff. The classic renderer remains the CLI default until the
 final migration ticket explicitly validates the cutover.
 
+The web offline action posts the exact current `DashboardQuery v1` to a same-origin
+Next.js route. The BFF authenticates the browser session, keeps its dedicated export
+credential server-side, bounds both request and response, and buffers the complete
+collector result before returning a fixed-name `no-store` attachment. FastAPI creates
+the file from one coherent SQL snapshot with the React renderer and removes its private
+temporary after successful streaming, failure, or cancellation.
+
 ## Adapter qualification
 
 Adapters are introduced one at a time because local data formats are undocumented or

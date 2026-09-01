@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import stat
 import threading
 import uuid
 from pathlib import Path
@@ -20,7 +21,9 @@ from cli_consumption.dashboard import _dashboard_payload
 from cli_consumption.models import Snapshot, empty_tokens
 from cli_consumption.reporting import ReportFilters, parse_export_window
 from cli_consumption.reporting_api import (
+    DashboardQuery,
     PaginationStore,
+    PrivateExportResponse,
     ReportingError,
     ReportingRuntime,
 )
@@ -215,8 +218,57 @@ async def test_reporting_scopes_capabilities_and_cache_policy(tmp_path: Path) ->
         'filename="cli-consumption-dashboard.html"'
     )
     assert b"__CLI_CONSUMPTION_STREAMED_PAYLOAD__" not in export.content
+    assert b'<div id="root"></div>' in export.content
+    assert b"https://" not in export.content
+    assert CANARY.encode() not in export.content
     assert read_on_ingest.status_code == 403
     engine.dispose()
+
+
+def test_export_runtime_uses_a_private_react_temporary(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    path = ReportingRuntime(engine).export(DashboardQuery.model_validate(_query()))
+    try:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        html = path.read_text(encoding="utf-8")
+        assert '<div id="root"></div>' in html
+        assert "offline_dashboard_root_missing" in html
+        assert CANARY not in html
+    finally:
+        path.unlink(missing_ok=True)
+        engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_export_response_removes_temporary_when_streaming_is_cancelled(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "private-export.html"
+    path.write_text("private export", encoding="utf-8")
+    path.chmod(0o600)
+    response = PrivateExportResponse(path)
+
+    async def receive() -> dict[str, str]:
+        return {"type": "http.request"}
+
+    async def disconnected(_message: object) -> None:
+        raise RuntimeError("client_disconnected")
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/export",
+        "raw_path": b"/export",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 1),
+        "server": ("test", 80),
+    }
+    with pytest.raises(RuntimeError, match="client_disconnected"):
+        await response(scope, receive, disconnected)
+    assert not path.exists()
 
 
 def test_empty_or_whitespace_credentials_are_rejected_generically(

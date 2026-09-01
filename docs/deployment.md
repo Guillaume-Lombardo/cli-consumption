@@ -119,6 +119,8 @@ Inject these server-only values through the deployment platform's secret manager
   12 characters;
 - `CLI_CONSUMPTION_READ_TOKEN`: the collector's read-scoped token, never the ingestion
   or export token;
+- `CLI_CONSUMPTION_EXPORT_TOKEN`: a distinct collector token carrying `read` and
+  `export`, used only by the server-side offline-download route;
 - `CLI_CONSUMPTION_SESSION_SECRET`: an independent random value of at least 32 bytes.
 
 Start the built service without placing secrets on the command line:
@@ -136,11 +138,13 @@ reject cross-origin mutations. The session lasts eight hours and is held in a si
 HTTP-only, same-site cookie; rotate the password, read token, and session secret through
 normal secret-manager replacement and service restart procedures.
 
-The browser initially requests only the latest 30 days. Project, machine, provider,
+The browser initially requests only the latest 30 days. Its offline action sends the
+exact current selection through a bounded same-origin POST and downloads one
+self-contained detailed or share-safe HTML file. Project, machine, provider,
 model, and other operational labels travel in POST bodies rather than URL query
 parameters. The dashboard intentionally exposes those private labels and usage metrics
-to authenticated users; it is not a public or share-safe surface. Keep the standalone
-`export --share-safe` workflow for minimized files intended for controlled sharing.
+to authenticated users; it is not a public or share-safe surface. Treat downloaded
+detailed files as private; choose the share-safe profile for controlled sharing.
 
 ## Back up and restore
 

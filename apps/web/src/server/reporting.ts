@@ -21,6 +21,7 @@ const SAFE_UPSTREAM_CODES = new Set([
   "pagination_expired",
   "reporting_busy",
   "reporting_limit_exceeded",
+  "reporting_response_too_large",
   "reporting_timeout",
 ]);
 

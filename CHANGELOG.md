@@ -6,10 +6,10 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-01
+
 ### Added
 
-- Added deterministic, compressed offline snapshot files authenticated with Ed25519,
-  with bounded verification-before-parsing and idempotent SQLite/PostgreSQL ingestion.
 - Added a blocking browser CI gate that opens detailed and share-safe dashboards
   directly from `file://`, exercises their controls, and rejects network activity.
 - Defined the versioned, scoped, and bounded contracts for database upload, persistent
@@ -36,6 +36,13 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added persistent-dashboard offline downloads for the exact visible selection, with
   detailed/share-safe profiles, a credential-isolating bounded BFF, private temporary
   cleanup, fixed failures, and self-contained browser coverage.
+
+## [0.3.3] - 2026-08-31
+
+### Added
+
+- Added deterministic, compressed offline snapshot files authenticated with Ed25519,
+  with bounded verification-before-parsing and idempotent SQLite/PostgreSQL ingestion.
 
 ### Fixed
 
@@ -157,7 +164,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Refreshed the provider guide for the first minor release ([#26]).
 
-[Unreleased]: https://github.com/Guillaume-Lombardo/cli-consumption/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/Guillaume-Lombardo/cli-consumption/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Guillaume-Lombardo/cli-consumption/compare/v0.3.3...v0.4.0
+[0.3.3]: https://github.com/Guillaume-Lombardo/cli-consumption/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/Guillaume-Lombardo/cli-consumption/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Guillaume-Lombardo/cli-consumption/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Guillaume-Lombardo/cli-consumption/compare/v0.2.1...v0.3.0

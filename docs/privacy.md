@@ -214,6 +214,16 @@ still receives selected operational labels in POST bodies and returns them to th
 authenticated browser, so TLS, log minimization, session-secret rotation, workstation
 access control, and an appropriate collector retention policy remain operator duties.
 
+Offline downloads reuse the exact bounded POST query visible in the dashboard and add
+only the selected `detailed` or `share-safe` profile. A dedicated server-side token
+carrying `read` and `export` never reaches browser state or the generated file. The BFF
+buffers at most 128 MiB before sending any HTML, uses fixed generic errors and
+`no-store` headers, and recommends narrowing an oversized selection. FastAPI writes a
+mode-0600 temporary, renders from one coherent SQL snapshot, and removes the temporary
+after success, error, or client cancellation. The resulting HTML remains a portable
+copy: detailed exports disclose the selected operational metadata, while share-safe
+exports retain the documented aggregate-disclosure boundary.
+
 Dashboard generation first evaluates only aggregate row counts and scalar byte
 lengths for the selected report. These internal estimates are not exported or logged.
 The command refuses selections above 250,000 rows or 128 MiB of selected scalar values,

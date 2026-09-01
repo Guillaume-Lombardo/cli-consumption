@@ -5,6 +5,7 @@ const SECRET_BYTES = 32;
 export interface DashboardServerConfig {
   apiUrl: URL;
   dashboardOrigin: string | null;
+  exportToken: string | null;
   password: string;
   readToken: string;
   sessionSecret: string;
@@ -22,6 +23,7 @@ export function dashboardServerConfig(): DashboardServerConfig {
   const readToken = required("CLI_CONSUMPTION_READ_TOKEN");
   const sessionSecret = required("CLI_CONSUMPTION_SESSION_SECRET");
   const dashboardOrigin = process.env.CLI_CONSUMPTION_DASHBOARD_ORIGIN ?? null;
+  const exportToken = process.env.CLI_CONSUMPTION_EXPORT_TOKEN ?? null;
   let apiUrl: URL;
   try {
     apiUrl = new URL(required("CLI_CONSUMPTION_API_URL"));
@@ -53,5 +55,12 @@ export function dashboardServerConfig(): DashboardServerConfig {
       throw new Error("dashboard_configuration_invalid");
     }
   }
-  return { apiUrl, dashboardOrigin, password, readToken, sessionSecret };
+  return {
+    apiUrl,
+    dashboardOrigin,
+    exportToken,
+    password,
+    readToken,
+    sessionSecret,
+  };
 }

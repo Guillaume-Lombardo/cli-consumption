@@ -21,6 +21,21 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   expect(page.url()).not.toContain("project-a");
   await expect(page.getByRole("status")).toBeHidden();
 
+  await page
+    .getByRole("combobox", { name: "Offline export profile" })
+    .selectOption("share-safe");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export offline" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("cli-consumption-dashboard.html");
+  const stream = await download.createReadStream();
+  let exported = "";
+  for await (const chunk of stream) exported += chunk.toString();
+  expect(exported).toContain('data-profile="share-safe"');
+  expect(exported).toContain("project-a offline export");
+  expect(exported).not.toContain("e2e-export-token");
+  expect(exported).not.toMatch(/https?:\/\//);
+
   await page.getByRole("button", { name: "Inspect" }).click();
   await expect(page.getByRole("region", { name: "Conversation detail" })).toBeVisible();
   const dashboardAccessibility = await new AxeBuilder({ page }).analyze();

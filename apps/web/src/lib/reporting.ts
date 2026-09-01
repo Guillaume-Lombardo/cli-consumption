@@ -116,3 +116,25 @@ export async function postReporting<T>(
   }
   return (await response.json()) as T;
 }
+
+/** Request a self-contained export for the exact query currently shown. */
+export async function fetchOfflineExport(query: DashboardQueryV1): Promise<Blob> {
+  const response = await fetch("/api/reporting/export", {
+    body: JSON.stringify(query),
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  if (response.status === 401) throw new Error("session_expired");
+  if (!response.ok) {
+    let code = "reporting_unavailable";
+    try {
+      const payload = (await response.json()) as { detail?: unknown };
+      if (typeof payload.detail === "string") code = payload.detail;
+    } catch {
+      // Keep the fixed fallback; upstream text is never surfaced.
+    }
+    throw new Error(code);
+  }
+  return response.blob();
+}

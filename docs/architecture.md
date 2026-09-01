@@ -314,11 +314,10 @@ from the installed Python package, opens each generated file directly through a
 any HTTP(S) request, WebSocket, browser error, external script, stylesheet, import, or
 other network primitive. The gate needs no application server or remote database.
 
-This browser gate runs both the default classic renderer and the alternative
-React/Tailwind renderer. It complements the existing deterministic-generation, privacy-canary,
-bounded-memory, complete-conversation, and atomic-replacement tests; it does not
-replace them. The standalone renderer remains supported until a later migration
-ticket demonstrates metric and interaction parity for its replacement.
+This browser gate runs the production React/Tailwind renderer for both profiles. It
+complements the deterministic-generation, privacy-canary, bounded-memory,
+complete-conversation, and atomic-replacement tests; it does not replace them. The
+standalone offline capability remains supported independently of the Next.js service.
 
 ### Shared TypeScript calculation workspace
 
@@ -331,12 +330,13 @@ version and required sections, and contains no DOM, storage, or network primitiv
 The analytics and contracts packages build provider-neutral ESM for the persistent
 web application. Shared React cards, bars, and sections live in the UI package and are
 consumed by both Next.js and the standalone entry point. The offline package produces
-the classic calculation factory plus a production React bundle and compiled Tailwind
-stylesheet under `src/cli_consumption/`. Python streams the same minimized dataset v1
-between the selected renderer's inline assets, so generated reports remain one bounded
-file and downstream wheel users do not need Node. CI rebuilds all three assets from the
-lockfile and fails on any diff. The classic renderer remains the CLI default until the
-final migration ticket explicitly validates the cutover.
+one production React bundle and compiled Tailwind stylesheet under
+`src/cli_consumption/`. Python streams the same minimized dataset v1 between those
+inline assets, so generated reports remain one bounded file and downstream wheel users
+do not need Node. CI rebuilds both assets from the lockfile and fails on any diff. The
+former Python-string renderer and its compatibility calculation bundle were removed
+after detailed/share-safe parity, packaging, privacy, performance, and rollback gates
+passed.
 
 The web offline action posts the exact current `DashboardQuery v1` to a same-origin
 Next.js route. The BFF authenticates the browser session, keeps its dedicated export
@@ -344,6 +344,32 @@ credential server-side, bounds both request and response, and buffers the comple
 collector result before returning a fixed-name `no-store` attachment. FastAPI creates
 the file from one coherent SQL snapshot with the React renderer and removes its private
 temporary after successful streaming, failure, or cancellation.
+
+### Cutover evidence and operating impact
+
+The final cutover was measured with the deterministic public-demo fixture (eight
+conversations) on `codex-dev`, Python 3.14, after a warm dependency sync. Five
+sequential generations were compared on the revision immediately before and after the
+renderer switch:
+
+| Measure | Classic baseline | React/Tailwind | Impact |
+| --- | ---: | ---: | ---: |
+| Median generation wall time | 0.486 s | 0.489 s | +0.6% |
+| Self-contained demo HTML | 67,522 bytes | 236,466 bytes | +168,944 bytes |
+| Python dashboard source | 61,674 bytes | 26,144 bytes | -35,530 bytes |
+| Packaged compatibility calculation asset | 18,563 bytes | removed | -18,563 bytes |
+
+These figures are a reproducible comparison fixture, not a production latency promise.
+The React bundle adds fixed output and browser-parse overhead; SQL selection and JSON
+streaming still scale with the selected rows. Existing 250,000-row, 128 MiB scalar,
+128 MiB HTML, 60-second API export, and single-concurrent-export ceilings are unchanged.
+Operators should narrow large time windows before changing those safety bounds.
+
+The cutover has no schema, snapshot, or API-contract migration. Rollback means running
+the preceding application version against the same supported database schema; it does
+not require a data downgrade. Node remains a build-time dependency only. Installed CLI
+exports, FastAPI exports, and downloaded files remain autonomous and require no Node or
+application server to open.
 
 ## Adapter qualification
 

@@ -98,11 +98,8 @@ def test_distribution_artifact_contract(tmp_path: Path) -> None:
                 "import cli_consumption, cli_consumption.migrations, "
                 "cli_consumption.snapshot_files; "
                 "from cli_consumption.dashboard import "
-                "_dashboard_calculations_script, _react_dashboard_script, "
-                "_react_dashboard_styles; "
+                "_react_dashboard_script, _react_dashboard_styles; "
                 "assert cli_consumption.__version__ != '0.0.0'; "
-                "assert 'createDashboardCalculations' in "
-                "_dashboard_calculations_script(); "
                 "assert 'offline_dashboard_root_missing' in _react_dashboard_script(); "
                 "assert '.dashboard-shell' in _react_dashboard_styles()"
             ),

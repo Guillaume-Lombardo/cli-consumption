@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
 from urllib.parse import urlparse
 
 import pytest
@@ -25,12 +24,10 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.parametrize("share_safe", [False, True], ids=["detailed", "share-safe"])
-@pytest.mark.parametrize("renderer", ["classic", "react"])
 def test_generated_dashboard_opens_and_interacts_without_network(
     tmp_path: Path,
     rollout_factory,
     share_safe: bool,
-    renderer: Literal["classic", "react"],
 ) -> None:
     home = tmp_path / "codex"
     rollout_factory(home)
@@ -71,8 +68,8 @@ def test_generated_dashboard_opens_and_interacts_without_network(
             ],
         ),
     )
-    output = tmp_path / f"{renderer}-{'share-safe' if share_safe else 'detailed'}.html"
-    generate_dashboard(engine, output, share_safe=share_safe, renderer=renderer)
+    output = tmp_path / f"{'share-safe' if share_safe else 'detailed'}.html"
+    generate_dashboard(engine, output, share_safe=share_safe)
     engine.dispose()
 
     html = output.read_text(encoding="utf-8")
@@ -131,7 +128,7 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         assert page.locator("#provider").input_value() == ""
         assert page.locator("#conversationCount").text_content() == "2 conversations"
         assert page.locator("#table tbody tr").count() == 2
-        if renderer == "react" and not share_safe:
+        if not share_safe:
             tools_per_turn = (
                 page.locator("section:has(h2:text-is('Cohort comparison')) tbody tr")
                 .first.locator("td")
@@ -144,13 +141,12 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         assert page.locator("#cards .card").count() >= 8
         assert page.locator("#conversationCount").text_content() == "1 conversations"
         assert page.locator("#table tbody tr").count() == 1
-        if renderer == "react":
-            assert (
-                page.locator(
-                    ".metric-card:has(> span:text-is('Malformed records')) strong"
-                ).text_content()
-                == "0"
-            )
+        assert (
+            page.locator(
+                ".metric-card:has(> span:text-is('Malformed records')) strong"
+            ).text_content()
+            == "0"
+        )
 
         page.locator("#period").select_option("custom")
         assert "visible" in (page.locator("#customDates").get_attribute("class") or "")

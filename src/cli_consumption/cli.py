@@ -786,16 +786,6 @@ def export_command(
             help="Write a pseudonymized dashboard and reject detailed CSV exports.",
         ),
     ] = False,
-    renderer: Annotated[
-        str,
-        typer.Option(
-            "--renderer",
-            help=(
-                "Offline renderer: classic (default) or react. The React runtime "
-                "is available for migration validation until the final cutover."
-            ),
-        ),
-    ] = "classic",
     since: Annotated[
         str | None,
         typer.Option(
@@ -821,8 +811,6 @@ def export_command(
         raise typer.BadParameter("--share-safe cannot be combined with --csv")
     if not dashboard and not csv_exports:
         raise typer.BadParameter("enable --dashboard or --csv")
-    if renderer not in {"classic", "react"}:
-        raise typer.BadParameter("--renderer must be classic or react")
     try:
         window = parse_export_window(since, until)
     except ValueError:
@@ -849,7 +837,6 @@ def export_command(
                     dashboard_path,
                     share_safe=share_safe,
                     window=window,
-                    renderer=renderer,
                 )
             except DashboardLimitError:
                 hint = "narrow the export with --since and/or --until"

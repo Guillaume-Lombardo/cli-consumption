@@ -11,6 +11,6 @@
     "react-dom": "19.2.8"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --format=iife --platform=browser --target=es2020 --legal-comments=none --outfile=../../src/cli_consumption/dashboard_calculations.js && esbuild src/app.tsx --bundle --format=iife --platform=browser --target=es2020 --jsx=automatic --legal-comments=none --minify --define:process.env.NODE_ENV=\\\"production\\\" --outfile=../../src/cli_consumption/dashboard_react.js && tailwindcss -i src/styles.css -o ../../src/cli_consumption/dashboard_react.css --minify && node ../../tools/sanitize-offline-assets.mjs"
+    "build": "esbuild src/app.tsx --bundle --format=iife --platform=browser --target=es2020 --jsx=automatic --legal-comments=none --minify --define:process.env.NODE_ENV=\\\"production\\\" --outfile=../../src/cli_consumption/dashboard_react.js && tailwindcss -i src/styles.css -o ../../src/cli_consumption/dashboard_react.css --minify && node ../../tools/sanitize-offline-assets.mjs"
   }
 }

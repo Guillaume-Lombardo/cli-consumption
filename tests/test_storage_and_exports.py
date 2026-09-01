@@ -6,7 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import Table, inspect, text
@@ -62,6 +62,16 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     paths = export_csv(engine, output)
     dashboard = output / "dashboard.html"
     generate_dashboard(engine, dashboard)
+    react_dashboard = output / "dashboard-react.html"
+    repeated_react_dashboard = output / "dashboard-react-repeated.html"
+    generate_dashboard(engine, react_dashboard, renderer="react")
+    generate_dashboard(engine, repeated_react_dashboard, renderer="react")
+    with pytest.raises(ValueError, match="unknown_dashboard_renderer"):
+        generate_dashboard(
+            engine,
+            output / "unknown.html",
+            renderer=cast(Any, "unknown"),
+        )
     assert len(paths) == 10
     assert not (output / "subagent_scopes.csv").exists()
     html = dashboard.read_text(encoding="utf-8")
@@ -112,6 +122,14 @@ def test_ingestion_is_idempotent_and_exports_are_self_contained(
     assert "console." not in html
     assert "<script>project-label" not in html
     assert "<\\/script><script>" not in html
+    react_html = react_dashboard.read_text(encoding="utf-8")
+    assert react_dashboard.read_bytes() == repeated_react_dashboard.read_bytes()
+    assert '<div id="root"></div>' in react_html
+    assert "offline_dashboard_root_missing" in react_html
+    assert "secret value" not in react_html
+    assert "https://" not in react_html
+    assert "<script>project-label" not in react_html
+    assert "<\\/script><script>" not in react_html
     for path in paths:
         assert "secret value" not in path.read_text(encoding="utf-8")
     for table in (

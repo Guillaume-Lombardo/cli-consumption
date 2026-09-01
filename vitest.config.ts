@@ -6,20 +6,38 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: {
-      "@cli-consumption/analytics": fileURLToPath(
-        new URL("./packages/analytics/src/index.ts", import.meta.url),
-      ),
-      "@cli-consumption/contracts": fileURLToPath(
-        new URL("./packages/contracts/src/index.ts", import.meta.url),
-      ),
-      "@cli-consumption/ui": fileURLToPath(
-        new URL("./packages/ui/src/index.ts", import.meta.url),
-      ),
-      "server-only": fileURLToPath(
-        new URL("./tools/server-only-test-stub.ts", import.meta.url),
-      ),
-    },
+    alias: [
+      {
+        find: "@cli-consumption/ui/react",
+        replacement: fileURLToPath(
+          new URL("./packages/ui/src/react.tsx", import.meta.url),
+        ),
+      },
+      {
+        find: "@cli-consumption/analytics",
+        replacement: fileURLToPath(
+          new URL("./packages/analytics/src/index.ts", import.meta.url),
+        ),
+      },
+      {
+        find: "@cli-consumption/contracts",
+        replacement: fileURLToPath(
+          new URL("./packages/contracts/src/index.ts", import.meta.url),
+        ),
+      },
+      {
+        find: "@cli-consumption/ui",
+        replacement: fileURLToPath(
+          new URL("./packages/ui/src/index.ts", import.meta.url),
+        ),
+      },
+      {
+        find: "server-only",
+        replacement: fileURLToPath(
+          new URL("./tools/server-only-test-stub.ts", import.meta.url),
+        ),
+      },
+    ],
   },
   test: {
     coverage: { enabled: false },

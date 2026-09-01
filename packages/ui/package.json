@@ -7,10 +7,17 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./src/react.tsx",
+      "import": "./dist/react.js"
     }
   },
   "types": "./src/index.ts",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --format=esm --platform=browser --target=es2024 --outfile=dist/index.js"
+    "build": "esbuild src/index.ts src/react.tsx --bundle --format=esm --platform=browser --target=es2024 --jsx=automatic --outdir=dist --external:react"
+  },
+  "peerDependencies": {
+    "react": "19.2.8"
   }
 }

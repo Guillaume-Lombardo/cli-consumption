@@ -314,7 +314,8 @@ from the installed Python package, opens each generated file directly through a
 any HTTP(S) request, WebSocket, browser error, external script, stylesheet, import, or
 other network primitive. The gate needs no application server or remote database.
 
-This browser gate complements the existing deterministic-generation, privacy-canary,
+This browser gate runs both the default classic renderer and the alternative
+React/Tailwind renderer. It complements the existing deterministic-generation, privacy-canary,
 bounded-memory, complete-conversation, and atomic-replacement tests; it does not
 replace them. The standalone renderer remains supported until a later migration
 ticket demonstrates metric and interaction parity for its replacement.
@@ -328,11 +329,14 @@ generation. The analytics package accepts only `DashboardDataset v1`, validates 
 version and required sections, and contains no DOM, storage, or network primitive.
 
 The analytics and contracts packages build provider-neutral ESM for the persistent
-web application. The offline package bundles the same factory as one classic browser
-script at `src/cli_consumption/dashboard_calculations.js`; Python embeds that tracked
-asset directly, so generated reports remain self-contained and downstream wheel users
-do not need Node. CI rebuilds the asset from the lockfile and fails on any diff, while
-the Python reference fixtures and Vitest assert identical metric semantics.
+web application. Shared React cards, bars, and sections live in the UI package and are
+consumed by both Next.js and the standalone entry point. The offline package produces
+the classic calculation factory plus a production React bundle and compiled Tailwind
+stylesheet under `src/cli_consumption/`. Python streams the same minimized dataset v1
+between the selected renderer's inline assets, so generated reports remain one bounded
+file and downstream wheel users do not need Node. CI rebuilds all three assets from the
+lockfile and fails on any diff. The classic renderer remains the CLI default until the
+final migration ticket explicitly validates the cutover.
 
 ## Adapter qualification
 

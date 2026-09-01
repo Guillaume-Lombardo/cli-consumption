@@ -727,13 +727,15 @@ export function DashboardClient() {
   return (
     <main className="dashboard-shell">
       <header className="hero">
-        <div>
-          <p className="eyebrow">Local-first AI CLI observability</p>
+        <div className="hero-intro">
           <h1>CLI Consumption</h1>
-          <p>
-            Activity, responsiveness, token composition, and workflows — never prompts,
-            responses, or tool arguments.
-          </p>
+          <div className="hero-copy">
+            <p className="eyebrow">Local-first AI CLI observability</p>
+            <p>
+              Activity, responsiveness, token composition, and workflows — never
+              prompts, responses, or tool arguments.
+            </p>
+          </div>
         </div>
         <div className="hero-actions">
           <label className="inline-control">

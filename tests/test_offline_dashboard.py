@@ -125,6 +125,19 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         assert response.ok
         page.wait_for_function("document.querySelectorAll('#cards .card').length >= 8")
         assert page.title() == "CLI Consumption"
+        title_box = page.locator(".hero h1").bounding_box()
+        eyebrow_box = page.locator(".hero .eyebrow").bounding_box()
+        assert title_box is not None
+        assert eyebrow_box is not None
+        assert eyebrow_box["x"] > title_box["x"] + title_box["width"]
+        assert page.locator(".metric-card").first.evaluate(
+            """card => {
+                const body = getComputedStyle(document.body);
+                const style = getComputedStyle(card);
+                return style.backgroundColor === body.backgroundColor &&
+                    style.borderTopWidth === "0px";
+            }"""
+        )
         assert page.locator("#provider").input_value() == ""
         assert page.locator("#conversationCount").text_content() == "2 conversations"
         assert page.locator("#table tbody tr").count() == 2

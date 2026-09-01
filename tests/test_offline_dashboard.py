@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 import pytest
@@ -24,10 +25,12 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.parametrize("share_safe", [False, True], ids=["detailed", "share-safe"])
+@pytest.mark.parametrize("renderer", ["classic", "react"])
 def test_generated_dashboard_opens_and_interacts_without_network(
     tmp_path: Path,
     rollout_factory,
     share_safe: bool,
+    renderer: Literal["classic", "react"],
 ) -> None:
     home = tmp_path / "codex"
     rollout_factory(home)
@@ -67,8 +70,8 @@ def test_generated_dashboard_opens_and_interacts_without_network(
             ],
         ),
     )
-    output = tmp_path / ("share-safe.html" if share_safe else "detailed.html")
-    generate_dashboard(engine, output, share_safe=share_safe)
+    output = tmp_path / f"{renderer}-{'share-safe' if share_safe else 'detailed'}.html"
+    generate_dashboard(engine, output, share_safe=share_safe, renderer=renderer)
     engine.dispose()
 
     html = output.read_text(encoding="utf-8")

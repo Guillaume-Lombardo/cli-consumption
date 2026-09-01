@@ -2,6 +2,14 @@
 
 CLI Consumption measures activity; it does not archive conversations.
 
+Both standalone renderers receive exactly the minimized dashboard dataset described
+below. Their JavaScript and CSS are compiled locally, embedded in the HTML, and contain
+no credential, environment value, provider file, request primitive, or external asset.
+The React renderer adds no storage or API surface; filters and theme live only in the
+open document. Detailed HTML still discloses approved project, machine, model, tool,
+role, and timestamp metadata to anyone holding the file. `--share-safe` continues to
+pseudonymize or coarsen those fields and is the appropriate controlled-sharing mode.
+
 ## Allowed data
 
 - Provider, source-machine label, project category, and stable provider IDs

@@ -29,6 +29,11 @@ file manually. The TypeScript workspace uses the exact Node and npm versions dec
 in `.node-version` and `package.json`; use `npm install --save-exact` for dependency
 changes and commit the generated `package-lock.json`.
 
+Run `npm run build:offline` after changing contracts, analytics, shared UI primitives,
+or either offline entry point. Commit the three rebuilt package assets in
+`src/cli_consumption`; `npm run check:generated` reconstructs JavaScript and Tailwind
+CSS independently and rejects stale output.
+
 ## Make a change
 
 Keep provider parsing behind the adapter interface and normalized persistence behind

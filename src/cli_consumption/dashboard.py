@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from functools import cache
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO
 
 from sqlalchemy import select
 from sqlalchemy.engine import Connection, Engine
@@ -77,6 +77,26 @@ def _dashboard_calculations_script() -> str:
     )
 
 
+@cache
+def _react_dashboard_script() -> str:
+    """Load the production React runtime embedded in alternative exports."""
+    return (
+        files("cli_consumption")
+        .joinpath("dashboard_react.js")
+        .read_text(encoding="utf-8")
+    )
+
+
+@cache
+def _react_dashboard_styles() -> str:
+    """Load the compiled Tailwind stylesheet embedded in alternative exports."""
+    return (
+        files("cli_consumption")
+        .joinpath("dashboard_react.css")
+        .read_text(encoding="utf-8")
+    )
+
+
 class DashboardLimitError(RuntimeError):
     """A privacy-safe dashboard generation limit failure."""
 
@@ -89,7 +109,10 @@ def generate_dashboard(
     window: ExportWindow | None = None,
     filters: ReportFilters | None = None,
     timeout_seconds: float | None = None,
+    renderer: Literal["classic", "react"] = "classic",
 ) -> None:
+    if renderer not in {"classic", "react"}:
+        raise ValueError("unknown_dashboard_renderer")
     initialize_database(engine)
     with _dashboard_snapshot(engine, timeout_seconds=timeout_seconds) as connection:
         _enforce_estimate(_estimate_selection(connection, window, filters))
@@ -101,7 +124,12 @@ def generate_dashboard(
         )
         _atomic_write(
             output,
-            lambda handle: _stream_dashboard(handle, connection, context),
+            lambda handle: _stream_dashboard(
+                handle,
+                connection,
+                context,
+                renderer=renderer,
+            ),
         )
 
 
@@ -538,8 +566,12 @@ def _stream_dashboard(
     handle: TextIO,
     connection: Connection,
     context: _DashboardContext,
+    *,
+    renderer: Literal["classic", "react"] = "classic",
 ) -> None:
-    prefix, suffix = _document_parts()
+    prefix, suffix = (
+        _react_document_parts() if renderer == "react" else _document_parts()
+    )
     writer = _BudgetedWriter(handle)
     writer.write(prefix)
     writer.write(f'{{"contractVersion":{DASHBOARD_CONTRACT_VERSION},"meta":')
@@ -566,6 +598,28 @@ def _stream_dashboard(
 def _document_parts() -> tuple[str, str]:
     marker = "__CLI_CONSUMPTION_STREAMED_PAYLOAD__"
     prefix, separator, suffix = _document(marker).partition(marker)
+    if not separator:
+        raise RuntimeError("dashboard_template_marker_missing")
+    return prefix, suffix
+
+
+def _react_document_parts() -> tuple[str, str]:
+    marker = "__CLI_CONSUMPTION_STREAMED_PAYLOAD__"
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CLI Consumption</title>
+  <style>{_react_dashboard_styles()}</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>globalThis.__CLI_CONSUMPTION_DATASET__={marker};</script>
+  <script>{_react_dashboard_script()}</script>
+</body>
+</html>"""
+    prefix, separator, suffix = document.partition(marker)
     if not separator:
         raise RuntimeError("dashboard_template_marker_missing")
     return prefix, suffix

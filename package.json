@@ -13,10 +13,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build:esm && npm run build:offline",
+    "build": "npm run build:offline",
     "build:web": "npm run build:esm && npm run build -w @cli-consumption/web",
     "build:esm": "npm run build -w @cli-consumption/contracts && npm run build -w @cli-consumption/analytics && npm run build -w @cli-consumption/ui",
-    "build:offline": "npm run build -w @cli-consumption/offline",
+    "build:offline": "npm run build:esm && npm run build -w @cli-consumption/offline",
     "check:generated": "node tools/check-generated.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
@@ -25,9 +25,9 @@
     "test": "vitest run",
     "test:e2e": "npm run build:web && playwright test -c apps/web/playwright.config.ts",
     "typecheck": "tsc --noEmit && npm run typecheck:packages && npm run typecheck:web",
-    "typecheck:packages": "tsc --ignoreConfig --noEmit --strict --module ESNext --moduleResolution Bundler --target ES2024 tools/typecheck-packages.ts",
+    "typecheck:packages": "tsc --ignoreConfig --noEmit --strict --jsx react-jsx --module ESNext --moduleResolution Bundler --target ES2024 tools/typecheck-packages.ts",
     "typecheck:web": "tsc -p apps/web/tsconfig.json --noEmit",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run check:generated && npm run build:esm && npm run smoke:esm"
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build:esm && npm run check:generated && npm run smoke:esm"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11",
@@ -37,6 +37,7 @@
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "4.3.3",
+    "@tailwindcss/cli": "4.3.3",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
     "@testing-library/user-event": "14.6.6",

@@ -1487,6 +1487,24 @@ def test_collect_and_export(tmp_path: Path, rollout_factory) -> None:
     assert (reports / "dashboard.html").is_file()
     assert [path.name for path in reports.iterdir()] == ["dashboard.html"]
 
+    react_reports = tmp_path / "react-reports"
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "--database",
+            str(database),
+            "--output",
+            str(react_reports),
+            "--renderer",
+            "react",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    react_html = (react_reports / "dashboard.html").read_text(encoding="utf-8")
+    assert '<div id="root"></div>' in react_html
+    assert "offline_dashboard_root_missing" in react_html
+
     csv_reports = tmp_path / "csv-reports"
     result = runner.invoke(
         app,
@@ -1561,6 +1579,13 @@ def test_collect_and_export(tmp_path: Path, rollout_factory) -> None:
     )
     assert result.exit_code == 2
     assert "enable --dashboard or --csv" in normalized_cli_output(result.output)
+
+    result = runner.invoke(
+        app,
+        ["export", "--database", str(database), "--renderer", "unknown"],
+    )
+    assert result.exit_code == 2
+    assert "--renderer must be classic or react" in normalized_cli_output(result.output)
 
 
 def test_collect_and_export_machine_readable_results(

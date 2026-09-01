@@ -24,4 +24,17 @@ describe("dashboard query construction", () => {
     expect(query.filters.projects).toEqual(["private-project"]);
     expect(JSON.stringify(query)).toContain("private-project");
   });
+
+  it("preserves the documented exclusive custom end date", () => {
+    const query = queryForRange(
+      "custom",
+      { machines: [], models: [], projects: [], providers: [] },
+      { from: "2026-08-01", to: "2026-09-01" },
+      NOW,
+    );
+    expect(query.window).toEqual({
+      since: "2026-08-01T00:00:00.000Z",
+      until: "2026-09-01T00:00:00.000Z",
+    });
+  });
 });

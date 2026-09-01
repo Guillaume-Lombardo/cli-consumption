@@ -5,21 +5,18 @@ export type BoundedJsonResult =
   | { status: "invalid" }
   | { status: "too_large" };
 
-/** Read an untrusted JSON object without ever buffering more than the declared limit. */
-export async function readBoundedJsonObject(
-  request: Request,
-  limit: number,
-): Promise<BoundedJsonResult> {
-  const contentLength = request.headers.get("content-length");
-  if (contentLength !== null) {
-    if (!/^\d+$/.test(contentLength)) return { status: "invalid" };
-    const declared = Number(contentLength);
-    if (!Number.isSafeInteger(declared)) return { status: "invalid" };
-    if (declared > limit) return { status: "too_large" };
-  }
-  if (!request.body) return { status: "invalid" };
+export type BoundedBytesResult =
+  | { bytes: Uint8Array<ArrayBuffer>; status: "ok" }
+  | { status: "invalid" }
+  | { status: "too_large" };
 
-  const reader = request.body.getReader();
+/** Consume a byte stream while stopping before it can exceed the process bound. */
+export async function readBoundedBytes(
+  body: ReadableStream<Uint8Array> | null,
+  limit: number,
+): Promise<BoundedBytesResult> {
+  if (!body) return { status: "invalid" };
+  const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -43,6 +40,24 @@ export async function readBoundedJsonObject(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return { bytes, status: "ok" };
+}
+
+/** Read an untrusted JSON object without ever buffering more than the declared limit. */
+export async function readBoundedJsonObject(
+  request: Request,
+  limit: number,
+): Promise<BoundedJsonResult> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) return { status: "invalid" };
+    const declared = Number(contentLength);
+    if (!Number.isSafeInteger(declared)) return { status: "invalid" };
+    if (declared > limit) return { status: "too_large" };
+  }
+  const result = await readBoundedBytes(request.body, limit);
+  if (result.status !== "ok") return result;
+  const { bytes } = result;
   try {
     const parsed = JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(bytes),

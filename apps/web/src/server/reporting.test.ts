@@ -113,4 +113,28 @@ describe("reporting BFF", () => {
     expect(safeUpstreamCode({ detail: CANARY })).toBe("reporting_unavailable");
     expect(safeUpstreamCode(CANARY)).toBe("reporting_unavailable");
   });
+
+  it("stops an unbounded chunked upstream response before buffering it", async () => {
+    configure();
+    const chunk = new Uint8Array(3 * 1024 * 1024);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(chunk);
+            controller.close();
+          },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const response = await proxyReportingRequest(
+      request(),
+      "filters",
+      createSessionToken(SESSION_SECRET),
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ detail: "reporting_unavailable" });
+  });
 });

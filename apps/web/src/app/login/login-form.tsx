@@ -13,12 +13,19 @@ export function LoginForm() {
     setPending(true);
     setError("");
     const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/session", {
-      body: JSON.stringify({ password: form.get("password") }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST",
-    });
-    setPending(false);
+    let response: Response;
+    try {
+      response = await fetch("/api/session", {
+        body: JSON.stringify({ password: form.get("password") }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+    } catch {
+      setError("Sign-in failed. Check the dashboard credential and try again.");
+      return;
+    } finally {
+      setPending(false);
+    }
     if (!response.ok) {
       setError("Sign-in failed. Check the dashboard credential and try again.");
       return;

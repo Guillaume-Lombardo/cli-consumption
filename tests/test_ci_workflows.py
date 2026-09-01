@@ -72,7 +72,8 @@ def test_ci_builds_and_tests_the_persistent_dashboard_in_a_browser() -> None:
     assert 'NEXT_TELEMETRY_DISABLED: "1"' in job
     assert "npm ci" in job
     assert "npx playwright install --with-deps chromium" in job
-    assert "npm run test:e2e" in job
+    assert "npm run build:web" in job
+    assert "npx playwright test -c apps/web/playwright.config.ts" in job
 
 
 def test_ci_opens_generated_dashboards_in_an_offline_browser() -> None:

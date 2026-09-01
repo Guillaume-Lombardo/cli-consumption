@@ -1,7 +1,7 @@
 import "server-only";
 
 import { dashboardServerConfig, type DashboardServerConfig } from "./config";
-import { readBoundedJsonObject } from "./body";
+import { readBoundedBytes, readBoundedJsonObject } from "./body";
 import { sameOrigin, verifySessionToken } from "./session";
 
 const REQUEST_BYTES = 64 * 1024;
@@ -81,13 +81,20 @@ export async function proxyReportingRequest(
   } catch {
     return json("reporting_unavailable", 502);
   }
-  const declaredResponse = Number(upstream.headers.get("content-length") ?? "0");
-  if (!Number.isFinite(declaredResponse) || declaredResponse > route.responseBytes) {
-    return json("reporting_unavailable", 502);
+  const contentLength = upstream.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) return json("reporting_unavailable", 502);
+    const declaredResponse = Number(contentLength);
+    if (
+      !Number.isSafeInteger(declaredResponse) ||
+      declaredResponse > route.responseBytes
+    ) {
+      return json("reporting_unavailable", 502);
+    }
   }
-  const responseBody = await upstream.arrayBuffer();
-  if (responseBody.byteLength > route.responseBytes)
-    return json("reporting_unavailable", 502);
+  const response = await readBoundedBytes(upstream.body, route.responseBytes);
+  if (response.status !== "ok") return json("reporting_unavailable", 502);
+  const responseBody = response.bytes;
   if (!upstream.ok) {
     let error: unknown;
     try {

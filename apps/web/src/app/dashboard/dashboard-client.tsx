@@ -504,6 +504,10 @@ function ConversationExplorer({ query }: { query: DashboardQueryV1 }) {
         }),
       );
     } catch (caught) {
+      if (caught instanceof Error && caught.message === "session_expired") {
+        window.location.assign("/login?reason=session");
+        return;
+      }
       setError(messageFor(caught));
     } finally {
       setPending(false);
@@ -738,8 +742,16 @@ export function DashboardClient() {
   }
 
   async function signOut() {
-    await fetch("/api/session", { method: "DELETE" });
-    window.location.assign("/login");
+    try {
+      const response = await fetch("/api/session", { method: "DELETE" });
+      if (response.ok || response.status === 401) {
+        window.location.assign("/login");
+        return;
+      }
+    } catch {
+      // The fixed message below intentionally omits transport details.
+    }
+    setError("Sign-out failed. Check the connection and try again.");
   }
 
   return (

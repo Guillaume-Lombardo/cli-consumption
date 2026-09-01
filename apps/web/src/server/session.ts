@@ -2,9 +2,8 @@ import "server-only";
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 
-import { dashboardServerConfig } from "./config";
+import { dashboardServerConfig, type DashboardServerConfig } from "./config";
 
 const SESSION_SECONDS = 8 * 60 * 60;
 const DEVELOPMENT_COOKIE = "cli-consumption-session";
@@ -84,15 +83,17 @@ export function sameOrigin(request: Request, configuredOrigin: string | null): b
   return origin === expected;
 }
 
-export async function hasDashboardSession(): Promise<boolean> {
-  const config = dashboardServerConfig();
-  const store = await cookies();
-  return verifySessionToken(
-    store.get(sessionCookieName())?.value,
-    config.sessionSecret,
-  );
-}
+export type DashboardSessionState = "authenticated" | "anonymous" | "unavailable";
 
-export async function requireDashboardSession(): Promise<void> {
-  if (!(await hasDashboardSession())) redirect("/login?reason=session");
+export async function dashboardSessionState(): Promise<DashboardSessionState> {
+  let config: DashboardServerConfig;
+  try {
+    config = dashboardServerConfig();
+  } catch {
+    return "unavailable";
+  }
+  const store = await cookies();
+  return verifySessionToken(store.get(sessionCookieName())?.value, config.sessionSecret)
+    ? "authenticated"
+    : "anonymous";
 }

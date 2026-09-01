@@ -1,9 +1,14 @@
+import { redirect } from "next/navigation";
+
+import { ConfigurationUnavailable } from "../configuration-unavailable";
 import { DashboardClient } from "./dashboard-client";
-import { requireDashboardSession } from "../../server/session";
+import { dashboardSessionState } from "../../server/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  await requireDashboardSession();
+  const state = await dashboardSessionState();
+  if (state === "anonymous") redirect("/login?reason=session");
+  if (state === "unavailable") return <ConfigurationUnavailable />;
   return <DashboardClient />;
 }

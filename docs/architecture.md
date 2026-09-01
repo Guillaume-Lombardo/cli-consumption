@@ -36,7 +36,7 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
 - `dashboard`, `reporting`, and `exporting`: select complete conversation graphs,
   provide an offline HTML view by default, and stream deterministic portable CSV tables
   when explicitly requested.
-- the future persistent dashboard uses Next.js only as a server-side BFF and UI;
+- `apps/web` provides the persistent Next.js dashboard as a server-side BFF and UI;
   FastAPI remains the sole reporting/export boundary and the only service allowed to
   open PostgreSQL.
 - `adapters.registry`: is the single source for canonical names, aliases, adapter
@@ -117,6 +117,14 @@ opaque handles, so concurrent ingestion cannot alter an active page sequence. Ha
 are deliberately process-local: a restart expires them, and multi-replica deployments
 must use request affinity or a future shared session implementation. Clients always
 recover by restarting from the first page.
+
+The Next.js BFF authenticates an operator with a short-lived, signed, HTTP-only
+session cookie and holds the collector read token only in its server environment. It
+accepts a fixed allowlist of reporting operations, enforces same-origin mutations and
+bounded JSON bodies, and converts upstream failures to generic error codes. Operational
+labels are sent in POST bodies, while only the period and UTC date window may appear in
+the dashboard URL. The browser starts with a bounded latest-30-days query, retains no
+session credential in web storage, and stores only the visual theme locally.
 
 `/health` is an unauthenticated liveness endpoint and deliberately performs no
 database work, so a database outage does not cause the orchestrator to restart a

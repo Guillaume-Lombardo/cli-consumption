@@ -1,7 +1,18 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.11/schema.json",
   "files": {
-    "includes": ["packages/**", "tools/*.mjs", "*.json", "*.ts", "!packages/*/dist"]
+    "includes": [
+      "apps/**",
+      "packages/**",
+      "tools/*.mjs",
+      "tools/*.ts",
+      "*.json",
+      "*.ts",
+      "!apps/*/.next",
+      "!apps/*/playwright-report",
+      "!apps/*/test-results",
+      "!packages/*/dist"
+    ]
   },
   "formatter": {
     "enabled": true,

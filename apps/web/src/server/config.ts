@@ -23,7 +23,7 @@ export function dashboardServerConfig(): DashboardServerConfig {
   const readToken = required("CLI_CONSUMPTION_READ_TOKEN");
   const sessionSecret = required("CLI_CONSUMPTION_SESSION_SECRET");
   const dashboardOrigin = process.env.CLI_CONSUMPTION_DASHBOARD_ORIGIN ?? null;
-  const exportToken = process.env.CLI_CONSUMPTION_EXPORT_TOKEN ?? null;
+  const exportToken = process.env.CLI_CONSUMPTION_EXPORT_TOKEN || null;
   let apiUrl: URL;
   try {
     apiUrl = new URL(required("CLI_CONSUMPTION_API_URL"));

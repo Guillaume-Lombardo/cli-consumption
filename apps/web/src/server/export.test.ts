@@ -84,6 +84,8 @@ describe("offline export BFF", () => {
     ).toBe(413);
     configure(null);
     expect((await proxyOfflineExport(request(), token)).status).toBe(503);
+    configure("");
+    expect((await proxyOfflineExport(request(), token)).status).toBe(503);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

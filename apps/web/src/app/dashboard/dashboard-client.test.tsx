@@ -126,6 +126,35 @@ afterEach(() => {
 });
 
 describe("persistent dashboard", () => {
+  it("announces a non-blocking default-layout fallback without reflecting upstream data", async () => {
+    const canary = "PRIVATE_LAYOUT_UPSTREAM_CANARY";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout")) {
+        return Response.json({ detail: canary }, { status: 503 });
+      }
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations")) {
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      }
+      throw new Error("unexpected_test_request");
+    });
+
+    const { container } = render(<DashboardClient />);
+    const message = await screen.findByText(
+      "The saved layout could not be loaded. The default layout is displayed.",
+    );
+
+    expect(message.closest("[role='status']")).toHaveTextContent(
+      "Saved layout unavailable.",
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Activity" }),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll("[data-widget-type]")).toHaveLength(12);
+    expect(document.body).not.toHaveTextContent(canary);
+  });
+
   it("uses the resolved layout for visibility, order, and relative geometry", async () => {
     const layout: DashboardLayoutV1 = {
       columns: 12,

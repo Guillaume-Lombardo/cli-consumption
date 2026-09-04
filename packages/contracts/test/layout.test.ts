@@ -1,14 +1,73 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
   assertDashboardLayoutV1,
   dashboardLayoutComposition,
+  DASHBOARD_GRID_COLUMNS,
+  DASHBOARD_GRID_ROWS,
+  DASHBOARD_LAYOUT_VERSION,
   DASHBOARD_WIDGET_REGISTRY,
   DEFAULT_DASHBOARD_LAYOUT_V1,
+  MAX_DASHBOARD_LAYOUT_BYTES,
+  MAX_DASHBOARD_WIDGETS,
   resolveDashboardLayoutV1,
 } from "../src/index";
 
+const CONTRACT_FIXTURE = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../tests/fixtures/dashboard_layout_v1_contract.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as {
+  constraints: {
+    version: number;
+    columns: number;
+    rows: number;
+    maxWidgets: number;
+    maxBytes: number;
+    instanceSuffixMin: number;
+    instanceSuffixMax: number;
+  };
+  default: unknown;
+  registry: Record<string, unknown>;
+};
+
 describe("DashboardLayout v1", () => {
+  it("matches the serialized cross-runtime registry, bounds, and canonical default", () => {
+    expect(CONTRACT_FIXTURE.constraints).toEqual({
+      columns: DASHBOARD_GRID_COLUMNS,
+      instanceSuffixMax: MAX_DASHBOARD_WIDGETS,
+      instanceSuffixMin: 1,
+      maxBytes: MAX_DASHBOARD_LAYOUT_BYTES,
+      maxWidgets: MAX_DASHBOARD_WIDGETS,
+      rows: DASHBOARD_GRID_ROWS,
+      version: DASHBOARD_LAYOUT_VERSION,
+    });
+    expect(DASHBOARD_WIDGET_REGISTRY).toEqual(CONTRACT_FIXTURE.registry);
+    expect(DEFAULT_DASHBOARD_LAYOUT_V1).toEqual(CONTRACT_FIXTURE.default);
+    expect(() => assertDashboardLayoutV1(CONTRACT_FIXTURE.default)).not.toThrow();
+
+    const defaultActivity = DEFAULT_DASHBOARD_LAYOUT_V1.widgets[1];
+    if (!defaultActivity) throw new Error("missing_default_activity_widget");
+    const activity = structuredClone(defaultActivity);
+    for (const suffix of [
+      CONTRACT_FIXTURE.constraints.instanceSuffixMin,
+      CONTRACT_FIXTURE.constraints.instanceSuffixMax,
+    ]) {
+      expect(() =>
+        assertDashboardLayoutV1({
+          columns: 12,
+          version: 1,
+          widgets: [{ ...activity, id: `activity-${suffix}` }],
+        }),
+      ).not.toThrow();
+    }
+  });
+
   it("round-trips the deterministic legacy default", () => {
     const document = JSON.parse(JSON.stringify(DEFAULT_DASHBOARD_LAYOUT_V1));
     assertDashboardLayoutV1(document);

@@ -653,6 +653,7 @@ export function DashboardClient() {
   );
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [layoutError, setLayoutError] = useState("");
   const [layout, setLayout] = useState<DashboardLayoutV1>(DEFAULT_DASHBOARD_LAYOUT_V1);
 
   useEffect(() => {
@@ -670,11 +671,18 @@ export function DashboardClient() {
 
   useEffect(() => {
     void fetchDashboardLayout()
-      .then(setLayout)
+      .then((savedLayout) => {
+        setLayout(savedLayout);
+        setLayoutError("");
+      })
       .catch((caught) => {
         if (caught instanceof Error && caught.message === "session_expired") {
           window.location.assign("/login?reason=session");
+          return;
         }
+        setLayoutError(
+          "The saved layout could not be loaded. The default layout is displayed.",
+        );
       });
   }, []);
 
@@ -820,6 +828,12 @@ export function DashboardClient() {
         <section className="callout error" role="alert">
           <strong>Offline export failed.</strong>
           <span>{exportError}</span>
+        </section>
+      ) : null}
+      {layoutError ? (
+        <section className="callout" role="status" aria-live="polite">
+          <strong>Saved layout unavailable.</strong>
+          <span>{layoutError}</span>
         </section>
       ) : null}
       <Filters

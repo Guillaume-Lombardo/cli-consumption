@@ -3,6 +3,7 @@ export const DASHBOARD_LAYOUT_VERSION = 1 as const;
 export const DASHBOARD_GRID_COLUMNS = 12 as const;
 export const DASHBOARD_GRID_ROWS = 64 as const;
 export const MAX_DASHBOARD_WIDGETS = 32 as const;
+export const MAX_DASHBOARD_LAYOUT_BYTES = 64 * 1024;
 
 export const DASHBOARD_WIDGET_REGISTRY = {
   "headline-metrics": { minWidth: 12, maxWidth: 12, minHeight: 1, maxHeight: 2 },

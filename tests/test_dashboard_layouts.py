@@ -16,7 +16,13 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 from cli_consumption.api import create_app
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.dashboard_layouts import (
+    DASHBOARD_GRID_COLUMNS,
+    DASHBOARD_GRID_ROWS,
+    DASHBOARD_LAYOUT_VERSION,
     DEFAULT_DASHBOARD_LAYOUT_V1,
+    MAX_DASHBOARD_LAYOUT_BYTES,
+    MAX_DASHBOARD_WIDGETS,
+    WIDGET_REGISTRY,
     DashboardLayoutV1,
     canonical_layout,
     load_dashboard_layout,
@@ -32,6 +38,46 @@ CANARY = "PRIVATE-LAYOUT-CANARY-DO-NOT-EXPOSE"
 ID_CANARY = "activity-private-project-label"
 READ_VALUE = "read-value"
 LAYOUT_VALUE = "layout-value"
+CONTRACT_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "dashboard_layout_v1_contract.json"
+)
+
+
+def test_python_contract_matches_the_serialized_cross_runtime_definition() -> None:
+    fixture = json.loads(CONTRACT_FIXTURE.read_text(encoding="utf-8"))
+    assert fixture["constraints"] == {
+        "version": DASHBOARD_LAYOUT_VERSION,
+        "columns": DASHBOARD_GRID_COLUMNS,
+        "rows": DASHBOARD_GRID_ROWS,
+        "maxWidgets": MAX_DASHBOARD_WIDGETS,
+        "maxBytes": MAX_DASHBOARD_LAYOUT_BYTES,
+        "instanceSuffixMin": 1,
+        "instanceSuffixMax": MAX_DASHBOARD_WIDGETS,
+    }
+    assert fixture["registry"] == {
+        widget_type: {
+            "minWidth": limits[0],
+            "maxWidth": limits[1],
+            "minHeight": limits[2],
+            "maxHeight": limits[3],
+        }
+        for widget_type, limits in WIDGET_REGISTRY.items()
+    }
+    assert fixture["default"] == DEFAULT_DASHBOARD_LAYOUT_V1.model_dump(mode="json")
+    assert canonical_layout(DEFAULT_DASHBOARD_LAYOUT_V1) == json.dumps(
+        fixture["default"],
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    for suffix in (
+        fixture["constraints"]["instanceSuffixMin"],
+        fixture["constraints"]["instanceSuffixMax"],
+    ):
+        document = DEFAULT_DASHBOARD_LAYOUT_V1.model_dump(mode="json")
+        document["widgets"] = [document["widgets"][1]]
+        document["widgets"][0]["id"] = f"activity-{suffix}"
+        DashboardLayoutV1.model_validate(document)
 
 
 def test_default_layout_is_the_deterministic_legacy_composition() -> None:

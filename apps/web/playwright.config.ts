@@ -32,6 +32,7 @@ export default defineConfig({
         CLI_CONSUMPTION_DASHBOARD_PASSWORD: "e2e dashboard password",
         CLI_CONSUMPTION_EXPORT_TOKEN: "e2e-export-token",
         CLI_CONSUMPTION_READ_TOKEN: "e2e-read-token",
+        CLI_CONSUMPTION_LAYOUT_TOKEN: "e2e-layout-token",
         CLI_CONSUMPTION_SESSION_SECRET:
           "e2e-session-secret-with-at-least-thirty-two-bytes",
       },

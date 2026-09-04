@@ -24,6 +24,8 @@ pseudonymize or coarsen those fields and is the appropriate controlled-sharing m
 - Content hashes and event counts used only for deduplication
 - Internal provider/source-machine scope rows and lock counters used only to serialize
   subagent graph freshness decisions; these rows are not exported
+- One bounded, content-free dashboard composition for the mono-operator deployment;
+  its internal owner key and canonical JSON are not reporting data or exports
 
 ## Prohibited data
 
@@ -213,6 +215,21 @@ text, credentials, and request values are reduced to fixed generic errors. The s
 still receives selected operational labels in POST bodies and returns them to the
 authenticated browser, so TLS, log minimization, session-secret rotation, workstation
 access control, and an appropriate collector retention policy remain operator duties.
+
+`DashboardLayout v1` contains only registered widget types, identifiers derived from
+the type (`type` or the bounded structural form `type-N`), bounded grid
+coordinates/sizes, and closed configuration objects. Its identifiers cannot be used as
+free-form labels. It cannot contain operational labels, filters, dataset rows, prompts,
+responses, tool arguments, paths, credentials, or provider payloads. One canonical
+preference is stored for the deployment's current
+mono-operator authentication model; its fixed internal owner key is never exposed.
+Malformed writes return a fixed error, while an unknown retired widget is discarded on
+read. The internal table is excluded from snapshots, CSV, reporting datasets, and logs.
+Only the validated content-free layout structure is embedded in detailed and share-safe
+offline dashboards so both renderers preserve the same composition. Saving or resetting
+uses a separate server-side `layout` credential. Persistence and HTML generation each
+revalidate a detached dump at the sink, so mutation of an already constructed model
+cannot bypass the closed contract or race the emitted document.
 
 Offline downloads reuse the exact bounded POST query visible in the dashboard and add
 only the selected `detailed` or `share-safe` profile. A dedicated server-side token

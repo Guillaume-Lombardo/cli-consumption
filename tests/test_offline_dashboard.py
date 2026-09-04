@@ -9,6 +9,7 @@ from playwright.sync_api import Request, Route, WebSocket, sync_playwright
 
 from cli_consumption.adapters.codex import CodexAdapter
 from cli_consumption.dashboard import generate_dashboard
+from cli_consumption.dashboard_layouts import DashboardLayoutV1
 from cli_consumption.models import Snapshot, empty_tokens
 from cli_consumption.storage import (
     create_database_engine,
@@ -21,6 +22,59 @@ pytestmark = pytest.mark.skipif(
         "the dedicated CI job installs Chromium and enables the offline browser gate"
     ),
 )
+
+LAYOUT_FIXTURE = Path(__file__).parent / "fixtures" / "dashboard_layout_v1_custom.json"
+
+
+def test_offline_uses_the_same_layout_composition_and_geometry(
+    tmp_path: Path,
+) -> None:
+    layout = DashboardLayoutV1.model_validate_json(
+        LAYOUT_FIXTURE.read_text(encoding="utf-8")
+    )
+    output = tmp_path / "layout.html"
+    engine = create_database_engine(tmp_path / "layout.sqlite")
+    generate_dashboard(engine, output, layout=layout)
+    engine.dispose()
+
+    expected = [
+        {
+            "height": str(widget.size.height),
+            "type": widget.type,
+            "width": str(widget.size.width),
+            "x": str(widget.position.x),
+            "y": str(widget.position.y),
+        }
+        for widget in sorted(
+            layout.widgets,
+            key=lambda widget: (
+                widget.position.y,
+                widget.position.x,
+                widget.id,
+            ),
+        )
+    ]
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        response = page.goto(output.resolve().as_uri(), wait_until="load")
+        assert response is not None and response.ok
+        actual = page.locator("[data-widget-type]").evaluate_all(
+            """widgets => widgets.map(widget => ({
+                height: widget.getAttribute('data-size-height'),
+                type: widget.getAttribute('data-widget-type'),
+                width: widget.getAttribute('data-size-width'),
+                x: widget.getAttribute('data-position-x'),
+                y: widget.getAttribute('data-position-y'),
+            }))"""
+        )
+        browser.close()
+
+    assert actual == expected
+    assert [widget["type"] for widget in actual].index("technical-work-items") < [
+        widget["type"] for widget in actual
+    ].index("context-pressure")
 
 
 @pytest.mark.parametrize("share_safe", [False, True], ids=["detailed", "share-safe"])

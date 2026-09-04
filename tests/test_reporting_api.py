@@ -169,6 +169,9 @@ async def test_reporting_scopes_capabilities_and_cache_policy(tmp_path: Path) ->
         capabilities = (await client.get("/api/v1/capabilities")).json()
         assert capabilities["dashboard_query_versions"] == [1]
         assert capabilities["dashboard_dataset_versions"] == [1]
+        assert capabilities["dashboard_layout_versions"] == [1]
+        assert capabilities["dashboard_layout_mutation_scope"] == "layout"
+        assert capabilities["max_dashboard_layout_bytes"] == 64 * 1024
         assert capabilities["cursor_versions"] == [1]
         assert capabilities["max_reporting_request_bytes"] == 64 * 1024
 

@@ -61,7 +61,7 @@ browser -> Next.js BFF -> FastAPI reporting -> SQLAlchemy -> PostgreSQL
 
 ### Authorization scopes
 
-Credentials carry a fixed set drawn from `ingest`, `read`, and `export`. Unknown
+Credentials carry a fixed set drawn from `ingest`, `read`, `export`, and `layout`. Unknown
 scopes are invalid.
 
 | Scope | Permitted operations |
@@ -69,6 +69,7 @@ scopes are invalid.
 | `ingest` | Validated snapshot upload, including snapshots extracted by `upload-db`. |
 | `read` | Filter options, dashboard datasets, conversation pages, and bounded conversation detail. |
 | `export` | Standalone HTML generation; the route requires both `read` and `export`. |
+| `layout` | Save or reset the mono-operator presentation layout; it grants no reporting read. |
 
 The capabilities route stays unauthenticated and returns only fixed version and limit
 metadata; it performs no reporting read. Health and readiness retain their existing
@@ -91,7 +92,7 @@ credentials for ingestion and the Next.js BFF.
 schema dump. Python opens a local CLI Consumption database read-only, refuses any
 unknown or non-current schema before transfer, and reconstructs strict provider-neutral
 snapshot schema v1 records inside one coherent transaction. Internal
-`sync_receipts`, `subagent_scopes`, migration state, and ingestion-run rows are not
+`sync_receipts`, `subagent_scopes`, `dashboard_layouts`, migration state, and ingestion-run rows are not
 transferred.
 
 Each extracted provider or coherent fragment is submitted to the existing snapshot

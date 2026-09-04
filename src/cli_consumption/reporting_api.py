@@ -40,6 +40,12 @@ from cli_consumption.dashboard import (
     build_dashboard_dataset,
     generate_dashboard,
 )
+from cli_consumption.dashboard_layouts import (
+    DashboardLayoutV1,
+    load_dashboard_layout,
+    reset_dashboard_layout,
+    save_dashboard_layout,
+)
 from cli_consumption.reporting import (
     ExportWindow,
     ReportFilters,
@@ -411,6 +417,15 @@ class ReportingRuntime:
             payload["filters"] = _filter_options_from_payload(payload)
             return payload
 
+    def layout(self) -> dict[str, Any]:
+        return load_dashboard_layout(self.engine).model_dump(mode="json")
+
+    def save_layout(self, layout: DashboardLayoutV1) -> dict[str, Any]:
+        return save_dashboard_layout(self.engine, layout).model_dump(mode="json")
+
+    def reset_layout(self) -> dict[str, Any]:
+        return reset_dashboard_layout(self.engine).model_dump(mode="json")
+
     def filters(self, query: FilterQuery) -> dict[str, Any]:
         with (
             self.report_slot(),
@@ -561,6 +576,7 @@ class ReportingRuntime:
                     window=query.window.window(),
                     filters=query.filters.filters(),
                     timeout_seconds=EXPORT_TIMEOUT_SECONDS,
+                    layout=load_dashboard_layout(self.engine),
                 )
             return path
         except BaseException:
@@ -574,6 +590,7 @@ def install_reporting_routes(
     *,
     authorize_read: Callable[..., None],
     authorize_export: Callable[..., None],
+    authorize_layout: Callable[..., None],
 ) -> ReportingRuntime:
     runtime = ReportingRuntime(engine)
     app.state.reporting = runtime
@@ -602,6 +619,27 @@ def install_reporting_routes(
     )
     def dashboard(query: DashboardQuery) -> Response:
         return _bounded_json(runtime.dashboard(query))
+
+    @app.get(
+        "/api/v1/reporting/layout",
+        dependencies=[Depends(authorize_read)],
+    )
+    def layout() -> Response:
+        return _bounded_json(runtime.layout())
+
+    @app.put(
+        "/api/v1/reporting/layout",
+        dependencies=[Depends(authorize_layout)],
+    )
+    def save_layout(layout: DashboardLayoutV1) -> Response:
+        return _bounded_json(runtime.save_layout(layout))
+
+    @app.delete(
+        "/api/v1/reporting/layout",
+        dependencies=[Depends(authorize_layout)],
+    )
+    def reset_layout() -> Response:
+        return _bounded_json(runtime.reset_layout())
 
     @app.post(
         "/api/v1/reporting/filters",

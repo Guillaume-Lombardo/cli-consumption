@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parents[1]
 DEPLOYMENT = ROOT / "deploy" / "production"
@@ -43,6 +48,7 @@ def test_compose_requires_external_values_and_exposes_only_proxy() -> None:
     example = (DEPLOYMENT / ".env.example").read_text(encoding="utf-8")
 
     assert compose.count(":?") == 7
+    assert "CLI_CONSUMPTION_LAYOUT_TOKEN: ${CLI_CONSUMPTION_LAYOUT_TOKEN:-}" in compose
     assert '"80:80"' in compose
     assert '"443:443"' in compose
     assert "8765:8765" not in compose
@@ -53,7 +59,35 @@ def test_compose_requires_external_values_and_exposes_only_proxy() -> None:
     assert "CLI_CONSUMPTION_API_TOKEN=\n" in example
     assert "CLI_CONSUMPTION_READ_TOKEN=\n" in example
     assert "CLI_CONSUMPTION_EXPORT_TOKEN=\n" in example
+    assert "CLI_CONSUMPTION_LAYOUT_TOKEN=\n" in example
     assert "POSTGRES_PASSWORD=\n" in example
+
+
+def test_compose_configuration_accepts_an_omitted_layout_token() -> None:
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("Docker Compose is not installed")
+    environment: dict[str, str] = {
+        **dict(os.environ),
+        "ACME_EMAIL": "operator@example.invalid",
+        "CLI_CONSUMPTION_API_TOKEN": "synthetic-ingest-token",
+        "CLI_CONSUMPTION_EXPORT_TOKEN": "synthetic-export-token",
+        "CLI_CONSUMPTION_READ_TOKEN": "synthetic-read-token",
+        "COLLECTOR_DOMAIN": "collector.example.invalid",
+        "POSTGRES_PASSWORD": "synthetic-postgres-password",
+    }
+    environment.pop("CLI_CONSUMPTION_LAYOUT_TOKEN", None)
+
+    result = subprocess.run(  # noqa: S603 - resolved executable and fixed arguments
+        [docker, "compose", "-f", str(DEPLOYMENT / "compose.yaml"), "config"],
+        check=False,
+        capture_output=True,
+        env=environment,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'CLI_CONSUMPTION_LAYOUT_TOKEN: ""' in result.stdout
 
 
 def test_reference_proxy_discards_untrusted_access_logs_and_bounds_connections() -> (

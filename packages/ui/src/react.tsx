@@ -1,4 +1,46 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+
+export interface LayoutWidget {
+  id: string;
+  type: string;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+}
+
+export function DashboardLayoutGrid({
+  renderWidget,
+  widgets,
+}: {
+  renderWidget: (type: string) => ReactNode;
+  widgets: readonly LayoutWidget[];
+}) {
+  return (
+    <div className="dashboard-layout-grid" data-layout-widget-count={widgets.length}>
+      {widgets.map((widget) => (
+        <div
+          className="dashboard-layout-widget"
+          data-position-x={widget.position.x}
+          data-position-y={widget.position.y}
+          data-size-height={widget.size.height}
+          data-size-width={widget.size.width}
+          data-widget-id={widget.id}
+          data-widget-type={widget.type}
+          key={widget.id}
+          style={
+            {
+              "--layout-column": widget.position.x + 1,
+              "--layout-row": widget.position.y + 1,
+              "--layout-width": widget.size.width,
+              "--layout-height": widget.size.height,
+            } as CSSProperties
+          }
+        >
+          {renderWidget(widget.type)}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function Metric({
   help,

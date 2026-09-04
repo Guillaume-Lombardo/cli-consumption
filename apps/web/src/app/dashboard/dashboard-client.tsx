@@ -4,9 +4,15 @@ import {
   createDashboardCalculations,
   type DashboardSlice,
 } from "@cli-consumption/analytics";
+import {
+  dashboardLayoutComposition,
+  DEFAULT_DASHBOARD_LAYOUT_V1,
+  type DashboardLayoutV1,
+  type DashboardWidgetType,
+} from "@cli-consumption/contracts";
 import { formatDuration, formatPercent } from "@cli-consumption/ui";
-import { Bars, Metric, Section } from "@cli-consumption/ui/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bars, DashboardLayoutGrid, Metric, Section } from "@cli-consumption/ui/react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   type ConversationDetail,
@@ -15,6 +21,7 @@ import {
   type DashboardDatasetResponse,
   type DashboardQueryV1,
   type RangeChoice,
+  fetchDashboardLayout,
   fetchOfflineExport,
   postReporting,
   queryForRange,
@@ -170,9 +177,13 @@ function Filters({
 
 function MetricsView({
   data,
+  layout,
+  query,
   slice,
 }: {
   data: DashboardDatasetResponse;
+  layout: DashboardLayoutV1;
+  query: DashboardQueryV1;
   slice: DashboardSlice;
 }) {
   const calculations = useMemo(() => createDashboardCalculations(data), [data]);
@@ -216,8 +227,8 @@ function MetricsView({
     semanticCalls.length,
   );
 
-  return (
-    <>
+  const widgets: Record<DashboardWidgetType, ReactNode> = {
+    "headline-metrics": (
       <section className="metric-grid" aria-label="Headline metrics">
         <Metric
           label="Closed turns"
@@ -241,94 +252,117 @@ function MetricsView({
           value={formatPercent(metrics.pressureP95)}
         />
       </section>
-      <div className="panel-grid">
-        <Section title="Activity" note="tokens by UTC day">
-          <Bars rows={activity} value={short} />
-        </Section>
-        <Section title="Tools" note="names only">
-          <Bars rows={tools} />
-        </Section>
-        <Section title="Models" note="provider-reported tokens">
-          <Bars rows={models} value={short} />
-        </Section>
-        <Section title="Turn performance" note="p50 / p75 / p95">
-          <div className="mini-grid">
-            <Metric label="Duration p50" value={formatDuration(metrics.durationP50)} />
-            <Metric label="Duration p95" value={formatDuration(metrics.durationP95)} />
-            <Metric label="TTFT p50" value={formatDuration(metrics.ttftP50)} />
-            <Metric label="TTFT p95" value={formatDuration(metrics.ttftP95)} />
-          </div>
-        </Section>
-        <Section title="Workflow complexity" note="content-free metadata">
-          <div className="mini-grid">
-            <Metric
-              label="Turns using tools"
-              value={formatPercent(
-                calculations.ratio(
-                  slice.turns.filter((turn) => turn.toolCalls > 0).length,
-                  slice.turns.length,
-                ),
-              )}
-            />
-            <Metric
-              label="Compacted conversations"
-              value={formatPercent(
-                calculations.ratio(compacted, slice.conversations.length),
-              )}
-            />
-            <Metric
-              label="Delegating conversations"
-              value={formatPercent(
-                calculations.ratio(delegated, slice.conversations.length),
-              )}
-            />
-            <Metric
-              label="Peak concurrent turns"
-              value={number(calculations.maxConcurrent(closed))}
-            />
-          </div>
-        </Section>
-        <Section title="Turn outcomes" note="technical status, not task quality">
-          <Bars rows={outcomes} />
-        </Section>
-        <Section title="Context pressure" note="input / context window">
-          <div className="mini-grid">
-            <Metric
-              label="Median pressure"
-              value={formatPercent(calculations.percentile(contextPressures, 0.5))}
-            />
-            <Metric
-              label="Pressure p95"
-              value={formatPercent(calculations.percentile(contextPressures, 0.95))}
-            />
-            <Metric label="Context samples" value={number(slice.contexts.length)} />
-            <Metric label="Turn configurations" value={number(slice.settings.length)} />
-          </div>
-        </Section>
-        <Section title="Technical work items" note="content-free intervals">
-          <Bars rows={workKinds} value={formatDuration} />
-        </Section>
-        <Cohorts calculations={calculations} slice={slice} />
-        <Section title="Data quality" note="coverage and ingestion health">
-          <div className="mini-grid">
-            <Metric
-              label="Turn duration coverage"
-              value={formatPercent(durationCoverage)}
-            />
-            <Metric label="TTFT coverage" value={formatPercent(ttftCoverage)} />
-            <Metric label="Unknown model events" value={formatPercent(unknownModels)} />
-            <Metric
-              label="Malformed records"
-              value={number(
-                slice.conversations.length
-                  ? data.ingestionRuns.reduce((sum, run) => sum + run.malformed, 0)
-                  : 0,
-              )}
-            />
-          </div>
-        </Section>
-      </div>
-    </>
+    ),
+    activity: (
+      <Section title="Activity" note="tokens by UTC day">
+        <Bars rows={activity} value={short} />
+      </Section>
+    ),
+    tools: (
+      <Section title="Tools" note="names only">
+        <Bars rows={tools} />
+      </Section>
+    ),
+    models: (
+      <Section title="Models" note="provider-reported tokens">
+        <Bars rows={models} value={short} />
+      </Section>
+    ),
+    "turn-performance": (
+      <Section title="Turn performance" note="p50 / p75 / p95">
+        <div className="mini-grid">
+          <Metric label="Duration p50" value={formatDuration(metrics.durationP50)} />
+          <Metric label="Duration p95" value={formatDuration(metrics.durationP95)} />
+          <Metric label="TTFT p50" value={formatDuration(metrics.ttftP50)} />
+          <Metric label="TTFT p95" value={formatDuration(metrics.ttftP95)} />
+        </div>
+      </Section>
+    ),
+    "workflow-complexity": (
+      <Section title="Workflow complexity" note="content-free metadata">
+        <div className="mini-grid">
+          <Metric
+            label="Turns using tools"
+            value={formatPercent(
+              calculations.ratio(
+                slice.turns.filter((turn) => turn.toolCalls > 0).length,
+                slice.turns.length,
+              ),
+            )}
+          />
+          <Metric
+            label="Compacted conversations"
+            value={formatPercent(
+              calculations.ratio(compacted, slice.conversations.length),
+            )}
+          />
+          <Metric
+            label="Delegating conversations"
+            value={formatPercent(
+              calculations.ratio(delegated, slice.conversations.length),
+            )}
+          />
+          <Metric
+            label="Peak concurrent turns"
+            value={number(calculations.maxConcurrent(closed))}
+          />
+        </div>
+      </Section>
+    ),
+    "turn-outcomes": (
+      <Section title="Turn outcomes" note="technical status, not task quality">
+        <Bars rows={outcomes} />
+      </Section>
+    ),
+    "context-pressure": (
+      <Section title="Context pressure" note="input / context window">
+        <div className="mini-grid">
+          <Metric
+            label="Median pressure"
+            value={formatPercent(calculations.percentile(contextPressures, 0.5))}
+          />
+          <Metric
+            label="Pressure p95"
+            value={formatPercent(calculations.percentile(contextPressures, 0.95))}
+          />
+          <Metric label="Context samples" value={number(slice.contexts.length)} />
+          <Metric label="Turn configurations" value={number(slice.settings.length)} />
+        </div>
+      </Section>
+    ),
+    "technical-work-items": (
+      <Section title="Technical work items" note="content-free intervals">
+        <Bars rows={workKinds} value={formatDuration} />
+      </Section>
+    ),
+    cohorts: <Cohorts calculations={calculations} slice={slice} />,
+    "data-quality": (
+      <Section title="Data quality" note="coverage and ingestion health">
+        <div className="mini-grid">
+          <Metric
+            label="Turn duration coverage"
+            value={formatPercent(durationCoverage)}
+          />
+          <Metric label="TTFT coverage" value={formatPercent(ttftCoverage)} />
+          <Metric label="Unknown model events" value={formatPercent(unknownModels)} />
+          <Metric
+            label="Malformed records"
+            value={number(
+              slice.conversations.length
+                ? data.ingestionRuns.reduce((sum, run) => sum + run.malformed, 0)
+                : 0,
+            )}
+          />
+        </div>
+      </Section>
+    ),
+    "conversation-explorer": <ConversationExplorer query={query} />,
+  };
+  return (
+    <DashboardLayoutGrid
+      widgets={dashboardLayoutComposition(layout)}
+      renderWidget={(type) => widgets[type as DashboardWidgetType]}
+    />
   );
 }
 
@@ -619,6 +653,7 @@ export function DashboardClient() {
   );
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [layout, setLayout] = useState<DashboardLayoutV1>(DEFAULT_DASHBOARD_LAYOUT_V1);
 
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
@@ -631,6 +666,16 @@ export function DashboardClient() {
     }
     const storedTheme = window.localStorage.getItem("cli-consumption-theme");
     if (storedTheme === "light") setTheme("light");
+  }, []);
+
+  useEffect(() => {
+    void fetchDashboardLayout()
+      .then(setLayout)
+      .catch((caught) => {
+        if (caught instanceof Error && caught.message === "session_expired") {
+          window.location.assign("/login?reason=session");
+        }
+      });
   }, []);
 
   useEffect(() => {
@@ -799,10 +844,7 @@ export function DashboardClient() {
       ) : null}
       {!loading && data && slice ? (
         slice.conversations.length ? (
-          <>
-            <MetricsView data={data} slice={slice} />
-            <ConversationExplorer query={query} />
-          </>
+          <MetricsView data={data} layout={layout} query={query} slice={slice} />
         ) : (
           <section className="empty-state">
             <h2>No activity in this selection</h2>

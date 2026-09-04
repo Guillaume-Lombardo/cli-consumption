@@ -6,6 +6,12 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added the provider-neutral `DashboardLayout v1` contract, a bounded widget registry,
+  deterministic defaults and retired-widget recovery, plus SQLite/PostgreSQL
+  persistence for the single authenticated dashboard operator.
+
 ## [0.4.1] - 2026-09-01
 
 ### Changed

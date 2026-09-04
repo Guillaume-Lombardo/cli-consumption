@@ -632,6 +632,7 @@ def test_serve_passes_separate_reporting_credentials(monkeypatch) -> None:
     monkeypatch.setenv("INGEST_VALUE", "ingest-value")
     monkeypatch.setenv("READ_VALUE", "read-value")
     monkeypatch.setenv("EXPORT_VALUE", "export-value")
+    monkeypatch.setenv("LAYOUT_VALUE", "layout-value")
     monkeypatch.setattr(cli_module, "_open_database", lambda _database: FakeEngine())
     monkeypatch.setattr("cli_consumption.api.create_app", create)
     monkeypatch.setattr("uvicorn.run", lambda *_args, **_kwargs: None)
@@ -646,6 +647,8 @@ def test_serve_passes_separate_reporting_credentials(monkeypatch) -> None:
             "READ_VALUE",
             "--export-token-env",
             "EXPORT_VALUE",
+            "--layout-token-env",
+            "LAYOUT_VALUE",
         ],
     )
 
@@ -654,6 +657,51 @@ def test_serve_passes_separate_reporting_credentials(monkeypatch) -> None:
         "ingestion": "ingest-value",
         "read_token": "read-value",
         "export_token": "export-value",
+        "layout_token": "layout-value",
+    }
+
+
+def test_serve_treats_an_empty_optional_layout_token_as_unconfigured(
+    monkeypatch,
+) -> None:
+    class FakeEngine:
+        def dispose(self) -> None: ...
+
+    observed: dict[str, object] = {}
+
+    def create(_engine, ingestion, **kwargs):
+        observed.update(ingestion=ingestion, **kwargs)
+        return "application"
+
+    monkeypatch.setenv("INGEST_VALUE", "ingest-value")
+    monkeypatch.setenv("READ_VALUE", "read-value")
+    monkeypatch.setenv("EXPORT_VALUE", "export-value")
+    monkeypatch.setenv("LAYOUT_VALUE", "")
+    monkeypatch.setattr(cli_module, "_open_database", lambda _database: FakeEngine())
+    monkeypatch.setattr("cli_consumption.api.create_app", create)
+    monkeypatch.setattr("uvicorn.run", lambda *_args, **_kwargs: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            "--token-env",
+            "INGEST_VALUE",
+            "--read-token-env",
+            "READ_VALUE",
+            "--export-token-env",
+            "EXPORT_VALUE",
+            "--layout-token-env",
+            "LAYOUT_VALUE",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed == {
+        "ingestion": "ingest-value",
+        "read_token": "read-value",
+        "export_token": "export-value",
+        "layout_token": None,
     }
 
 

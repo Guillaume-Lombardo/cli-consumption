@@ -1,4 +1,12 @@
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+
+const layout = JSON.parse(
+  readFileSync(
+    new URL("../../../tests/fixtures/dashboard_layout_v1_custom.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 const TOKENS = {
   input_tokens: 100,
@@ -109,6 +117,14 @@ function send(response, status, payload) {
 
 createServer((request, response) => {
   const isExport = request.url === "/api/v1/reporting/export";
+  if (request.method === "GET" && request.url === "/api/v1/reporting/layout") {
+    if (request.headers.authorization !== "Bearer e2e-read-token") {
+      send(response, 401, { detail: "authentication_required" });
+      return;
+    }
+    send(response, 200, layout);
+    return;
+  }
   if (
     request.method !== "POST" ||
     request.headers.authorization !==

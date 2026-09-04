@@ -6,6 +6,7 @@ export interface DashboardServerConfig {
   apiUrl: URL;
   dashboardOrigin: string | null;
   exportToken: string | null;
+  layoutToken: string | null;
   password: string;
   readToken: string;
   sessionSecret: string;
@@ -24,6 +25,7 @@ export function dashboardServerConfig(): DashboardServerConfig {
   const sessionSecret = required("CLI_CONSUMPTION_SESSION_SECRET");
   const dashboardOrigin = process.env.CLI_CONSUMPTION_DASHBOARD_ORIGIN ?? null;
   const exportToken = process.env.CLI_CONSUMPTION_EXPORT_TOKEN || null;
+  const layoutToken = process.env.CLI_CONSUMPTION_LAYOUT_TOKEN || null;
   let apiUrl: URL;
   try {
     apiUrl = new URL(required("CLI_CONSUMPTION_API_URL"));
@@ -59,6 +61,7 @@ export function dashboardServerConfig(): DashboardServerConfig {
     apiUrl,
     dashboardOrigin,
     exportToken,
+    layoutToken,
     password,
     readToken,
     sessionSecret,

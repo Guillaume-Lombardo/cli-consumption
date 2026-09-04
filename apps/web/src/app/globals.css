@@ -180,6 +180,24 @@ h2 {
   padding: clamp(1rem, 3vw, 3rem);
 }
 
+.dashboard-layout-grid {
+  display: grid;
+  gap: 1rem;
+  grid-auto-rows: minmax(3rem, auto);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.dashboard-layout-widget {
+  grid-column: var(--layout-column) / span var(--layout-width);
+  grid-row: var(--layout-row) / span var(--layout-height);
+  min-width: 0;
+}
+
+.dashboard-layout-widget > * {
+  height: 100%;
+  margin: 0;
+}
+
 .hero {
   display: grid;
   gap: 1.25rem;
@@ -500,6 +518,10 @@ td button {
 }
 
 @media (max-width: 52rem) {
+  .dashboard-layout-widget {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
   .hero-intro {
     align-items: start;
     gap: 0.85rem;

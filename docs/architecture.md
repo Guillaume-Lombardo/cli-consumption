@@ -175,7 +175,7 @@ and avoid mixed-version access during migration. The detailed policy is recorded
 Snapshot extraction is the deliberate exception to migration-on-open. It accepts only
 an existing regular local SQLite file, opens it with URI `mode=ro` and SQLite
 `query_only`, starts an explicit read transaction, and requires both Alembic revision
-`0005` and the exact current table, column, type, nullability, key, constraint, and
+`0006` and the exact current table, column, type, nullability, key, constraint, and
 index layout. It never adopts, stamps, migrates, or repairs the source. A normal
 read-only SQLite connection keeps committed WAL contents visible; every estimate and
 row query therefore observes the same database snapshot while collection may continue.
@@ -189,7 +189,7 @@ conversation always carries all its normalized child rows, and a subagent edge i
 retained when either endpoint belongs to the selection. Unbounded graph-only provider
 scopes remain representable. Rows are grouped into strict snapshot-schema-v1 instances
 by provider, with stable IDs, relationships, and content hashes unchanged.
-`ingestion_runs`, `sync_receipts`, `subagent_scopes`, and Alembic state are never
+`ingestion_runs`, `sync_receipts`, `subagent_scopes`, `dashboard_layouts`, and Alembic state are never
 transferred. SQL preflight and serialized-output checks cap one extraction at 10,000
 conversations, 250,000 normalized records, and 128 MiB. Incompatible data, invalid
 windows, unavailable databases, and limit failures use fixed codes without paths,
@@ -222,6 +222,21 @@ Workflow analytics use additive child tables: `work_items`, `context_samples`,
 rejects unknown fields, enforces normalized labels and relationships, and exposes only
 generic validation errors. A newer client sent to an older strict API is rejected
 before ingestion, so central deployments must upgrade the server first.
+
+Dashboard composition is a separate provider-neutral `DashboardLayout v1` contract,
+not part of the reporting query or dataset. A closed widget registry defines allowed
+types and size bounds; both React runtimes share its TypeScript validator, default, and
+retired-widget resolver, coordinate ordering, and twelve-column grid renderer. Every
+registered widget participates, so visibility and relative geometry have identical
+semantics online and offline. Widget identifiers are restricted to `type` or bounded
+`type-N` structural values, preventing layout persistence or offline HTML from becoming
+a free-form label channel. The collector persists one canonical layout for the current
+mono-operator deployment in the internal `dashboard_layouts` table. Revision `0006`
+creates that table, downgrade to `0005` discards only the preference, and mixed-version
+deployments upgrade the collector before the BFF. Read access never grants mutation:
+save/reset require the distinct `layout` scope. Snapshot extraction, CSV, reporting
+datasets, ingestion, and retention exclude the table. See
+[ADR 0005](decisions/0005-versioned-dashboard-layouts.md).
 
 Provider input is bounded before persistence. Monolithic JSON files are capped at
 64 MiB, JSONL files at 256 MiB with an 8 MiB per-line limit, actual provider-file reads

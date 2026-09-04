@@ -14,6 +14,7 @@ afterEach(() => {
   delete process.env.CLI_CONSUMPTION_DASHBOARD_ORIGIN;
   delete process.env.CLI_CONSUMPTION_DASHBOARD_PASSWORD;
   delete process.env.CLI_CONSUMPTION_READ_TOKEN;
+  delete process.env.CLI_CONSUMPTION_LAYOUT_TOKEN;
   delete process.env.CLI_CONSUMPTION_SESSION_SECRET;
 });
 

@@ -22,7 +22,7 @@ class SchemaCompatibilityError(RuntimeError):
 # Stable signed-bigint advisory-lock namespace for ``b"cli-cons"``.
 POSTGRESQL_MIGRATION_LOCK = 7_164_216_750_902_308_467
 SQLITE_MIGRATION_LOCK_TIMEOUT_MS = 15_000
-CURRENT_DATABASE_REVISION = "0005"
+CURRENT_DATABASE_REVISION = "0006"
 
 
 BASELINE_COLUMNS: dict[str, frozenset[str]] = {
@@ -166,6 +166,7 @@ BASELINE_COLUMNS: dict[str, frozenset[str]] = {
     ),
     "subagent_scopes": frozenset({"provider", "source_machine", "lock_version"}),
     "sync_receipts": frozenset({"idempotency_key", "ingestion_run_id"}),
+    "dashboard_layouts": frozenset({"owner_key", "layout_json"}),
     "ingestion_runs": frozenset(
         {
             "id",
@@ -431,7 +432,19 @@ def _matches_revision_0004_layout(connection: Connection) -> bool:
         return False
     return _matches_declared_layout(
         connection,
-        frozenset(SCHEMA_TABLES) - {"sync_receipts"},
+        frozenset(SCHEMA_TABLES) - {"sync_receipts", "dashboard_layouts"},
+    )
+
+
+def _matches_revision_0005_layout(connection: Connection) -> bool:
+    from cli_consumption.storage import SCHEMA_TABLES
+
+    inspector = inspect(connection)
+    if "dashboard_layouts" in inspector.get_table_names():
+        return False
+    return _matches_declared_layout(
+        connection,
+        frozenset(SCHEMA_TABLES) - {"dashboard_layouts"},
     )
 
 
@@ -505,6 +518,8 @@ def upgrade_database(engine: Engine) -> None:
                 _preflight_unversioned(connection)
                 if _matches_current_head_layout(connection):
                     adopt_revision = expected_heads[0]
+                elif _matches_revision_0005_layout(connection):
+                    adopt_revision = "0005"
                 elif _matches_revision_0004_layout(connection):
                     adopt_revision = "0004"
             elif any(head not in known_revisions for head in current_heads):

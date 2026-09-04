@@ -4,15 +4,18 @@ import {
 } from "@cli-consumption/analytics";
 import {
   assertDashboardDatasetV1,
+  dashboardLayoutComposition,
   type DashboardDatasetV1,
+  type DashboardWidgetType,
 } from "@cli-consumption/contracts";
 import { formatDuration, formatPercent } from "@cli-consumption/ui";
-import { Bars, Metric, Section } from "@cli-consumption/ui/react";
-import { useMemo, useState } from "react";
+import { Bars, DashboardLayoutGrid, Metric, Section } from "@cli-consumption/ui/react";
+import { type ReactNode, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 declare global {
   var __CLI_CONSUMPTION_DATASET__: unknown;
+  var __CLI_CONSUMPTION_LAYOUT__: unknown;
 }
 type FilterKey = "provider" | "machine" | "project" | "model";
 type Filters = Record<FilterKey, string>;
@@ -26,6 +29,7 @@ type CohortDimension =
 
 const dataset = globalThis.__CLI_CONSUMPTION_DATASET__;
 assertDashboardDatasetV1(dataset);
+const layout = dashboardLayoutComposition(globalThis.__CLI_CONSUMPTION_LAYOUT__);
 const number = (value: number | null | undefined) =>
   value === null || value === undefined || !Number.isFinite(value)
     ? "—"
@@ -191,6 +195,201 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
     setSelectedConversation(null);
   }
 
+  const widgetContent: Record<DashboardWidgetType, ReactNode> = {
+    "headline-metrics": (
+      <section className="metric-grid" id="cards" aria-label="Headline metrics">
+        <Metric
+          label="Closed turns"
+          value={number(metrics.completed + metrics.aborted)}
+        />
+        <Metric label="Active days" value={number(metrics.activeDays)} />
+        <Metric
+          label="Total tokens"
+          value={short(metrics.tokens)}
+          help="Local provider counters; not billing data."
+        />
+        <Metric label="Median tokens / turn" value={short(metrics.tokensPerTurn)} />
+        <Metric label="Median TTFT" value={formatDuration(metrics.ttftP50)} />
+        <Metric label="Median duration" value={formatDuration(metrics.durationP50)} />
+        <Metric label="Turn rate" value={`${metrics.throughput.toFixed(1)}/h`} />
+        <Metric
+          label="Context pressure p95"
+          value={formatPercent(metrics.pressureP95)}
+        />
+        <Metric
+          label={data.meta.shareSafe ? "Summed turn time" : "Active time"}
+          value={formatDuration(metrics.activeMs)}
+        />
+      </section>
+    ),
+    activity: (
+      <Section title="Activity" note="tokens by UTC day">
+        <Bars rows={activity} value={short} />
+      </Section>
+    ),
+    tools: (
+      <Section title="Tools" note="names only">
+        <Bars rows={toolRows} />
+      </Section>
+    ),
+    models: (
+      <Section title="Models" note="provider-reported tokens">
+        <Bars rows={modelRows} value={short} />
+      </Section>
+    ),
+    "turn-performance": (
+      <Section title="Turn performance" note="p50 / p95">
+        <div className="mini-grid">
+          <Metric label="Duration p50" value={formatDuration(metrics.durationP50)} />
+          <Metric label="Duration p95" value={formatDuration(metrics.durationP95)} />
+          <Metric label="TTFT p50" value={formatDuration(metrics.ttftP50)} />
+          <Metric label="TTFT p95" value={formatDuration(metrics.ttftP95)} />
+        </div>
+      </Section>
+    ),
+    "workflow-complexity": (
+      <Section title="Workflow complexity" note="content-free metadata">
+        <div className="mini-grid">
+          <Metric
+            label="Turns using tools"
+            value={formatPercent(
+              calculations.ratio(
+                slice.turns.filter((turn) => turn.toolCalls > 0).length,
+                slice.turns.length,
+              ),
+            )}
+          />
+          <Metric
+            label="Compacted conversations"
+            value={formatPercent(
+              calculations.ratio(compacted, slice.conversations.length),
+            )}
+          />
+          <Metric
+            label="Delegating conversations"
+            value={formatPercent(
+              calculations.ratio(delegated, slice.conversations.length),
+            )}
+          />
+          <Metric
+            label="Peak concurrent turns"
+            value={number(calculations.maxConcurrent(slice.turns))}
+          />
+        </div>
+      </Section>
+    ),
+    "turn-outcomes": (
+      <Section title="Turn outcomes" note="technical status, not task quality">
+        <Bars rows={outcomes} />
+      </Section>
+    ),
+    "context-pressure": (
+      <Section title="Context pressure" note="input / context window">
+        <div className="mini-grid">
+          <Metric
+            label="Median pressure"
+            value={formatPercent(calculations.percentile(pressures, 0.5))}
+          />
+          <Metric
+            label="Pressure p95"
+            value={formatPercent(calculations.percentile(pressures, 0.95))}
+          />
+          <Metric label="Context samples" value={number(slice.contexts.length)} />
+          <Metric label="Turn configurations" value={number(slice.settings.length)} />
+        </div>
+      </Section>
+    ),
+    "technical-work-items": (
+      <Section title="Technical work items" note="content-free intervals">
+        <Bars rows={work} value={formatDuration} />
+      </Section>
+    ),
+    cohorts: <Cohorts calculations={calculations} slice={slice} />,
+    "data-quality": (
+      <Section title="Data quality" note="coverage and ingestion health">
+        <div className="mini-grid">
+          <Metric label="Duration coverage" value={formatPercent(durationCoverage)} />
+          <Metric label="Malformed records" value={number(malformed)} />
+          <Metric label="TTFT coverage" value={formatPercent(ttftCoverage)} />
+          <Metric
+            label="Unattributed token share"
+            value={formatPercent(
+              calculations.ratio(
+                calculations.total(calls, "unattributed_tokens"),
+                calculations.total(calls, "total_tokens"),
+              ),
+            )}
+          />
+        </div>
+      </Section>
+    ),
+    "conversation-explorer": (
+      <Section title="Conversation explorer" note="complete related rows">
+        <span className="muted" id="conversationCount">
+          {slice.conversations.length} conversations
+        </span>
+        <section
+          className="table-scroll"
+          aria-label="Scrollable conversations"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: overflow regions need keyboard access in Safari.
+          tabIndex={0}
+        >
+          <table id="table">
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Provider</th>
+                <th>Machine</th>
+                <th>Project</th>
+                <th>Models</th>
+                <th>Turns</th>
+                <th>Tokens</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {slice.conversations.map((conversation) => (
+                <tr key={conversation.key}>
+                  <td>{conversation.startedAt ?? "Unknown"}</td>
+                  <td>{conversation.provider}</td>
+                  <td>{conversation.machine}</td>
+                  <td>{conversation.project}</td>
+                  <td>{conversation.models.join(", ") || "Unknown"}</td>
+                  <td>{number(conversation.turns)}</td>
+                  <td>{short(conversation.total_tokens)}</td>
+                  <td>
+                    <button
+                      className="secondary inspect"
+                      type="button"
+                      onClick={() => setSelectedConversation(conversation.key)}
+                    >
+                      Inspect
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+        {selected ? (
+          <section className="detail-card" aria-label="Conversation detail">
+            <h3>{selected.project}</h3>
+            <p>
+              {selected.provider} · {selected.machine} ·{" "}
+              {selected.models.join(", ") || "Unknown model"}
+            </p>
+            <div className="mini-grid">
+              <Metric label="Turns" value={number(selected.turns)} />
+              <Metric label="Model calls" value={number(selected.modelCalls)} />
+              <Metric label="Tool calls" value={number(selected.toolCalls)} />
+              <Metric label="Compactions" value={number(selected.compactions)} />
+            </div>
+          </section>
+        ) : null}
+      </Section>
+    ),
+  };
+
   return (
     <main className="dashboard-shell">
       <header className="hero">
@@ -272,178 +471,10 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
           />
         </label>
       </section>
-      <section className="metric-grid" id="cards" aria-label="Headline metrics">
-        <Metric
-          label="Closed turns"
-          value={number(metrics.completed + metrics.aborted)}
-        />
-        <Metric label="Active days" value={number(metrics.activeDays)} />
-        <Metric
-          label="Total tokens"
-          value={short(metrics.tokens)}
-          help="Local provider counters; not billing data."
-        />
-        <Metric label="Median tokens / turn" value={short(metrics.tokensPerTurn)} />
-        <Metric label="Median TTFT" value={formatDuration(metrics.ttftP50)} />
-        <Metric label="Median duration" value={formatDuration(metrics.durationP50)} />
-        <Metric label="Turn rate" value={`${metrics.throughput.toFixed(1)}/h`} />
-        <Metric
-          label="Context pressure p95"
-          value={formatPercent(metrics.pressureP95)}
-        />
-        <Metric
-          label={data.meta.shareSafe ? "Summed turn time" : "Active time"}
-          value={formatDuration(metrics.activeMs)}
-        />
-      </section>
-      <div className="panel-grid">
-        <Section title="Activity" note="tokens by UTC day">
-          <Bars rows={activity} value={short} />
-        </Section>
-        <Section title="Tools" note="names only">
-          <Bars rows={toolRows} />
-        </Section>
-        <Section title="Models" note="provider-reported tokens">
-          <Bars rows={modelRows} value={short} />
-        </Section>
-        <Section title="Turn performance" note="p50 / p95">
-          <div className="mini-grid">
-            <Metric label="Duration p50" value={formatDuration(metrics.durationP50)} />
-            <Metric label="Duration p95" value={formatDuration(metrics.durationP95)} />
-            <Metric label="TTFT p50" value={formatDuration(metrics.ttftP50)} />
-            <Metric label="TTFT p95" value={formatDuration(metrics.ttftP95)} />
-          </div>
-        </Section>
-        <Section title="Workflow complexity" note="content-free metadata">
-          <div className="mini-grid">
-            <Metric
-              label="Turns using tools"
-              value={formatPercent(
-                calculations.ratio(
-                  slice.turns.filter((turn) => turn.toolCalls > 0).length,
-                  slice.turns.length,
-                ),
-              )}
-            />
-            <Metric
-              label="Compacted conversations"
-              value={formatPercent(
-                calculations.ratio(compacted, slice.conversations.length),
-              )}
-            />
-            <Metric
-              label="Delegating conversations"
-              value={formatPercent(
-                calculations.ratio(delegated, slice.conversations.length),
-              )}
-            />
-            <Metric
-              label="Peak concurrent turns"
-              value={number(calculations.maxConcurrent(slice.turns))}
-            />
-          </div>
-        </Section>
-        <Section title="Turn outcomes" note="technical status, not task quality">
-          <Bars rows={outcomes} />
-        </Section>
-        <Section title="Technical work items" note="content-free intervals">
-          <Bars rows={work} value={formatDuration} />
-        </Section>
-        <Section title="Context pressure" note="input / context window">
-          <div className="mini-grid">
-            <Metric
-              label="Median pressure"
-              value={formatPercent(calculations.percentile(pressures, 0.5))}
-            />
-            <Metric
-              label="Pressure p95"
-              value={formatPercent(calculations.percentile(pressures, 0.95))}
-            />
-            <Metric label="Context samples" value={number(slice.contexts.length)} />
-            <Metric label="Turn configurations" value={number(slice.settings.length)} />
-          </div>
-        </Section>
-        <Cohorts calculations={calculations} slice={slice} />
-        <Section title="Data quality" note="coverage and ingestion health">
-          <div className="mini-grid">
-            <Metric label="Duration coverage" value={formatPercent(durationCoverage)} />
-            <Metric label="Malformed records" value={number(malformed)} />
-            <Metric label="TTFT coverage" value={formatPercent(ttftCoverage)} />
-            <Metric
-              label="Unattributed token share"
-              value={formatPercent(
-                calculations.ratio(
-                  calculations.total(calls, "unattributed_tokens"),
-                  calculations.total(calls, "total_tokens"),
-                ),
-              )}
-            />
-          </div>
-        </Section>
-      </div>
-      <Section title="Conversation explorer" note="complete related rows">
-        <span className="muted" id="conversationCount">
-          {slice.conversations.length} conversations
-        </span>
-        <section
-          className="table-scroll"
-          aria-label="Scrollable conversations"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: overflow regions need keyboard access in Safari.
-          tabIndex={0}
-        >
-          <table id="table">
-            <thead>
-              <tr>
-                <th>Started</th>
-                <th>Provider</th>
-                <th>Machine</th>
-                <th>Project</th>
-                <th>Models</th>
-                <th>Turns</th>
-                <th>Tokens</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {slice.conversations.map((conversation) => (
-                <tr key={conversation.key}>
-                  <td>{conversation.startedAt ?? "Unknown"}</td>
-                  <td>{conversation.provider}</td>
-                  <td>{conversation.machine}</td>
-                  <td>{conversation.project}</td>
-                  <td>{conversation.models.join(", ") || "Unknown"}</td>
-                  <td>{number(conversation.turns)}</td>
-                  <td>{short(conversation.total_tokens)}</td>
-                  <td>
-                    <button
-                      className="secondary inspect"
-                      type="button"
-                      onClick={() => setSelectedConversation(conversation.key)}
-                    >
-                      Inspect
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-        {selected ? (
-          <section className="detail-card" aria-label="Conversation detail">
-            <h3>{selected.project}</h3>
-            <p>
-              {selected.provider} · {selected.machine} ·{" "}
-              {selected.models.join(", ") || "Unknown model"}
-            </p>
-            <div className="mini-grid">
-              <Metric label="Turns" value={number(selected.turns)} />
-              <Metric label="Model calls" value={number(selected.modelCalls)} />
-              <Metric label="Tool calls" value={number(selected.toolCalls)} />
-              <Metric label="Compactions" value={number(selected.compactions)} />
-            </div>
-          </section>
-        ) : null}
-      </Section>
+      <DashboardLayoutGrid
+        widgets={layout}
+        renderWidget={(type) => widgetContent[type as DashboardWidgetType]}
+      />
       <details>
         <summary>Metric definitions and privacy notes</summary>
         <p>

@@ -166,7 +166,7 @@ def test_empty_database_upgrades_to_packaged_head(tmp_path: Path) -> None:
     assert set(inspector.get_table_names()) == {*BASELINE_COLUMNS, "alembic_version"}
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0005"
+            "0006"
         )
     for table in Base.metadata.sorted_tables:
         assert {column["name"] for column in inspector.get_columns(table.name)} == (
@@ -219,7 +219,7 @@ def test_concurrent_sqlite_initialization_reaches_one_packaged_head(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0005"
+            "0006"
         )
     assert set(inspect(engine).get_table_names()) == {
         *BASELINE_COLUMNS,
@@ -245,7 +245,7 @@ def test_concurrent_sqlite_migration_is_idempotent(tmp_path: Path) -> None:
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0005"
+            "0006"
         )
     assert "ix_conversations_ended_at" in {
         item["name"] for item in inspect(engine).get_indexes("conversations")
@@ -300,7 +300,7 @@ def test_failed_sqlite_migration_releases_waiter(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0005"
+            "0006"
         )
     engine.dispose()
 
@@ -396,7 +396,7 @@ def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> No
     assert read_table(engine, "ingestion_runs")[0]["id"] == "run"
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0005"
+            "0006"
         )
     assert "agent_nickname" not in {
         column["name"] for column in inspect(engine).get_columns("subagents")
@@ -446,7 +446,7 @@ def test_unversioned_head_database_preserves_validated_scope_state(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0005"
+            "0006"
         )
         assert (
             connection.scalar(
@@ -493,7 +493,7 @@ def test_unversioned_revision_0004_is_adopted_before_sync_receipt_upgrade(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0005"
+            "0006"
         )
         assert (
             connection.scalar(
@@ -1037,7 +1037,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0005"
+                == "0006"
             )
             verify_current_database_schema(connection)
 
@@ -1064,7 +1064,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0005"
+                == "0006"
             )
             assert (
                 connection.scalar(

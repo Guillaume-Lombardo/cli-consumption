@@ -5,11 +5,11 @@ import {
   type DashboardSlice,
 } from "@cli-consumption/analytics";
 import {
-  dashboardLayoutComposition,
-  DEFAULT_DASHBOARD_LAYOUT_V1,
   type DashboardLayoutV1,
-  type DashboardWidgetV1,
   type DashboardWidgetType,
+  type DashboardWidgetV1,
+  DEFAULT_DASHBOARD_LAYOUT_V1,
+  dashboardLayoutComposition,
 } from "@cli-consumption/contracts";
 import { formatDuration, formatPercent } from "@cli-consumption/ui";
 import {
@@ -34,11 +34,11 @@ import {
   type ConversationSummary,
   type DashboardDatasetResponse,
   type DashboardQueryV1,
-  type RangeChoice,
   fetchDashboardLayout,
   fetchOfflineExport,
   postReporting,
   queryForRange,
+  type RangeChoice,
   saveDashboardLayout,
 } from "../../lib/reporting";
 import {
@@ -696,7 +696,7 @@ export function DashboardClient() {
   const [layoutError, setLayoutError] = useState("");
   const [layoutLoading, setLayoutLoading] = useState(true);
   const [layoutNotice, setLayoutNotice] = useState("");
-  const [layoutConflict, setLayoutConflict] = useState(false);
+  const [layoutRecoveryNeeded, setLayoutRecoveryNeeded] = useState(false);
   const [layoutEtag, setLayoutEtag] = useState<string | null>(null);
   const [layoutBaseline, setLayoutBaseline] = useState<DashboardLayoutV1>(
     DEFAULT_DASHBOARD_LAYOUT_V1,
@@ -729,6 +729,7 @@ export function DashboardClient() {
         setLayoutEtag(saved.etag);
         dispatchLayout({ layout: saved.layout, type: "replace" });
         setLayoutError("");
+        setLayoutRecoveryNeeded(false);
       })
       .catch((caught) => {
         if (caught instanceof Error && caught.message === "session_expired") {
@@ -738,6 +739,7 @@ export function DashboardClient() {
         setLayoutError(
           "The saved layout could not be loaded. The default layout is displayed.",
         );
+        setLayoutRecoveryNeeded(true);
       })
       .finally(() => setLayoutLoading(false));
   }, []);
@@ -754,7 +756,6 @@ export function DashboardClient() {
     }
     dispatchLayout({ layout, type: "commit" });
     setLayoutNotice(message);
-    setLayoutConflict(false);
   }
 
   function changeWidget(
@@ -789,16 +790,17 @@ export function DashboardClient() {
       setLayoutNotice(
         "Layout saving is unavailable. Reload the saved layout and retry.",
       );
+      setLayoutRecoveryNeeded(true);
       return;
     }
     setSavingLayout(true);
-    setLayoutConflict(false);
     try {
       const saved = await saveDashboardLayout(layoutHistory.present, etag);
       setLayoutBaseline(saved.layout);
       setLayoutEtag(saved.etag);
       dispatchLayout({ layout: saved.layout, type: "replace" });
       setLayoutNotice("Layout saved.");
+      setLayoutRecoveryNeeded(false);
       setEditingLayout(false);
     } catch (caught) {
       if (caught instanceof Error && caught.message === "session_expired") {
@@ -806,7 +808,7 @@ export function DashboardClient() {
         return;
       }
       const conflict = caught instanceof Error && caught.message === "layout_conflict";
-      setLayoutConflict(conflict);
+      setLayoutRecoveryNeeded(true);
       setLayoutNotice(
         conflict
           ? "The saved layout changed elsewhere. Your draft is preserved."
@@ -823,7 +825,8 @@ export function DashboardClient() {
       setLayoutBaseline(saved.layout);
       setLayoutEtag(saved.etag);
       if (!preserveDraft) dispatchLayout({ layout: saved.layout, type: "replace" });
-      setLayoutConflict(false);
+      setLayoutError("");
+      setLayoutRecoveryNeeded(false);
       setLayoutNotice(
         preserveDraft
           ? "Latest revision loaded. Your draft is ready to retry."
@@ -838,6 +841,7 @@ export function DashboardClient() {
       setLayoutNotice(
         "The saved layout could not be reloaded. Your draft is preserved.",
       );
+      setLayoutRecoveryNeeded(true);
       return null;
     }
   }
@@ -1010,6 +1014,20 @@ export function DashboardClient() {
         <section className="callout" role="status" aria-live="polite">
           <strong>Saved layout unavailable.</strong>
           <span>{layoutError}</span>
+          {layoutRecoveryNeeded && !layoutNotice ? (
+            <span className="layout-conflict-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => void reloadSavedLayout(false)}
+              >
+                Reload saved layout
+              </button>
+              <button type="button" onClick={() => void retryLayoutSave()}>
+                Retry with latest revision
+              </button>
+            </span>
+          ) : null}
         </section>
       ) : null}
       {editingLayout ? (
@@ -1020,7 +1038,6 @@ export function DashboardClient() {
           onCancel={() => {
             dispatchLayout({ layout: layoutBaseline, type: "replace" });
             setEditingLayout(false);
-            setLayoutConflict(false);
             setLayoutNotice("Layout changes discarded.");
           }}
           onRedo={() => dispatchLayout({ type: "redo" })}
@@ -1036,7 +1053,7 @@ export function DashboardClient() {
       {layoutNotice ? (
         <section className="callout" role="status" aria-live="polite">
           <span>{layoutNotice}</span>
-          {layoutConflict ? (
+          {layoutRecoveryNeeded ? (
             <span className="layout-conflict-actions">
               <button
                 className="secondary"

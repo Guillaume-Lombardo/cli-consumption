@@ -88,8 +88,9 @@ re-emits only syntactically bounded entity tags.
 The browser starts in view mode with no per-widget controls. Explicit edit mode owns a
 detached draft, baseline, and at most twenty undo states in React memory outside the
 metric renderer, so reporting-filter refreshes cannot erase an edit. Nothing is stored
-in local storage or a URL. Save is explicit. Transport failure or conflict preserves
-the draft and offers explicit reload/discard or reload-the-latest-revision-and-retry.
+in local storage or a URL. Save is explicit. An unavailable initial ETag, transport
+failure, or conflict preserves the draft and offers explicit reload/discard or
+reload-the-latest-revision-and-retry.
 Reset changes only the draft and is undoable until save.
 
 The palette is the existing closed registry and describes each widget's purpose,

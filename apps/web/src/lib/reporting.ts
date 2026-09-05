@@ -1,8 +1,8 @@
 import {
   assertDashboardLayoutV1,
-  resolveDashboardLayoutV1,
   type DashboardDatasetV1,
   type DashboardLayoutV1,
+  resolveDashboardLayoutV1,
 } from "@cli-consumption/contracts";
 
 export type RangeChoice = "7" | "30" | "90" | "all" | "custom";
@@ -129,6 +129,7 @@ export interface VersionedDashboardLayout {
 
 async function versionedLayoutResponse(
   response: Response,
+  resolveRetiredWidgets = false,
 ): Promise<VersionedDashboardLayout> {
   if (response.status === 401) throw new Error("session_expired");
   if (!response.ok) {
@@ -143,15 +144,15 @@ async function versionedLayoutResponse(
   }
   const etag = response.headers.get("ETag");
   if (!etag) throw new Error("reporting_unavailable");
-  const layout: unknown = await response.json();
+  const received: unknown = await response.json();
+  const layout = resolveRetiredWidgets ? resolveDashboardLayoutV1(received) : received;
   assertDashboardLayoutV1(layout);
   return { etag, layout };
 }
 
 export async function fetchDashboardLayout(): Promise<VersionedDashboardLayout> {
   const response = await fetch("/api/layout", { cache: "no-store" });
-  const result = await versionedLayoutResponse(response);
-  return { ...result, layout: resolveDashboardLayoutV1(result.layout) };
+  return versionedLayoutResponse(response, true);
 }
 
 export async function saveDashboardLayout(

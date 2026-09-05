@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
+import {
+  type DashboardLayoutV1,
+  DEFAULT_DASHBOARD_LAYOUT_V1,
+} from "@cli-consumption/contracts";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  DEFAULT_DASHBOARD_LAYOUT_V1,
-  type DashboardLayoutV1,
-} from "@cli-consumption/contracts";
 
 import type { DashboardDatasetResponse } from "../../lib/reporting";
 import { DashboardClient } from "./dashboard-client";
@@ -169,10 +169,23 @@ describe("persistent dashboard", () => {
 
   it("announces a non-blocking default-layout fallback without reflecting upstream data", async () => {
     const canary = "PRIVATE_LAYOUT_UPSTREAM_CANARY";
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    let layoutReads = 0;
+    let layoutWrites = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith("/api/layout")) {
-        return Response.json({ detail: canary }, { status: 503 });
+        if (init?.method === "PUT") {
+          layoutWrites += 1;
+          return Response.json(JSON.parse(String(init.body)), {
+            headers: { ETag: '"AAAAAAAAAAEArQ90u4jjew"' },
+          });
+        }
+        layoutReads += 1;
+        return layoutReads === 1
+          ? Response.json({ detail: canary }, { status: 503 })
+          : Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+              headers: { ETag: ETAG },
+            });
       }
       if (url.endsWith("/dashboard")) return Response.json(dataset());
       if (url.endsWith("/conversations")) {
@@ -181,6 +194,7 @@ describe("persistent dashboard", () => {
       throw new Error("unexpected_test_request");
     });
 
+    const user = userEvent.setup();
     const { container } = render(<DashboardClient />);
     const message = await screen.findByText(
       "The saved layout could not be loaded. The default layout is displayed.",
@@ -194,6 +208,22 @@ describe("persistent dashboard", () => {
     ).toBeInTheDocument();
     expect(container.querySelectorAll("[data-widget-type]")).toHaveLength(12);
     expect(document.body).not.toHaveTextContent(canary);
+    expect(screen.getByRole("button", { name: "Reload saved layout" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    await user.click(screen.getByRole("button", { name: "Remove Tools" }));
+    await user.click(screen.getByRole("button", { name: "Save layout" }));
+    expect(
+      await screen.findByText(
+        "Layout saving is unavailable. Reload the saved layout and retry.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Retry with latest revision" }),
+    );
+    await waitFor(() => expect(layoutWrites).toBe(1));
+    expect(await screen.findByText("Layout saved.")).toBeInTheDocument();
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
   });
 
   it("uses the resolved layout for visibility, order, and relative geometry", async () => {
@@ -401,14 +431,20 @@ describe("persistent dashboard", () => {
   });
 
   it("preserves the draft after a fixed network save failure", async () => {
+    let puts = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith("/api/layout")) {
         if (init?.method === "PUT") {
-          return Response.json(
-            { detail: "CANARY_PRIVATE_UPSTREAM_ERROR" },
-            { status: 502 },
-          );
+          puts += 1;
+          return puts === 1
+            ? Response.json(
+                { detail: "CANARY_PRIVATE_UPSTREAM_ERROR" },
+                { status: 502 },
+              )
+            : Response.json(JSON.parse(String(init.body)), {
+                headers: { ETag: '"AAAAAAAAAAEArQ90u4jjew"' },
+              });
         }
         return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
           headers: { ETag: ETAG },
@@ -432,6 +468,13 @@ describe("persistent dashboard", () => {
     expect(notice).not.toHaveTextContent("CANARY_PRIVATE_UPSTREAM_ERROR");
     expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
     expect(screen.getByRole("button", { name: "Save layout" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reload saved layout" })).toBeEnabled();
+    await user.click(
+      screen.getByRole("button", { name: "Retry with latest revision" }),
+    );
+    await waitFor(() => expect(puts).toBe(2));
+    expect(await screen.findByText("Layout saved.")).toBeInTheDocument();
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
   });
 
   it("keeps private operational labels out of the shareable URL", async () => {

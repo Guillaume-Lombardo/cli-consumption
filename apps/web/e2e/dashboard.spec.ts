@@ -1,8 +1,18 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
+async function collectorAction(action: string): Promise<void> {
+  const response = await fetch(`http://127.0.0.1:4311/__e2e/${action}`, {
+    method: "POST",
+  });
+  expect(
+    response.ok,
+    `mock collector action ${action} failed with HTTP ${response.status}`,
+  ).toBe(true);
+}
+
 test("authenticates and renders the bounded persistent dashboard", async ({ page }) => {
-  await fetch("http://127.0.0.1:4311/__e2e/reset", { method: "POST" });
+  await collectorAction("reset");
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/login\?reason=session$/);
   await expect(page.getByRole("heading", { name: "CLI Consumption" })).toBeVisible();
@@ -184,18 +194,14 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   await expect(page.getByText("Loading the bounded selection…")).toHaveCount(0);
   await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
 
-  await fetch("http://127.0.0.1:4311/__e2e/fail-next-layout", {
-    method: "POST",
-  });
+  await collectorAction("fail-next-layout");
   await page.getByRole("button", { name: "Save layout" }).click();
   await expect(
     page.getByText("The layout could not be saved. Your draft is preserved."),
   ).toBeVisible();
   await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
 
-  await fetch("http://127.0.0.1:4311/__e2e/advance-layout", {
-    method: "POST",
-  });
+  await collectorAction("advance-layout");
   await page.getByRole("button", { name: "Save layout" }).click();
   await expect(
     page.getByText("The saved layout changed elsewhere. Your draft is preserved."),
@@ -242,7 +248,7 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
 test("keeps the chart catalog stable in light and dark responsive layouts", async ({
   page,
 }) => {
-  await fetch("http://127.0.0.1:4311/__e2e/reset", { method: "POST" });
+  await collectorAction("reset");
   await page.goto("/login");
   await page.getByLabel("Dashboard password").fill("e2e dashboard password");
   await page.getByRole("button", { name: "Sign in" }).click();

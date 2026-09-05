@@ -1,7 +1,18 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
+async function collectorAction(action: string): Promise<void> {
+  const response = await fetch(`http://127.0.0.1:4311/__e2e/${action}`, {
+    method: "POST",
+  });
+  expect(
+    response.ok,
+    `mock collector action ${action} failed with HTTP ${response.status}`,
+  ).toBe(true);
+}
+
 test("authenticates and renders the bounded persistent dashboard", async ({ page }) => {
+  await collectorAction("reset");
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/login\?reason=session$/);
   await expect(page.getByRole("heading", { name: "CLI Consumption" })).toBeVisible();
@@ -41,6 +52,120 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
     { height: "1", type: "data-quality", width: "6", x: "6", y: "5" },
     { height: "2", type: "conversation-explorer", width: "12", x: "0", y: "6" },
   ]);
+  await expect(page.locator(".widget-editor-controls")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Widget catalog" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Edit dashboard" }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Widget catalog" }),
+  ).toBeVisible();
+  const activityMoveHandle = page.getByRole("button", {
+    name: /Move or resize Activity/,
+  });
+  const stackedLayout = (page.viewportSize()?.width ?? 0) <= 832;
+  if (stackedLayout) {
+    await expect(activityMoveHandle).toBeHidden();
+  } else {
+    await expect(activityMoveHandle).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Remove Tools" }).click();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Reset draft" }).click();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(1);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Remove Models" }).click();
+  await page.getByRole("button", { name: "Remove Turn performance" }).click();
+  if (stackedLayout) {
+    await page.getByRole("button", { name: "Move Activity right" }).click();
+  } else {
+    const relativePosition = (widget: Element) => {
+      const grid = widget.closest(".dashboard-layout-grid");
+      if (!grid) return null;
+      const widgetBox = widget.getBoundingClientRect();
+      const gridBox = grid.getBoundingClientRect();
+      return { x: widgetBox.x - gridBox.x, y: widgetBox.y - gridBox.y };
+    };
+    const activityBefore = await page
+      .locator('[data-widget-type="activity"]')
+      .evaluate(relativePosition);
+    const gesture = await page.locator(".dashboard-layout-grid").evaluate((grid) => {
+      const style = getComputedStyle(grid);
+      const pixels = (value: string) =>
+        [...value.matchAll(/([0-9]+(?:\.[0-9]+)?)px/g)].map((match) =>
+          Number(match[1]),
+        );
+      const starts = (tracks: number[], gap: number) => {
+        let offset = 0;
+        return tracks.map((track) => {
+          const start = offset;
+          offset += track + gap;
+          return start;
+        });
+      };
+      const columns = starts(
+        pixels(style.gridTemplateColumns),
+        Number.parseFloat(style.columnGap) || 0,
+      );
+      const rows = starts(
+        pixels(style.gridTemplateRows),
+        Number.parseFloat(style.rowGap) || 0,
+      );
+      return { x: columns[2] - columns[0], y: rows[2] - rows[1] };
+    });
+    expect(gesture.x).toBeGreaterThan(0);
+    expect(gesture.y).toBeGreaterThan(0);
+    if (activityBefore) {
+      await activityMoveHandle.evaluate((handle) => {
+        handle.setPointerCapture = (pointerId) => {
+          handle.dataset.capturedPointer = String(pointerId);
+        };
+        handle.releasePointerCapture = (pointerId) => {
+          handle.dataset.releasedPointer = String(pointerId);
+        };
+      });
+      await activityMoveHandle.dispatchEvent("pointerdown", {
+        clientX: 20,
+        clientY: 20,
+        pointerId: 17,
+      });
+      expect(await activityMoveHandle.getAttribute("data-captured-pointer")).toBe("17");
+      await activityMoveHandle.dispatchEvent("pointerup", {
+        clientX: 20 + gesture.x,
+        clientY: 20 + gesture.y,
+        pointerId: 17,
+      });
+      expect(await activityMoveHandle.getAttribute("data-released-pointer")).toBe("17");
+    }
+    await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+      "data-position-x",
+      "2",
+    );
+    await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+      "data-position-y",
+      "2",
+    );
+    const activityAfter = await page
+      .locator('[data-widget-type="activity"]')
+      .evaluate(relativePosition);
+    expect(activityAfter?.x).toBeGreaterThan(activityBefore?.x ?? Infinity);
+    expect(activityAfter?.y).toBeGreaterThan(activityBefore?.y ?? Infinity);
+    await activityMoveHandle.press("ArrowLeft");
+    await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+      "data-position-x",
+      "1",
+    );
+    await activityMoveHandle.press("ArrowRight");
+  }
+  await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+    "data-position-x",
+    stackedLayout ? "1" : "2",
+  );
+  await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+    "data-position-y",
+    stackedLayout ? "1" : "2",
+  );
 
   const cardIsInvisible = await page
     .locator(".metric-card")
@@ -66,7 +191,36 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   await page.getByRole("combobox", { name: "Project" }).selectOption("project-a");
   await expect(page).toHaveURL(/\/dashboard\?range=30$/);
   expect(page.url()).not.toContain("project-a");
-  await expect(page.getByRole("status")).toBeHidden();
+  await expect(page.getByText("Loading the bounded selection…")).toHaveCount(0);
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+
+  await collectorAction("fail-next-layout");
+  await page.getByRole("button", { name: "Save layout" }).click();
+  await expect(
+    page.getByText("The layout could not be saved. Your draft is preserved."),
+  ).toBeVisible();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+
+  await collectorAction("advance-layout");
+  await page.getByRole("button", { name: "Save layout" }).click();
+  await expect(
+    page.getByText("The saved layout changed elsewhere. Your draft is preserved."),
+  ).toBeVisible();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Retry with latest revision" }).click();
+  await expect(page.getByText("Layout saved.")).toBeVisible();
+  await expect(page.locator(".widget-editor-controls")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+  await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+    "data-position-x",
+    stackedLayout ? "1" : "2",
+  );
+  await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+    "data-position-y",
+    stackedLayout ? "1" : "2",
+  );
+  await expect(page.locator(".widget-editor-controls")).toHaveCount(0);
 
   await page
     .getByRole("combobox", { name: "Offline export profile" })
@@ -94,6 +248,7 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
 test("keeps the chart catalog stable in light and dark responsive layouts", async ({
   page,
 }) => {
+  await collectorAction("reset");
   await page.goto("/login");
   await page.getByLabel("Dashboard password").fill("e2e dashboard password");
   await page.getByRole("button", { name: "Sign in" }).click();

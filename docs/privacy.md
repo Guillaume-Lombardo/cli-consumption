@@ -24,8 +24,9 @@ pseudonymize or coarsen those fields and is the appropriate controlled-sharing m
 - Content hashes and event counts used only for deduplication
 - Internal provider/source-machine scope rows and lock counters used only to serialize
   subagent graph freshness decisions; these rows are not exported
-- One bounded, content-free dashboard composition for the mono-operator deployment;
-  its internal owner key and canonical JSON are not reporting data or exports
+- One bounded, content-free dashboard composition and non-sensitive CAS revision for
+  the mono-operator deployment; its internal owner key, canonical JSON, and revision
+  are not reporting data or exports
 
 ## Prohibited data
 
@@ -230,6 +231,17 @@ offline dashboards so both renderers preserve the same composition. Saving or re
 uses a separate server-side `layout` credential. Persistence and HTML generation each
 revalidate a detached dump at the sink, so mutation of an already constructed model
 cannot bypass the closed contract or race the emitted document.
+
+The layout revision is an internal bounded counter with no conversation-derived
+meaning. The API exposes only a quoted opaque ETag derived from that counter, never the
+counter, owner key, or layout JSON in an error or log. Browser drafts and their bounded
+undo history stay only in React memory: they are absent from local/session storage,
+URLs, reporting queries, HTML exports, logs, and datasets. Conflicts, malformed
+preconditions, unavailable persistence, and invalid moves use fixed messages without
+reflecting request values. The only changed surfaces are the internal SQL column,
+layout response ETag, same-origin `If-Match` request header, authenticated edit UI, and
+synthetic fixtures; CSV, normalized snapshots, offline HTML, and provider ingestion are
+unchanged.
 
 Offline downloads reuse the exact bounded POST query visible in the dashboard and add
 only the selected `detailed` or `share-safe` profile. A dedicated server-side token

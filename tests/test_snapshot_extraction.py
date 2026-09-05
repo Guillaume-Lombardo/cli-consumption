@@ -204,7 +204,9 @@ def test_extracts_valid_provider_snapshots_and_excludes_internal_state(
         )
         connection.execute(
             text(
-                "INSERT INTO dashboard_layouts VALUES ('deployment-operator', :canary)"
+                "INSERT INTO dashboard_layouts "
+                "(owner_key, layout_json, revision) "
+                "VALUES ('deployment-operator', :canary, 1)"
             ),
             {"canary": CANARY},
         )
@@ -366,7 +368,7 @@ def test_rejects_non_current_or_modified_schema_without_migrating(
     with check.connect() as connection:
         revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
     assert revision == (
-        "0004" if mutation == "old" else "9999" if mutation == "new" else "0006"
+        "0004" if mutation == "old" else "9999" if mutation == "new" else "0007"
     )
     check.dispose()
 

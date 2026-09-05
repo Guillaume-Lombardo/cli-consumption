@@ -50,17 +50,23 @@ Future layout versions require an explicit migrator before they can be written.
 Layouts written by an earlier prerelease implementation with free-form identifiers
 resolve to the complete safe default instead of carrying those values into an export.
 
-The `dashboard_layouts` table stores an internal fixed owner key and canonical JSON.
+The `dashboard_layouts` table stores an internal fixed owner key, canonical JSON, and
+a non-null signed-bigint revision in the closed range 1 through `2^63 - 1`.
 The key is never accepted from or returned to a client. It means “the authenticated
 operator of this deployment”, not a person. There is exactly one application-managed
-row; last committed write wins atomically on SQLite and PostgreSQL. Multi-user layouts
-are out of scope until authentication supplies a stable subject.
+row. An absent row has logical revision zero; an upgraded legacy row starts at one.
+Every successful save or reset increments the revision, and reset persists the
+canonical default rather than deleting the row. This prevents ABA ambiguity. The
+maximum revision cannot be incremented and fails closed as a conflict. Multi-user
+layouts are out of scope until authentication supplies a stable subject.
 
-Revision `0006` creates the table without seeding it. Upgrade therefore maps the old
-hard-coded dashboard to the current default on first read. Downgrade to `0005` drops
-only this presentation preference; normalized usage data is unchanged. The application
-server must be upgraded before the BFF. Old servers reject the new route, old BFFs
-ignore the table, and simultaneous old/new writers must be avoided during migration.
+Revision `0006` creates the table without seeding it. Revision `0007` adds the bounded
+revision, assigning one to an existing row; downgrade to `0006` removes only the
+concurrency field and preserves the JSON. A further downgrade to `0005` drops only this
+presentation preference. Normalized usage data is unchanged. The application server
+must be upgraded before the BFF. Writers without `If-Match` fail with `428
+layout_revision_required`, so they cannot silently overwrite a newer draft. Mixed
+application versions remain unsupported while the schema migration runs.
 Snapshot extraction requires the exact new database revision but never transfers the
 layout table. CSV, reporting datasets, normalized snapshots, retention, and provider
 ingestion also exclude it.
@@ -71,6 +77,30 @@ authority. The BFF retains that credential server-side and requires its authenti
 same-origin session for mutations. Capabilities advertise layout version 1 and the
 fixed mutation scope.
 
+GET returns the layout body and a quoted opaque `ETag` derived only from its internal
+revision. It contains no layout JSON, owner key, label, credential, or stable user
+identity, and clients must not interpret it. PUT and DELETE require that exact value in
+`If-Match`. The collector performs one conditional INSERT or UPDATE, never a
+read-then-write sequence. A stale create, update, or reset returns only `412
+layout_conflict`; malformed validators use a fixed error. The BFF forwards and
+re-emits only syntactically bounded entity tags.
+
+The browser starts in view mode with no per-widget controls. Explicit edit mode owns a
+detached draft, baseline, and at most twenty undo states in React memory outside the
+metric renderer, so reporting-filter refreshes cannot erase an edit. Nothing is stored
+in local storage or a URL. Save is explicit. An unavailable initial ETag, transport
+failure, or conflict preserves the draft and offers explicit reload/discard or
+reload-the-latest-revision-and-retry.
+Reset changes only the draft and is undoable until save.
+
+The palette is the existing closed registry and describes each widget's purpose,
+metrics, and size range. Addition uses deterministic row-major first-fit placement.
+Movement and resizing reuse strict v1 collision and grid validation. Pointer capture is
+available on non-mobile layouts; arrow keys move, Shift+arrow resizes, and visible
+buttons provide the same operations. Mobile disables drag while retaining the complete
+button controls. Status changes use a polite live region and invalid moves leave the
+prior valid draft unchanged.
+
 ## Privacy and dependencies
 
 The allowed fields describe only component composition. Structural widget identifiers
@@ -80,7 +110,7 @@ dataset rows are forbidden by the closed schema. Validation errors use fixed cod
 do not echo input. The stored layout is private operational preference data, but does
 not widen the conversation metadata boundary.
 
-No grid or drag-and-drop dependency is added in this increment. The contract does not
+No grid or drag-and-drop dependency is added. The contract does not
 require one, existing CSS grid is sufficient to render it, and avoiding a dependency
 keeps the offline bundle smaller and network-free. Before adding one, a separate
 decision must compare compressed bundle weight, keyboard and screen-reader behavior,

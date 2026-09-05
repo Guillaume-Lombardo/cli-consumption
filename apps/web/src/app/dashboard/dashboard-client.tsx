@@ -5,10 +5,11 @@ import {
   type DashboardSlice,
 } from "@cli-consumption/analytics";
 import {
-  dashboardLayoutComposition,
-  DEFAULT_DASHBOARD_LAYOUT_V1,
   type DashboardLayoutV1,
   type DashboardWidgetType,
+  type DashboardWidgetV1,
+  DEFAULT_DASHBOARD_LAYOUT_V1,
+  dashboardLayoutComposition,
 } from "@cli-consumption/contracts";
 import { formatDuration, formatPercent } from "@cli-consumption/ui";
 import {
@@ -18,7 +19,14 @@ import {
   Metric,
   Section,
 } from "@cli-consumption/ui/react";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useState,
+} from "react";
 
 import {
   type ConversationDetail,
@@ -26,12 +34,25 @@ import {
   type ConversationSummary,
   type DashboardDatasetResponse,
   type DashboardQueryV1,
-  type RangeChoice,
   fetchDashboardLayout,
   fetchOfflineExport,
   postReporting,
   queryForRange,
+  type RangeChoice,
+  saveDashboardLayout,
 } from "../../lib/reporting";
+import {
+  addWidget,
+  createLayoutHistory,
+  layoutHistoryReducer,
+  removeWidget,
+  updateWidget,
+} from "./layout-editor";
+import {
+  LayoutEditorToolbar,
+  WidgetEditorControls,
+  WidgetPalette,
+} from "./layout-editor-view";
 
 type FilterDimension = keyof DashboardQueryV1["filters"];
 type CohortDimension =
@@ -183,12 +204,21 @@ function Filters({
 
 function MetricsView({
   data,
+  editing,
   layout,
+  onWidgetChange,
+  onWidgetRemove,
   query,
   slice,
 }: {
   data: DashboardDatasetResponse;
+  editing: boolean;
   layout: DashboardLayoutV1;
+  onWidgetChange: (
+    id: string,
+    delta: { height?: number; width?: number; x?: number; y?: number },
+  ) => void;
+  onWidgetRemove: (id: string) => void;
   query: DashboardQueryV1;
   slice: DashboardSlice;
 }) {
@@ -362,7 +392,15 @@ function MetricsView({
   };
   return (
     <DashboardLayoutGrid
+      editing={editing}
       widgets={dashboardLayoutComposition(layout)}
+      renderEditor={(widget) => (
+        <WidgetEditorControls
+          onChange={onWidgetChange}
+          onRemove={onWidgetRemove}
+          widget={widget as DashboardWidgetV1}
+        />
+      )}
       renderWidget={(type) => widgets[type as DashboardWidgetType]}
     />
   );
@@ -656,7 +694,20 @@ export function DashboardClient() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const [layoutError, setLayoutError] = useState("");
-  const [layout, setLayout] = useState<DashboardLayoutV1>(DEFAULT_DASHBOARD_LAYOUT_V1);
+  const [layoutLoading, setLayoutLoading] = useState(true);
+  const [layoutNotice, setLayoutNotice] = useState("");
+  const [layoutRecoveryNeeded, setLayoutRecoveryNeeded] = useState(false);
+  const [layoutEtag, setLayoutEtag] = useState<string | null>(null);
+  const [layoutBaseline, setLayoutBaseline] = useState<DashboardLayoutV1>(
+    DEFAULT_DASHBOARD_LAYOUT_V1,
+  );
+  const [layoutHistory, dispatchLayout] = useReducer(
+    layoutHistoryReducer,
+    DEFAULT_DASHBOARD_LAYOUT_V1,
+    createLayoutHistory,
+  );
+  const [editingLayout, setEditingLayout] = useState(false);
+  const [savingLayout, setSavingLayout] = useState(false);
 
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
@@ -673,9 +724,12 @@ export function DashboardClient() {
 
   useEffect(() => {
     void fetchDashboardLayout()
-      .then((savedLayout) => {
-        setLayout(savedLayout);
+      .then((saved) => {
+        setLayoutBaseline(saved.layout);
+        setLayoutEtag(saved.etag);
+        dispatchLayout({ layout: saved.layout, type: "replace" });
         setLayoutError("");
+        setLayoutRecoveryNeeded(false);
       })
       .catch((caught) => {
         if (caught instanceof Error && caught.message === "session_expired") {
@@ -685,8 +739,117 @@ export function DashboardClient() {
         setLayoutError(
           "The saved layout could not be loaded. The default layout is displayed.",
         );
-      });
+        setLayoutRecoveryNeeded(true);
+      })
+      .finally(() => setLayoutLoading(false));
   }, []);
+
+  const layoutDirty = useMemo(
+    () => JSON.stringify(layoutHistory.present) !== JSON.stringify(layoutBaseline),
+    [layoutBaseline, layoutHistory.present],
+  );
+
+  function commitLayout(layout: DashboardLayoutV1 | null, message: string) {
+    if (!layout) {
+      setLayoutNotice("That change is blocked by the grid bounds or another widget.");
+      return;
+    }
+    dispatchLayout({ layout, type: "commit" });
+    setLayoutNotice(message);
+  }
+
+  function changeWidget(
+    id: string,
+    delta: { height?: number; width?: number; x?: number; y?: number },
+  ) {
+    const widget = layoutHistory.present.widgets.find((item) => item.id === id);
+    if (!widget) return;
+    commitLayout(
+      updateWidget(layoutHistory.present, id, {
+        position:
+          delta.x || delta.y
+            ? {
+                x: widget.position.x + (delta.x ?? 0),
+                y: widget.position.y + (delta.y ?? 0),
+              }
+            : widget.position,
+        size:
+          delta.width || delta.height
+            ? {
+                height: widget.size.height + (delta.height ?? 0),
+                width: widget.size.width + (delta.width ?? 0),
+              }
+            : widget.size,
+      }),
+      "Draft updated.",
+    );
+  }
+
+  async function persistLayout(etag = layoutEtag) {
+    if (!etag) {
+      setLayoutNotice(
+        "Layout saving is unavailable. Reload the saved layout and retry.",
+      );
+      setLayoutRecoveryNeeded(true);
+      return;
+    }
+    setSavingLayout(true);
+    try {
+      const saved = await saveDashboardLayout(layoutHistory.present, etag);
+      setLayoutBaseline(saved.layout);
+      setLayoutEtag(saved.etag);
+      dispatchLayout({ layout: saved.layout, type: "replace" });
+      setLayoutNotice("Layout saved.");
+      setLayoutRecoveryNeeded(false);
+      setEditingLayout(false);
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "session_expired") {
+        window.location.assign("/login?reason=session");
+        return;
+      }
+      const conflict = caught instanceof Error && caught.message === "layout_conflict";
+      setLayoutRecoveryNeeded(true);
+      setLayoutNotice(
+        conflict
+          ? "The saved layout changed elsewhere. Your draft is preserved."
+          : "The layout could not be saved. Your draft is preserved.",
+      );
+    } finally {
+      setSavingLayout(false);
+    }
+  }
+
+  async function reloadSavedLayout(preserveDraft: boolean) {
+    try {
+      const saved = await fetchDashboardLayout();
+      setLayoutBaseline(saved.layout);
+      setLayoutEtag(saved.etag);
+      if (!preserveDraft) dispatchLayout({ layout: saved.layout, type: "replace" });
+      setLayoutError("");
+      setLayoutRecoveryNeeded(false);
+      setLayoutNotice(
+        preserveDraft
+          ? "Latest revision loaded. Your draft is ready to retry."
+          : "Saved layout reloaded.",
+      );
+      return saved.etag;
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "session_expired") {
+        window.location.assign("/login?reason=session");
+        return null;
+      }
+      setLayoutNotice(
+        "The saved layout could not be reloaded. Your draft is preserved.",
+      );
+      setLayoutRecoveryNeeded(true);
+      return null;
+    }
+  }
+
+  async function retryLayoutSave() {
+    const latest = await reloadSavedLayout(true);
+    if (latest) await persistLayout(latest);
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -793,6 +956,21 @@ export function DashboardClient() {
           </div>
         </div>
         <div className="hero-actions">
+          {!editingLayout ? (
+            <button
+              aria-busy={layoutLoading}
+              className="secondary"
+              disabled={layoutLoading}
+              type="button"
+              onClick={() => {
+                dispatchLayout({ layout: layoutBaseline, type: "replace" });
+                setEditingLayout(true);
+                setLayoutNotice("Edit mode enabled.");
+              }}
+            >
+              Edit dashboard
+            </button>
+          ) : null}
           <label className="inline-control">
             <span>Offline profile</span>
             <select
@@ -836,7 +1014,71 @@ export function DashboardClient() {
         <section className="callout" role="status" aria-live="polite">
           <strong>Saved layout unavailable.</strong>
           <span>{layoutError}</span>
+          {layoutRecoveryNeeded && !layoutNotice ? (
+            <span className="layout-conflict-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => void reloadSavedLayout(false)}
+              >
+                Reload saved layout
+              </button>
+              <button type="button" onClick={() => void retryLayoutSave()}>
+                Retry with latest revision
+              </button>
+            </span>
+          ) : null}
         </section>
+      ) : null}
+      {editingLayout ? (
+        <LayoutEditorToolbar
+          canRedo={layoutHistory.future.length > 0}
+          canUndo={layoutHistory.past.length > 0}
+          dirty={layoutDirty}
+          onCancel={() => {
+            dispatchLayout({ layout: layoutBaseline, type: "replace" });
+            setEditingLayout(false);
+            setLayoutNotice("Layout changes discarded.");
+          }}
+          onRedo={() => dispatchLayout({ type: "redo" })}
+          onReset={() => {
+            dispatchLayout({ type: "reset" });
+            setLayoutNotice("Default layout applied to the draft. You can undo it.");
+          }}
+          onSave={() => void persistLayout()}
+          onUndo={() => dispatchLayout({ type: "undo" })}
+          saving={savingLayout}
+        />
+      ) : null}
+      {layoutNotice ? (
+        <section className="callout" role="status" aria-live="polite">
+          <span>{layoutNotice}</span>
+          {layoutRecoveryNeeded ? (
+            <span className="layout-conflict-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => void reloadSavedLayout(false)}
+              >
+                Reload saved layout
+              </button>
+              <button type="button" onClick={() => void retryLayoutSave()}>
+                Retry with latest revision
+              </button>
+            </span>
+          ) : null}
+        </section>
+      ) : null}
+      {editingLayout ? (
+        <WidgetPalette
+          layout={layoutHistory.present}
+          onAdd={(type) =>
+            commitLayout(
+              addWidget(layoutHistory.present, type),
+              "Widget added to the draft.",
+            )
+          }
+        />
       ) : null}
       <Filters
         custom={custom}
@@ -860,7 +1102,20 @@ export function DashboardClient() {
       ) : null}
       {!loading && data && slice ? (
         slice.conversations.length ? (
-          <MetricsView data={data} layout={layout} query={query} slice={slice} />
+          <MetricsView
+            data={data}
+            editing={editingLayout}
+            layout={editingLayout ? layoutHistory.present : layoutBaseline}
+            onWidgetChange={changeWidget}
+            onWidgetRemove={(id) =>
+              commitLayout(
+                removeWidget(layoutHistory.present, id),
+                "Widget removed from the draft.",
+              )
+            }
+            query={query}
+            slice={slice}
+          />
         ) : (
           <section className="empty-state">
             <h2>No activity in this selection</h2>

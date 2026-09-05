@@ -154,6 +154,11 @@ detailed files as private; choose the share-safe profile for controlled sharing.
 The production Compose example accepts an omitted or empty
 `CLI_CONSUMPTION_LAYOUT_TOKEN`; the collector normalizes that empty optional value to
 “not configured”. Other credentials remain mandatory and must be non-empty.
+When layout mutation is enabled, each browser save carries the opaque revision returned
+by the collector. Concurrent or stale sessions receive a fixed conflict and must reload
+before retrying; reset persists the default as a new revision, so it cannot reintroduce
+an older writer through an ABA cycle. Upgrade the collector schema through revision
+`0007` before deploying this editor-enabled BFF.
 
 ## Back up and restore
 

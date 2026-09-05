@@ -364,14 +364,21 @@ export interface LayoutWidget {
 }
 
 export function DashboardLayoutGrid({
+  editing = false,
+  renderEditor,
   renderWidget,
   widgets,
 }: {
+  editing?: boolean;
+  renderEditor?: (widget: LayoutWidget) => ReactNode;
   renderWidget: (type: string) => ReactNode;
   widgets: readonly LayoutWidget[];
 }) {
   return (
-    <div className="dashboard-layout-grid" data-layout-widget-count={widgets.length}>
+    <div
+      className={`dashboard-layout-grid${editing ? " dashboard-layout-editing" : ""}`}
+      data-layout-widget-count={widgets.length}
+    >
       {widgets.map((widget) => (
         <div
           className="dashboard-layout-widget"
@@ -391,7 +398,8 @@ export function DashboardLayoutGrid({
             } as CSSProperties
           }
         >
-          {renderWidget(widget.type)}
+          {editing && renderEditor ? renderEditor(widget) : null}
+          <div className="dashboard-widget-content">{renderWidget(widget.type)}</div>
         </div>
       ))}
     </div>

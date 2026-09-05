@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { DEFAULT_DASHBOARD_LAYOUT_V1 } from "@cli-consumption/contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { initialWindow, queryForRange } from "./reporting";
+import {
+  fetchDashboardLayout,
+  initialWindow,
+  queryForRange,
+  saveDashboardLayout,
+} from "./reporting";
 
 const NOW = new Date("2026-09-01T12:00:00Z");
+const ETAG = '"AAAAAAAAAABSAEZnRrzWfw"';
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("dashboard query construction", () => {
   it("starts with an explicit bounded latest-30-day UTC window", () => {
@@ -36,5 +45,56 @@ describe("dashboard query construction", () => {
       since: "2026-08-01T00:00:00.000Z",
       until: "2026-09-01T00:00:00.000Z",
     });
+  });
+
+  it("resolves a retired widget on GET while preserving its revision ETag", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          columns: 12,
+          version: 1,
+          widgets: [
+            {
+              config: {},
+              id: "retired-widget",
+              position: { x: 0, y: 0 },
+              size: { height: 1, width: 6 },
+              type: "retired-widget",
+            },
+          ],
+        },
+        { headers: { ETag: ETAG } },
+      ),
+    );
+
+    await expect(fetchDashboardLayout()).resolves.toEqual({
+      etag: ETAG,
+      layout: DEFAULT_DASHBOARD_LAYOUT_V1,
+    });
+  });
+
+  it("rejects a retired widget returned by a successful mutation", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          columns: 12,
+          version: 1,
+          widgets: [
+            {
+              config: {},
+              id: "retired-widget",
+              position: { x: 0, y: 0 },
+              size: { height: 1, width: 6 },
+              type: "retired-widget",
+            },
+          ],
+        },
+        { headers: { ETag: ETAG } },
+      ),
+    );
+
+    await expect(
+      saveDashboardLayout(DEFAULT_DASHBOARD_LAYOUT_V1, ETAG),
+    ).rejects.toThrow();
   });
 });

@@ -6,6 +6,7 @@ import { sameOrigin, verifySessionToken } from "./session";
 
 const REQUEST_BYTES = 64 * 1024;
 const LAYOUT_RESPONSE_BYTES = 64 * 1024;
+const LAYOUT_ETAG = /^"[A-Za-z0-9_-]{22}"$/;
 const ROUTES = {
   conversation: { path: "conversation", responseBytes: 16 * 1024 * 1024 },
   conversations: { path: "conversations", responseBytes: 4 * 1024 * 1024 },
@@ -134,6 +135,11 @@ export async function proxyLayoutRequest(
     return json("session_expired", 401);
   if (request.method !== "GET" && config.layoutToken === null)
     return json("layout_unavailable", 503);
+  const ifMatch = request.headers.get("If-Match");
+  if (request.method !== "GET" && ifMatch === null)
+    return json("layout_revision_required", 428);
+  if (request.method !== "GET" && !LAYOUT_ETAG.test(ifMatch ?? ""))
+    return json("invalid_layout_revision", 400);
   let body: string | undefined;
   if (request.method === "PUT") {
     const parsed = await readBoundedJsonObject(request, REQUEST_BYTES);
@@ -149,6 +155,7 @@ export async function proxyLayoutRequest(
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${request.method === "GET" ? config.readToken : config.layoutToken}`,
+        ...(ifMatch ? { "If-Match": ifMatch } : {}),
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       method: request.method,
@@ -160,14 +167,25 @@ export async function proxyLayoutRequest(
   const response = await readBoundedBytes(upstream.body, LAYOUT_RESPONSE_BYTES);
   if (response.status !== "ok") return json("reporting_unavailable", 502);
   if (!upstream.ok) {
+    const status =
+      upstream.status >= 400 && upstream.status < 500 ? upstream.status : 502;
+    if (upstream.status === 412) return json("layout_conflict", 412);
+    if (upstream.status === 428) return json("layout_revision_required", 428);
     return json(
       upstream.status === 422 ? "invalid_dashboard_layout" : "reporting_unavailable",
-      upstream.status >= 400 && upstream.status < 500 ? upstream.status : 502,
+      status,
     );
   }
   if (!upstream.headers.get("content-type")?.startsWith("application/json"))
     return json("reporting_unavailable", 502);
+  const etag = upstream.headers.get("ETag");
+  if (etag === null || !LAYOUT_ETAG.test(etag))
+    return json("reporting_unavailable", 502);
   return new Response(response.bytes, {
-    headers: { "Cache-Control": "no-store", "Content-Type": "application/json" },
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "application/json",
+      ETag: etag,
+    },
   });
 }

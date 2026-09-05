@@ -175,7 +175,7 @@ and avoid mixed-version access during migration. The detailed policy is recorded
 Snapshot extraction is the deliberate exception to migration-on-open. It accepts only
 an existing regular local SQLite file, opens it with URI `mode=ro` and SQLite
 `query_only`, starts an explicit read transaction, and requires both Alembic revision
-`0006` and the exact current table, column, type, nullability, key, constraint, and
+`0007` and the exact current table, column, type, nullability, key, constraint, and
 index layout. It never adopts, stamps, migrates, or repairs the source. A normal
 read-only SQLite connection keeps committed WAL contents visible; every estimate and
 row query therefore observes the same database snapshot while collection may continue.
@@ -232,11 +232,19 @@ semantics online and offline. Widget identifiers are restricted to `type` or bou
 `type-N` structural values, preventing layout persistence or offline HTML from becoming
 a free-form label channel. The collector persists one canonical layout for the current
 mono-operator deployment in the internal `dashboard_layouts` table. Revision `0006`
-creates that table, downgrade to `0005` discards only the preference, and mixed-version
+creates that table and revision `0007` adds a bounded signed-bigint CAS revision;
+downgrade to `0006` preserves JSON while removing concurrency metadata, and mixed-version
 deployments upgrade the collector before the BFF. Read access never grants mutation:
 save/reset require the distinct `layout` scope. Snapshot extraction, CSV, reporting
 datasets, ingestion, and retention exclude the table. See
 [ADR 0005](decisions/0005-versioned-dashboard-layouts.md).
+
+Layout reads return a content-independent opaque ETag. Mutation requires `If-Match`
+and uses one conditional SQL statement, with logical revision zero representing the
+absent singleton. Successful reset persists the default and increments like a save;
+stale creates, updates, and resets fail with a fixed precondition error. The web editor
+keeps its bounded undoable draft only in memory and applies the registry's collision
+and bounds validator before persistence.
 
 Provider input is bounded before persistence. Monolithic JSON files are capped at
 64 MiB, JSONL files at 256 MiB with an 8 MiB per-line limit, actual provider-file reads

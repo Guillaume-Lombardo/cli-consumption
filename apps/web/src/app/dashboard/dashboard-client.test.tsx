@@ -1,15 +1,19 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
+import {
+  type DashboardLayoutV1,
+  DEFAULT_DASHBOARD_LAYOUT_V1,
+} from "@cli-consumption/contracts";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DashboardLayoutV1 } from "@cli-consumption/contracts";
 
 import type { DashboardDatasetResponse } from "../../lib/reporting";
 import { DashboardClient } from "./dashboard-client";
 
 const PROJECT = "private-project-label";
+const ETAG = '"AAAAAAAAAABSAEZnRrzWfw"';
 const TOKENS = {
   cache_write_input_tokens: 0,
   cached_input_tokens: 25,
@@ -126,12 +130,62 @@ afterEach(() => {
 });
 
 describe("persistent dashboard", () => {
-  it("announces a non-blocking default-layout fallback without reflecting upstream data", async () => {
-    const canary = "PRIVATE_LAYOUT_UPSTREAM_CANARY";
+  it("blocks editing until the initial layout baseline and ETag resolve", async () => {
+    let resolveLayout: (response: Response) => void = () => undefined;
+    const pendingLayout = new Promise<Response>((resolve) => {
+      resolveLayout = resolve;
+    });
+    const savedLayout: DashboardLayoutV1 = {
+      ...DEFAULT_DASHBOARD_LAYOUT_V1,
+      widgets: DEFAULT_DASHBOARD_LAYOUT_V1.widgets.slice(0, 2),
+    };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
+      if (url.endsWith("/api/layout")) return pendingLayout;
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations")) {
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      }
+      throw new Error("unexpected_test_request");
+    });
+    const user = userEvent.setup();
+    const { container } = render(<DashboardClient />);
+    await screen.findByRole("heading", { name: "Activity" });
+    const edit = screen.getByRole("button", { name: "Edit dashboard" });
+
+    expect(edit).toBeDisabled();
+    expect(edit).toHaveAttribute("aria-busy", "true");
+    await user.click(edit);
+    expect(
+      screen.queryByRole("region", { name: "Dashboard layout editor" }),
+    ).toBeNull();
+
+    resolveLayout(Response.json(savedLayout, { headers: { ETag: ETAG } }));
+    await waitFor(() => expect(edit).toBeEnabled());
+    await user.click(edit);
+    expect(container.querySelectorAll("[data-widget-type]")).toHaveLength(2);
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
+  });
+
+  it("announces a non-blocking default-layout fallback without reflecting upstream data", async () => {
+    const canary = "PRIVATE_LAYOUT_UPSTREAM_CANARY";
+    let layoutReads = 0;
+    let layoutWrites = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
       if (url.endsWith("/api/layout")) {
-        return Response.json({ detail: canary }, { status: 503 });
+        if (init?.method === "PUT") {
+          layoutWrites += 1;
+          return Response.json(JSON.parse(String(init.body)), {
+            headers: { ETag: '"AAAAAAAAAAEArQ90u4jjew"' },
+          });
+        }
+        layoutReads += 1;
+        return layoutReads === 1
+          ? Response.json({ detail: canary }, { status: 503 })
+          : Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+              headers: { ETag: ETAG },
+            });
       }
       if (url.endsWith("/dashboard")) return Response.json(dataset());
       if (url.endsWith("/conversations")) {
@@ -140,6 +194,7 @@ describe("persistent dashboard", () => {
       throw new Error("unexpected_test_request");
     });
 
+    const user = userEvent.setup();
     const { container } = render(<DashboardClient />);
     const message = await screen.findByText(
       "The saved layout could not be loaded. The default layout is displayed.",
@@ -153,6 +208,22 @@ describe("persistent dashboard", () => {
     ).toBeInTheDocument();
     expect(container.querySelectorAll("[data-widget-type]")).toHaveLength(12);
     expect(document.body).not.toHaveTextContent(canary);
+    expect(screen.getByRole("button", { name: "Reload saved layout" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    await user.click(screen.getByRole("button", { name: "Remove Tools" }));
+    await user.click(screen.getByRole("button", { name: "Save layout" }));
+    expect(
+      await screen.findByText(
+        "Layout saving is unavailable. Reload the saved layout and retry.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Retry with latest revision" }),
+    );
+    await waitFor(() => expect(layoutWrites).toBe(1));
+    expect(await screen.findByText("Layout saved.")).toBeInTheDocument();
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
   });
 
   it("uses the resolved layout for visibility, order, and relative geometry", async () => {
@@ -178,7 +249,8 @@ describe("persistent dashboard", () => {
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith("/api/layout")) return Response.json(layout);
+      if (url.endsWith("/api/layout"))
+        return Response.json(layout, { headers: { ETag: ETAG } });
       if (url.endsWith("/dashboard")) return Response.json(dataset());
       if (url.endsWith("/conversations")) {
         return Response.json({ contractVersion: 1, items: [], nextCursor: null });
@@ -242,6 +314,167 @@ describe("persistent dashboard", () => {
     }
     expect(screen.getByRole("combobox", { name: "Period" })).toHaveValue("30");
     expect(screen.getByRole("button", { name: "Light theme" })).toBeEnabled();
+    expect(
+      screen.queryByRole("region", { name: "Dashboard layout editor" }),
+    ).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Widget catalog" })).toBeNull();
+  });
+
+  it("keeps an undoable draft across filters and saves it with its baseline ETag", async () => {
+    const requests: Array<{ body: DashboardLayoutV1; etag: string | null }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout")) {
+        if (init?.method === "PUT") {
+          requests.push({
+            body: JSON.parse(String(init.body)) as DashboardLayoutV1,
+            etag: new Headers(init.headers).get("If-Match"),
+          });
+          return Response.json(requests.at(-1)?.body, {
+            headers: { ETag: '"AAAAAAAAAAEArQ90u4jjew"' },
+          });
+        }
+        return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+          headers: { ETag: ETAG },
+        });
+      }
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations"))
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      throw new Error("unexpected_test_request");
+    });
+    const user = userEvent.setup();
+    const { container } = render(<DashboardClient />);
+    await screen.findByRole("heading", { name: "Activity" });
+
+    await user.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    expect(
+      screen.getByRole("complementary", { name: "Widget catalog" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove Tools" }));
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Project" }),
+      PROJECT,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-widget-type="tools"]')).toBeNull(),
+    );
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Redo" }));
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
+    for (const storage of [window.localStorage, window.sessionStorage]) {
+      const serialized = JSON.stringify({ ...storage });
+      expect(serialized).not.toContain("dashboard-layout");
+      expect(serialized).not.toContain('"widgets"');
+    }
+    expect(window.location.href).not.toContain("headline-metrics");
+    await user.click(screen.getByRole("button", { name: "Save layout" }));
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]?.etag).toBe(ETAG);
+    expect(requests[0]?.body.widgets.some((widget) => widget.type === "tools")).toBe(
+      false,
+    );
+    expect(await screen.findByText("Layout saved.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save layout" })).toBeNull();
+  });
+
+  it("preserves a conflicting draft and retries only after loading the latest ETag", async () => {
+    let gets = 0;
+    let puts = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout")) {
+        if (init?.method === "PUT") {
+          puts += 1;
+          if (puts === 1)
+            return Response.json({ detail: "layout_conflict" }, { status: 412 });
+          expect(new Headers(init.headers).get("If-Match")).toBe(
+            '"AAAAAAAAAAEArQ90u4jjew"',
+          );
+          return Response.json(JSON.parse(String(init.body)), {
+            headers: { ETag: '"AAAAAAAAAAKceVEjTaNfPw"' },
+          });
+        }
+        gets += 1;
+        return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+          headers: {
+            ETag: gets === 1 ? ETAG : '"AAAAAAAAAAEArQ90u4jjew"',
+          },
+        });
+      }
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations"))
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      throw new Error("unexpected_test_request");
+    });
+    const user = userEvent.setup();
+    const { container } = render(<DashboardClient />);
+    await screen.findByRole("heading", { name: "Activity" });
+    await user.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    await user.click(screen.getByRole("button", { name: "Remove Tools" }));
+    await user.click(screen.getByRole("button", { name: "Save layout" }));
+
+    expect(
+      await screen.findByText(
+        "The saved layout changed elsewhere. Your draft is preserved.",
+      ),
+    ).toBeInTheDocument();
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Retry with latest revision" }),
+    );
+    await waitFor(() => expect(puts).toBe(2));
+    expect(await screen.findByText("Layout saved.")).toBeInTheDocument();
+  });
+
+  it("preserves the draft after a fixed network save failure", async () => {
+    let puts = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout")) {
+        if (init?.method === "PUT") {
+          puts += 1;
+          return puts === 1
+            ? Response.json(
+                { detail: "CANARY_PRIVATE_UPSTREAM_ERROR" },
+                { status: 502 },
+              )
+            : Response.json(JSON.parse(String(init.body)), {
+                headers: { ETag: '"AAAAAAAAAAEArQ90u4jjew"' },
+              });
+        }
+        return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+          headers: { ETag: ETAG },
+        });
+      }
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations"))
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      throw new Error("unexpected_test_request");
+    });
+    const user = userEvent.setup();
+    const { container } = render(<DashboardClient />);
+    await screen.findByRole("heading", { name: "Activity" });
+    await user.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    await user.click(screen.getByRole("button", { name: "Remove Tools" }));
+    await user.click(screen.getByRole("button", { name: "Save layout" }));
+
+    const notice = await screen.findByText(
+      "The layout could not be saved. Your draft is preserved.",
+    );
+    expect(notice).not.toHaveTextContent("CANARY_PRIVATE_UPSTREAM_ERROR");
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "Save layout" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reload saved layout" })).toBeEnabled();
+    await user.click(
+      screen.getByRole("button", { name: "Retry with latest revision" }),
+    );
+    await waitFor(() => expect(puts).toBe(2));
+    expect(await screen.findByText("Layout saved.")).toBeInTheDocument();
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
   });
 
   it("keeps private operational labels out of the shareable URL", async () => {

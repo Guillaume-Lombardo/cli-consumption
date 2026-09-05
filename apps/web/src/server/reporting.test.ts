@@ -10,6 +10,7 @@ import {
 const CANARY = "CANARY_DO_NOT_EXPOSE_7d9f";
 const ORIGIN = "https://dashboard.example";
 const SESSION_SECRET = "session-secret-with-at-least-thirty-two-bytes";
+const ETAG = '"AAAAAAAAAABSAEZnRrzWfw"';
 
 function configure() {
   process.env.CLI_CONSUMPTION_API_URL = "https://collector.example";
@@ -43,6 +44,86 @@ afterEach(() => {
 });
 
 describe("reporting BFF", () => {
+  it("requires a syntactically bounded If-Match before layout mutation", async () => {
+    configure();
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const token = createSessionToken(SESSION_SECRET);
+    const body = JSON.stringify({ version: 1, columns: 12, widgets: [] });
+    const missing = await proxyLayoutRequest(
+      new Request(`${ORIGIN}/api/layout`, {
+        body,
+        headers: { "Content-Type": "application/json", Origin: ORIGIN },
+        method: "PUT",
+      }),
+      token,
+    );
+    const malformed = await proxyLayoutRequest(
+      new Request(`${ORIGIN}/api/layout`, {
+        headers: { "If-Match": `"${CANARY}"`, Origin: ORIGIN },
+        method: "DELETE",
+      }),
+      token,
+    );
+    const crossOrigin = await proxyLayoutRequest(
+      new Request(`${ORIGIN}/api/layout`, {
+        body,
+        headers: {
+          "Content-Type": "application/json",
+          "If-Match": ETAG,
+          Origin: "https://other.example",
+        },
+        method: "PUT",
+      }),
+      token,
+    );
+
+    expect(missing.status).toBe(428);
+    expect(await missing.json()).toEqual({ detail: "layout_revision_required" });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ detail: "invalid_layout_revision" });
+    expect(crossOrigin.status).toBe(401);
+    expect(await crossOrigin.json()).toEqual({ detail: "session_expired" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves only a valid upstream ETag and reduces stale errors", async () => {
+    configure();
+    const token = createSessionToken(SESSION_SECRET);
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      Response.json(
+        { version: 1, columns: 12, widgets: [] },
+        { headers: { ETag: ETAG } },
+      ),
+    );
+    const read = await proxyLayoutRequest(new Request(`${ORIGIN}/api/layout`), token);
+    expect(read.status).toBe(200);
+    expect(read.headers.get("ETag")).toBe(ETAG);
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ detail: CANARY }, { status: 412 }),
+    );
+    const stale = await proxyLayoutRequest(
+      new Request(`${ORIGIN}/api/layout`, {
+        headers: { "If-Match": ETAG, Origin: ORIGIN },
+        method: "DELETE",
+      }),
+      token,
+    );
+    expect(stale.status).toBe(412);
+    const staleBody = await stale.text();
+    expect(staleBody).toBe('{"detail":"layout_conflict"}');
+    expect(staleBody).not.toContain(CANARY);
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ version: 1, columns: 12, widgets: [] }),
+    );
+    const missingEtag = await proxyLayoutRequest(
+      new Request(`${ORIGIN}/api/layout`),
+      token,
+    );
+    expect(missingEtag.status).toBe(502);
+  });
+
   it("keeps layout mutation optional and uses its least-privilege credential", async () => {
     configure();
     const token = createSessionToken(SESSION_SECRET);
@@ -53,11 +134,19 @@ describe("reporting BFF", () => {
         expect(new Headers(init?.headers).get("Authorization")).toBe(
           "Bearer layout-token",
         );
-        return Response.json({ version: 1, columns: 12, widgets: [] });
+        expect(new Headers(init?.headers).get("If-Match")).toBe(ETAG);
+        return Response.json(
+          { version: 1, columns: 12, widgets: [] },
+          { headers: { ETag: '"AAAAAAAAAAEArQ90u4jjew"' } },
+        );
       });
     const request = new Request(`${ORIGIN}/api/layout`, {
       body,
-      headers: { "Content-Type": "application/json", Origin: ORIGIN },
+      headers: {
+        "Content-Type": "application/json",
+        "If-Match": ETAG,
+        Origin: ORIGIN,
+      },
       method: "PUT",
     });
     expect((await proxyLayoutRequest(request, token)).status).toBe(200);
@@ -68,7 +157,11 @@ describe("reporting BFF", () => {
     const unavailable = await proxyLayoutRequest(
       new Request(`${ORIGIN}/api/layout`, {
         body,
-        headers: { "Content-Type": "application/json", Origin: ORIGIN },
+        headers: {
+          "Content-Type": "application/json",
+          "If-Match": ETAG,
+          Origin: ORIGIN,
+        },
         method: "PUT",
       }),
       token,

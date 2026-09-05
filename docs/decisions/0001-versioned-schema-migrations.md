@@ -49,6 +49,11 @@ strict canonical layout JSON. Downgrade removes this disposable preference witho
 altering normalized usage. As with earlier revisions, deploy the collector before the
 BFF and do not run mixed-version writers during migration.
 
+Revision `0007` adds a non-null bounded signed-bigint layout revision. Existing layout
+rows start at one; downgrade removes the revision while preserving the content-free
+layout JSON. The server must migrate before the BFF begins sending `If-Match`, and
+mixed-version writers are not supported during this transition.
+
 Schema inspection, adoption, and migration are serialized for concurrent processes of
 the same application version in one outer transaction. SQLite waits at most 15 seconds
 for `BEGIN IMMEDIATE`, then holds that transaction across the decision and migration.

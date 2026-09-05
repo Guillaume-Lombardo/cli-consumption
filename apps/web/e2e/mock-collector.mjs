@@ -7,6 +7,15 @@ const layout = JSON.parse(
     "utf8",
   ),
 );
+let savedLayout = structuredClone(layout);
+let layoutRevision = 0;
+let failNextLayoutMutation = false;
+
+function layoutEtag() {
+  const value = Buffer.alloc(16);
+  value.writeBigUInt64BE(BigInt(layoutRevision));
+  return `"${value.toString("base64url")}"`;
+}
 
 const TOKENS = {
   input_tokens: 100,
@@ -105,24 +114,76 @@ const dataset = {
   },
 };
 
-function send(response, status, payload) {
+function send(response, status, payload, headers = {}) {
   const body = JSON.stringify(payload);
   response.writeHead(status, {
     "Cache-Control": "no-store",
     "Content-Length": Buffer.byteLength(body),
     "Content-Type": "application/json",
+    ...headers,
   });
   response.end(body);
 }
 
 createServer((request, response) => {
+  if (request.method === "POST" && request.url === "/__e2e/reset") {
+    savedLayout = structuredClone(layout);
+    layoutRevision = 0;
+    failNextLayoutMutation = false;
+    send(response, 200, { status: "reset" });
+    return;
+  }
+  if (request.method === "POST" && request.url === "/__e2e/fail-next-layout") {
+    failNextLayoutMutation = true;
+    send(response, 200, { status: "armed" });
+    return;
+  }
+  if (request.method === "POST" && request.url === "/__e2e/advance-layout") {
+    layoutRevision += 1;
+    send(response, 200, { status: "advanced" });
+    return;
+  }
   const isExport = request.url === "/api/v1/reporting/export";
   if (request.method === "GET" && request.url === "/api/v1/reporting/layout") {
     if (request.headers.authorization !== "Bearer e2e-read-token") {
       send(response, 401, { detail: "authentication_required" });
       return;
     }
-    send(response, 200, layout);
+    send(response, 200, savedLayout, { ETag: layoutEtag() });
+    return;
+  }
+  if (
+    ["PUT", "DELETE"].includes(request.method ?? "") &&
+    request.url === "/api/v1/reporting/layout"
+  ) {
+    if (request.headers.authorization !== "Bearer e2e-layout-token") {
+      send(response, 401, { detail: "authentication_required" });
+      return;
+    }
+    if (request.headers["if-match"] !== layoutEtag()) {
+      send(response, 412, { detail: "layout_conflict" });
+      return;
+    }
+    let layoutBody = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      layoutBody += chunk;
+    });
+    request.on("end", () => {
+      try {
+        if (failNextLayoutMutation) {
+          failNextLayoutMutation = false;
+          send(response, 503, { detail: "CANARY_PRIVATE_UPSTREAM_ERROR" });
+          return;
+        }
+        savedLayout =
+          request.method === "PUT" ? JSON.parse(layoutBody) : structuredClone(layout);
+        layoutRevision += 1;
+        send(response, 200, savedLayout, { ETag: layoutEtag() });
+      } catch {
+        send(response, 422, { detail: "invalid_reporting_request" });
+      }
+    });
     return;
   }
   if (

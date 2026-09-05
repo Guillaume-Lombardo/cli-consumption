@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 test("authenticates and renders the bounded persistent dashboard", async ({ page }) => {
+  await fetch("http://127.0.0.1:4311/__e2e/reset", { method: "POST" });
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/login\?reason=session$/);
   await expect(page.getByRole("heading", { name: "CLI Consumption" })).toBeVisible();
@@ -41,6 +42,70 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
     { height: "1", type: "data-quality", width: "6", x: "6", y: "5" },
     { height: "2", type: "conversation-explorer", width: "12", x: "0", y: "6" },
   ]);
+  await expect(page.locator(".widget-editor-controls")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Widget catalog" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Edit dashboard" }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Widget catalog" }),
+  ).toBeVisible();
+  const activityMoveHandle = page.getByRole("button", {
+    name: /Move or resize Activity/,
+  });
+  if ((page.viewportSize()?.width ?? 0) <= 576) {
+    await expect(activityMoveHandle).toBeHidden();
+  } else {
+    await expect(activityMoveHandle).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Remove Tools" }).click();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Reset draft" }).click();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(1);
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+  if ((page.viewportSize()?.width ?? 0) <= 576) {
+    await page.getByRole("button", { name: "Move Activity right" }).click();
+  } else {
+    const gridBox = await page.locator(".dashboard-layout-grid").boundingBox();
+    expect(gridBox).not.toBeNull();
+    if (gridBox) {
+      await activityMoveHandle.evaluate((handle) => {
+        handle.setPointerCapture = (pointerId) => {
+          handle.dataset.capturedPointer = String(pointerId);
+        };
+        handle.releasePointerCapture = (pointerId) => {
+          handle.dataset.releasedPointer = String(pointerId);
+        };
+      });
+      await activityMoveHandle.dispatchEvent("pointerdown", {
+        clientX: 20,
+        clientY: 20,
+        pointerId: 17,
+      });
+      expect(await activityMoveHandle.getAttribute("data-captured-pointer")).toBe("17");
+      await activityMoveHandle.dispatchEvent("pointerup", {
+        clientX: 20 + gridBox.width / 12,
+        clientY: 20,
+        pointerId: 17,
+      });
+      expect(await activityMoveHandle.getAttribute("data-released-pointer")).toBe("17");
+    }
+    await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+      "data-position-x",
+      "1",
+    );
+    await activityMoveHandle.press("ArrowLeft");
+    await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+      "data-position-x",
+      "0",
+    );
+    await activityMoveHandle.press("ArrowRight");
+  }
+  await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+    "data-position-x",
+    "1",
+  );
 
   const cardIsInvisible = await page
     .locator(".metric-card")
@@ -66,7 +131,36 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   await page.getByRole("combobox", { name: "Project" }).selectOption("project-a");
   await expect(page).toHaveURL(/\/dashboard\?range=30$/);
   expect(page.url()).not.toContain("project-a");
-  await expect(page.getByRole("status")).toBeHidden();
+  await expect(page.getByText("Loading the bounded selection…")).toHaveCount(0);
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+
+  await fetch("http://127.0.0.1:4311/__e2e/fail-next-layout", {
+    method: "POST",
+  });
+  await page.getByRole("button", { name: "Save layout" }).click();
+  await expect(
+    page.getByText("The layout could not be saved. Your draft is preserved."),
+  ).toBeVisible();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+
+  await fetch("http://127.0.0.1:4311/__e2e/advance-layout", {
+    method: "POST",
+  });
+  await page.getByRole("button", { name: "Save layout" }).click();
+  await expect(
+    page.getByText("The saved layout changed elsewhere. Your draft is preserved."),
+  ).toBeVisible();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Retry with latest revision" }).click();
+  await expect(page.getByText("Layout saved.")).toBeVisible();
+  await expect(page.locator(".widget-editor-controls")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
+  await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+    "data-position-x",
+    "1",
+  );
+  await expect(page.locator(".widget-editor-controls")).toHaveCount(0);
 
   await page
     .getByRole("combobox", { name: "Offline export profile" })
@@ -94,6 +188,7 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
 test("keeps the chart catalog stable in light and dark responsive layouts", async ({
   page,
 }) => {
+  await fetch("http://127.0.0.1:4311/__e2e/reset", { method: "POST" });
   await page.goto("/login");
   await page.getByLabel("Dashboard password").fill("e2e dashboard password");
   await page.getByRole("button", { name: "Sign in" }).click();

@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, Literal, Self, cast
 
 from pydantic import (
@@ -14,7 +18,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import Table, case, delete, func, select
+from sqlalchemy import Table, case, func, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
@@ -27,6 +31,9 @@ DASHBOARD_GRID_ROWS = 64
 MAX_DASHBOARD_WIDGETS = 32
 MAX_DASHBOARD_LAYOUT_BYTES = 64 * 1024
 _OWNER_KEY = "deployment-operator"
+MAX_DASHBOARD_LAYOUT_REVISION = 9_223_372_036_854_775_807
+_ETAG_DOMAIN = b"cli-consumption-dashboard-layout-etag-v1\x00"
+_ETAG_PATTERN = re.compile(r'^"[A-Za-z0-9_-]{22}"$')
 _INSTANCE_SUFFIXES = frozenset(
     str(index) for index in range(1, MAX_DASHBOARD_WIDGETS + 1)
 )
@@ -135,6 +142,22 @@ class DashboardLayoutV1(_StrictModel):
         return widgets
 
 
+class DashboardLayoutConflictError(RuntimeError):
+    """The supplied layout revision is no longer current."""
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardLayoutState:
+    """A validated layout plus its internal optimistic-concurrency revision."""
+
+    layout: DashboardLayoutV1
+    revision: int
+
+    @property
+    def etag(self) -> str:
+        return dashboard_layout_etag(self.revision)
+
+
 def _default_widget(widget_type: str, index: int) -> dict[str, Any]:
     full = widget_type in {"headline-metrics", "conversation-explorer"}
     return {
@@ -206,9 +229,39 @@ def resolve_dashboard_layout(value: object) -> DashboardLayoutV1:
         return DEFAULT_DASHBOARD_LAYOUT_V1.model_copy(deep=True)
 
 
-def load_dashboard_layout(engine: Engine) -> DashboardLayoutV1:
+def dashboard_layout_etag(revision: int) -> str:
+    """Encode a bounded revision as a quoted opaque HTTP entity tag."""
+    if not 0 <= revision <= MAX_DASHBOARD_LAYOUT_REVISION:
+        raise ValueError("invalid_dashboard_layout_revision")
+    encoded_revision = revision.to_bytes(8, "big", signed=False)
+    checksum = sha256(_ETAG_DOMAIN + encoded_revision).digest()[:8]
+    token = urlsafe_b64encode(encoded_revision + checksum).decode("ascii").rstrip("=")
+    return f'"{token}"'
+
+
+def dashboard_layout_revision(etag: str) -> int:
+    """Decode only entity tags minted by :func:`dashboard_layout_etag`."""
+    if _ETAG_PATTERN.fullmatch(etag) is None:
+        raise ValueError("invalid_dashboard_layout_revision")
+    try:
+        payload = urlsafe_b64decode(f"{etag[1:-1]}==")
+    except (ValueError, TypeError):
+        raise ValueError("invalid_dashboard_layout_revision") from None
+    if len(payload) != 16:
+        raise ValueError("invalid_dashboard_layout_revision")
+    encoded_revision, checksum = payload[:8], payload[8:]
+    if checksum != sha256(_ETAG_DOMAIN + encoded_revision).digest()[:8]:
+        raise ValueError("invalid_dashboard_layout_revision")
+    revision = int.from_bytes(encoded_revision, "big", signed=False)
+    if revision > MAX_DASHBOARD_LAYOUT_REVISION:
+        raise ValueError("invalid_dashboard_layout_revision")
+    return revision
+
+
+def load_dashboard_layout_state(engine: Engine) -> DashboardLayoutState:
+    """Load the singleton layout and its revision without exposing its owner key."""
     with engine.connect() as connection:
-        raw = connection.scalar(
+        row = connection.execute(
             select(
                 case(
                     (
@@ -217,41 +270,76 @@ def load_dashboard_layout(engine: Engine) -> DashboardLayoutV1:
                         DashboardLayout.layout_json,
                     ),
                     else_=None,
-                )
+                ),
+                DashboardLayout.revision,
             ).where(DashboardLayout.owner_key == _OWNER_KEY)
+        ).one_or_none()
+    if row is None:
+        return DashboardLayoutState(
+            DEFAULT_DASHBOARD_LAYOUT_V1.model_copy(deep=True), 0
         )
+    raw, revision = row
+    if (
+        not isinstance(revision, int)
+        or not 1 <= revision <= MAX_DASHBOARD_LAYOUT_REVISION
+    ):
+        raise ValueError("invalid_dashboard_layout_revision")
     if raw is None or len(raw.encode("utf-8")) > MAX_DASHBOARD_LAYOUT_BYTES:
-        return DEFAULT_DASHBOARD_LAYOUT_V1.model_copy(deep=True)
+        return DashboardLayoutState(
+            DEFAULT_DASHBOARD_LAYOUT_V1.model_copy(deep=True), revision
+        )
     try:
         value = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
-        return DEFAULT_DASHBOARD_LAYOUT_V1.model_copy(deep=True)
-    return resolve_dashboard_layout(value)
+        value = None
+    return DashboardLayoutState(resolve_dashboard_layout(value), revision)
+
+
+def load_dashboard_layout(engine: Engine) -> DashboardLayoutV1:
+    """Load only the validated layout for non-HTTP rendering consumers."""
+    return load_dashboard_layout_state(engine).layout
 
 
 def save_dashboard_layout(
-    engine: Engine, layout: DashboardLayoutV1
-) -> DashboardLayoutV1:
+    engine: Engine, layout: DashboardLayoutV1, *, expected_revision: int
+) -> DashboardLayoutState:
+    """Atomically replace the layout only when its revision still matches."""
+    if not 0 <= expected_revision < MAX_DASHBOARD_LAYOUT_REVISION:
+        raise DashboardLayoutConflictError("layout_conflict")
     validated = revalidate_dashboard_layout(layout)
     raw = _encode_validated_layout(validated)
     table = cast(Table, DashboardLayout.__table__)
-    insert = (
-        sqlite_insert(table)
-        if engine.dialect.name == "sqlite"
-        else postgresql_insert(table)
-    )
-    statement = insert.values(owner_key=_OWNER_KEY, layout_json=raw)
-    statement = statement.on_conflict_do_update(
-        index_elements=[table.c.owner_key], set_={"layout_json": raw}
-    )
     with engine.begin() as connection:
-        connection.execute(statement)
-    return validated
+        if expected_revision == 0:
+            insert = (
+                sqlite_insert(table)
+                if engine.dialect.name == "sqlite"
+                else postgresql_insert(table)
+            )
+            statement = insert.values(
+                owner_key=_OWNER_KEY, layout_json=raw, revision=1
+            ).on_conflict_do_nothing(index_elements=[table.c.owner_key])
+        else:
+            statement = (
+                update(DashboardLayout)
+                .where(
+                    DashboardLayout.owner_key == _OWNER_KEY,
+                    DashboardLayout.revision == expected_revision,
+                    DashboardLayout.revision < MAX_DASHBOARD_LAYOUT_REVISION,
+                )
+                .values(layout_json=raw, revision=DashboardLayout.revision + 1)
+            )
+        if connection.execute(statement).rowcount != 1:
+            raise DashboardLayoutConflictError("layout_conflict")
+    return DashboardLayoutState(validated, expected_revision + 1)
 
 
-def reset_dashboard_layout(engine: Engine) -> DashboardLayoutV1:
-    with engine.begin() as connection:
-        connection.execute(
-            delete(DashboardLayout).where(DashboardLayout.owner_key == _OWNER_KEY)
-        )
-    return DEFAULT_DASHBOARD_LAYOUT_V1.model_copy(deep=True)
+def reset_dashboard_layout(
+    engine: Engine, *, expected_revision: int
+) -> DashboardLayoutState:
+    """Persist the canonical default with the same atomic CAS semantics as save."""
+    return save_dashboard_layout(
+        engine,
+        DEFAULT_DASHBOARD_LAYOUT_V1.model_copy(deep=True),
+        expected_revision=expected_revision,
+    )

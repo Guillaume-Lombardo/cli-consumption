@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Float,
     ForeignKey,
     Integer,
@@ -253,9 +254,16 @@ class DashboardLayout(Base):
     """Singleton presentation preference for the current dashboard operator."""
 
     __tablename__ = "dashboard_layouts"
+    __table_args__ = (
+        CheckConstraint(
+            "revision >= 1 AND revision <= 9223372036854775807",
+            name="ck_dashboard_layouts_revision",
+        ),
+    )
 
     owner_key: Mapped[str] = mapped_column(String(32), primary_key=True)
     layout_json: Mapped[str] = mapped_column(Text)
+    revision: Mapped[int] = mapped_column(BigInteger)
 
 
 TABLES = {

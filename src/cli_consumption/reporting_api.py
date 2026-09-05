@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, Response
+from fastapi import Depends, FastAPI, Header, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import (
     BaseModel,
@@ -41,8 +41,12 @@ from cli_consumption.dashboard import (
     generate_dashboard,
 )
 from cli_consumption.dashboard_layouts import (
+    DashboardLayoutConflictError,
+    DashboardLayoutState,
     DashboardLayoutV1,
+    dashboard_layout_revision,
     load_dashboard_layout,
+    load_dashboard_layout_state,
     reset_dashboard_layout,
     save_dashboard_layout,
 )
@@ -417,14 +421,18 @@ class ReportingRuntime:
             payload["filters"] = _filter_options_from_payload(payload)
             return payload
 
-    def layout(self) -> dict[str, Any]:
-        return load_dashboard_layout(self.engine).model_dump(mode="json")
+    def layout(self) -> DashboardLayoutState:
+        return load_dashboard_layout_state(self.engine)
 
-    def save_layout(self, layout: DashboardLayoutV1) -> dict[str, Any]:
-        return save_dashboard_layout(self.engine, layout).model_dump(mode="json")
+    def save_layout(
+        self, layout: DashboardLayoutV1, *, expected_revision: int
+    ) -> DashboardLayoutState:
+        return save_dashboard_layout(
+            self.engine, layout, expected_revision=expected_revision
+        )
 
-    def reset_layout(self) -> dict[str, Any]:
-        return reset_dashboard_layout(self.engine).model_dump(mode="json")
+    def reset_layout(self, *, expected_revision: int) -> DashboardLayoutState:
+        return reset_dashboard_layout(self.engine, expected_revision=expected_revision)
 
     def filters(self, query: FilterQuery) -> dict[str, Any]:
         with (
@@ -625,21 +633,43 @@ def install_reporting_routes(
         dependencies=[Depends(authorize_read)],
     )
     def layout() -> Response:
-        return _bounded_json(runtime.layout())
+        state = runtime.layout()
+        return _bounded_json(
+            state.layout.model_dump(mode="json"), headers={"ETag": state.etag}
+        )
 
     @app.put(
         "/api/v1/reporting/layout",
         dependencies=[Depends(authorize_layout)],
     )
-    def save_layout(layout: DashboardLayoutV1) -> Response:
-        return _bounded_json(runtime.save_layout(layout))
+    def save_layout(
+        layout: DashboardLayoutV1,
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> Response:
+        expected_revision = _required_layout_revision(if_match)
+        try:
+            state = runtime.save_layout(layout, expected_revision=expected_revision)
+        except DashboardLayoutConflictError:
+            raise ReportingError("layout_conflict", 412) from None
+        return _bounded_json(
+            state.layout.model_dump(mode="json"), headers={"ETag": state.etag}
+        )
 
     @app.delete(
         "/api/v1/reporting/layout",
         dependencies=[Depends(authorize_layout)],
     )
-    def reset_layout() -> Response:
-        return _bounded_json(runtime.reset_layout())
+    def reset_layout(
+        if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    ) -> Response:
+        expected_revision = _required_layout_revision(if_match)
+        try:
+            state = runtime.reset_layout(expected_revision=expected_revision)
+        except DashboardLayoutConflictError:
+            raise ReportingError("layout_conflict", 412) from None
+        return _bounded_json(
+            state.layout.model_dump(mode="json"), headers={"ETag": state.etag}
+        )
 
     @app.post(
         "/api/v1/reporting/filters",
@@ -673,7 +703,18 @@ def install_reporting_routes(
     return runtime
 
 
-def _bounded_json(payload: dict[str, Any]) -> Response:
+def _required_layout_revision(if_match: str | None) -> int:
+    if if_match is None:
+        raise ReportingError("layout_revision_required", 428)
+    try:
+        return dashboard_layout_revision(if_match)
+    except ValueError:
+        raise ReportingError("invalid_layout_revision", 400) from None
+
+
+def _bounded_json(
+    payload: dict[str, Any], *, headers: dict[str, str] | None = None
+) -> Response:
     content = json.dumps(
         payload,
         ensure_ascii=True,
@@ -685,7 +726,7 @@ def _bounded_json(payload: dict[str, Any]) -> Response:
     return Response(
         content=content,
         media_type="application/json",
-        headers=CACHE_HEADERS,
+        headers={**CACHE_HEADERS, **(headers or {})},
     )
 
 

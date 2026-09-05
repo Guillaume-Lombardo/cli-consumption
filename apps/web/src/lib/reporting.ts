@@ -122,37 +122,61 @@ export async function postReporting<T>(
   return (await response.json()) as T;
 }
 
-export async function fetchDashboardLayout(): Promise<DashboardLayoutV1> {
-  const response = await fetch("/api/layout", { cache: "no-store" });
+export interface VersionedDashboardLayout {
+  etag: string;
+  layout: DashboardLayoutV1;
+}
+
+async function versionedLayoutResponse(
+  response: Response,
+): Promise<VersionedDashboardLayout> {
   if (response.status === 401) throw new Error("session_expired");
-  if (!response.ok) throw new Error("reporting_unavailable");
-  return resolveDashboardLayoutV1(await response.json());
+  if (!response.ok) {
+    let code = "reporting_unavailable";
+    try {
+      const payload = (await response.json()) as { detail?: unknown };
+      if (typeof payload.detail === "string") code = payload.detail;
+    } catch {
+      // Keep the fixed fallback; upstream text is never surfaced.
+    }
+    throw new Error(code);
+  }
+  const etag = response.headers.get("ETag");
+  if (!etag) throw new Error("reporting_unavailable");
+  const layout: unknown = await response.json();
+  assertDashboardLayoutV1(layout);
+  return { etag, layout };
+}
+
+export async function fetchDashboardLayout(): Promise<VersionedDashboardLayout> {
+  const response = await fetch("/api/layout", { cache: "no-store" });
+  const result = await versionedLayoutResponse(response);
+  return { ...result, layout: resolveDashboardLayoutV1(result.layout) };
 }
 
 export async function saveDashboardLayout(
   layout: DashboardLayoutV1,
-): Promise<DashboardLayoutV1> {
+  etag: string,
+): Promise<VersionedDashboardLayout> {
   assertDashboardLayoutV1(layout);
   const response = await fetch("/api/layout", {
     body: JSON.stringify(layout),
     cache: "no-store",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "If-Match": etag },
     method: "PUT",
   });
-  if (response.status === 401) throw new Error("session_expired");
-  if (!response.ok) throw new Error("invalid_dashboard_layout");
-  const result: unknown = await response.json();
-  assertDashboardLayoutV1(result);
-  return result;
+  return versionedLayoutResponse(response);
 }
 
-export async function resetDashboardLayout(): Promise<DashboardLayoutV1> {
-  const response = await fetch("/api/layout", { cache: "no-store", method: "DELETE" });
-  if (response.status === 401) throw new Error("session_expired");
-  if (!response.ok) throw new Error("reporting_unavailable");
-  const result: unknown = await response.json();
-  assertDashboardLayoutV1(result);
-  return result;
+export async function resetDashboardLayout(
+  etag: string,
+): Promise<VersionedDashboardLayout> {
+  const response = await fetch("/api/layout", {
+    cache: "no-store",
+    headers: { "If-Match": etag },
+    method: "DELETE",
+  });
+  return versionedLayoutResponse(response);
 }
 
 /** Request a self-contained export for the exact query currently shown. */

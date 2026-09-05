@@ -9,7 +9,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Double, Float, String, Table, inspect, text
+from sqlalchemy import CheckConstraint, Double, Float, String, Table, inspect, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import SQLAlchemyError
@@ -22,7 +22,7 @@ class SchemaCompatibilityError(RuntimeError):
 # Stable signed-bigint advisory-lock namespace for ``b"cli-cons"``.
 POSTGRESQL_MIGRATION_LOCK = 7_164_216_750_902_308_467
 SQLITE_MIGRATION_LOCK_TIMEOUT_MS = 15_000
-CURRENT_DATABASE_REVISION = "0006"
+CURRENT_DATABASE_REVISION = "0007"
 
 
 BASELINE_COLUMNS: dict[str, frozenset[str]] = {
@@ -166,7 +166,7 @@ BASELINE_COLUMNS: dict[str, frozenset[str]] = {
     ),
     "subagent_scopes": frozenset({"provider", "source_machine", "lock_version"}),
     "sync_receipts": frozenset({"idempotency_key", "ingestion_run_id"}),
-    "dashboard_layouts": frozenset({"owner_key", "layout_json"}),
+    "dashboard_layouts": frozenset({"owner_key", "layout_json", "revision"}),
     "ingestion_runs": frozenset(
         {
             "id",
@@ -205,6 +205,8 @@ def _preflight_unversioned(connection: Connection) -> None:
         accepted = {BASELINE_COLUMNS[table_name]}
         if table_name == "subagents":
             accepted.add(BASELINE_COLUMNS[table_name] - {"agent_nickname"})
+        if table_name == "dashboard_layouts":
+            accepted.add(BASELINE_COLUMNS[table_name] - {"revision"})
         if actual not in accepted:
             _reject_unpublished_schema()
 
@@ -259,9 +261,21 @@ def _preflight_unversioned(connection: Connection) -> None:
         }
         if actual_foreign_keys != expected_foreign_keys:
             _reject_unpublished_schema()
-        if inspector.get_check_constraints(
-            table_name
-        ) or inspector.get_unique_constraints(table_name):
+        expected_checks = {
+            constraint.name
+            for constraint in declared.constraints
+            if isinstance(constraint, CheckConstraint)
+        }
+        actual_checks = {
+            constraint.get("name")
+            for constraint in inspector.get_check_constraints(table_name)
+        }
+        accepted_checks = {frozenset(expected_checks)}
+        if table_name == "dashboard_layouts":
+            accepted_checks.add(frozenset())
+        if frozenset(
+            actual_checks
+        ) not in accepted_checks or inspector.get_unique_constraints(table_name):
             _reject_unpublished_schema()
 
 
@@ -399,9 +413,18 @@ def _matches_exact_current_layout(connection: Connection) -> bool:
         }
         if actual_foreign_keys != expected_foreign_keys:
             return False
-        if inspector.get_check_constraints(
+        expected_checks = {
+            constraint.name
+            for constraint in declared.constraints
+            if isinstance(constraint, CheckConstraint)
+        }
+        actual_checks = {
+            constraint.get("name")
+            for constraint in inspector.get_check_constraints(table_name)
+        }
+        if actual_checks != expected_checks or inspector.get_unique_constraints(
             table_name
-        ) or inspector.get_unique_constraints(table_name):
+        ):
             return False
     return True
 
@@ -445,6 +468,41 @@ def _matches_revision_0005_layout(connection: Connection) -> bool:
     return _matches_declared_layout(
         connection,
         frozenset(SCHEMA_TABLES) - {"dashboard_layouts"},
+    )
+
+
+def _matches_revision_0006_layout(connection: Connection) -> bool:
+    """Recognize the published pre-CAS layout table for safe legacy adoption."""
+    from cli_consumption.storage import SCHEMA_TABLES
+
+    if not _matches_declared_layout(
+        connection,
+        frozenset(SCHEMA_TABLES) - {"dashboard_layouts"},
+    ):
+        return False
+    inspector = inspect(connection)
+    if set(inspector.get_table_names()) != set(SCHEMA_TABLES):
+        return False
+    columns = inspector.get_columns("dashboard_layouts")
+    if [column["name"] for column in columns] != ["owner_key", "layout_json"]:
+        return False
+    primary = set(
+        inspector.get_pk_constraint("dashboard_layouts").get("constrained_columns")
+        or ()
+    )
+    return (
+        primary == {"owner_key"}
+        and _matching_type(columns[0]["type"], String(32))
+        and _matching_type(
+            columns[1]["type"],
+            SCHEMA_TABLES["dashboard_layouts"].__table__.c.layout_json.type,
+        )
+        and not bool(columns[0]["nullable"])
+        and not bool(columns[1]["nullable"])
+        and not inspector.get_indexes("dashboard_layouts")
+        and not inspector.get_foreign_keys("dashboard_layouts")
+        and not inspector.get_check_constraints("dashboard_layouts")
+        and not inspector.get_unique_constraints("dashboard_layouts")
     )
 
 
@@ -518,6 +576,8 @@ def upgrade_database(engine: Engine) -> None:
                 _preflight_unversioned(connection)
                 if _matches_current_head_layout(connection):
                     adopt_revision = expected_heads[0]
+                elif _matches_revision_0006_layout(connection):
+                    adopt_revision = "0006"
                 elif _matches_revision_0005_layout(connection):
                     adopt_revision = "0005"
                 elif _matches_revision_0004_layout(connection):

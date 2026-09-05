@@ -111,6 +111,23 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
       .locator(".calendar-scroll")
       .evaluate((node) => node.scrollWidth >= node.clientWidth),
   ).toBe(true);
+  const calendarCell = activity.locator(".activity-cell").first();
+  await calendarCell.focus();
+  await page.keyboard.press("ArrowRight");
+  const keyboardFocusedCell = page.locator(".activity-cell:focus");
+  expect(
+    await keyboardFocusedCell.evaluate((cell) => {
+      const focus = getComputedStyle(cell);
+      const tooltip = getComputedStyle(cell, "::after");
+      return {
+        outline:
+          focus.outlineStyle !== "none" && focus.outlineColor !== "rgba(0, 0, 0, 0)",
+        tooltip:
+          tooltip.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+          tooltip.color !== tooltip.backgroundColor,
+      };
+    }),
+  ).toEqual({ outline: true, tooltip: true });
   const darkTheme = page.getByRole("button", { name: "Dark theme" });
   if (await darkTheme.isVisible()) await darkTheme.click();
   await expect(activity).toHaveScreenshot("activity-dark.png", {

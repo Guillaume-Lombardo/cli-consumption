@@ -508,7 +508,7 @@ export function createDashboardCalculations(input: unknown) {
     timedTokenCalls.forEach((call) => {
       add(call.timestamp, "tokens", call.total_tokens);
     });
-    const tokenSeries = [...byDate.values()]
+    const tokenSeries = (timedTokenCalls.length ? [...byDate.values()] : [])
       .filter((row) => row.observed)
       .map((row) => ({
         date: row.date,

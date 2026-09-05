@@ -308,7 +308,7 @@ details {
 }
 .activity-cell:hover::after,
 .activity-cell:focus-visible::after {
-  background: var(--foreground);
+  background: var(--text);
   color: var(--background);
   content: attr(data-tooltip);
   font-size: 0.7rem;
@@ -322,18 +322,22 @@ details {
 }
 .activity-axis {
   color: var(--muted);
-  display: flex;
+  display: grid;
   font-size: 0.65rem;
-  justify-content: space-between;
-  max-width: 3rem;
-  min-width: 570px;
+  grid-template-rows: repeat(7, 10px);
+  min-width: 2.5rem;
 }
 .activity-months {
   color: var(--muted);
-  display: flex;
+  display: grid;
   font-size: 0.65rem;
-  justify-content: space-around;
+  grid-template-columns: repeat(52, minmax(8px, 1fr));
   min-width: 570px;
+  margin-left: 2.5rem;
+}
+.calendar-body {
+  display: grid;
+  grid-template-columns: 2.5rem 570px;
 }
 .catalog-rankings {
   display: grid;
@@ -415,7 +419,7 @@ details {
   background: var(--accent);
 }
 .activity-cell:focus-visible {
-  outline: 2px solid var(--foreground);
+  outline: 2px solid var(--text);
   outline-offset: 1px;
 }
 .activity-legend i {

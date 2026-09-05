@@ -2,6 +2,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
+  useEffect,
   useState,
 } from "react";
 
@@ -50,25 +51,29 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
   const [selected, setSelected] = useState<ActivityMetric>(
     catalog.availableMetrics[0] ?? "turns",
   );
-  const [focusIndex, setFocusIndex] = useState(() =>
-    Math.max(
-      0,
-      catalog.days.findLastIndex((row) => row.observed),
-    ),
+  const lastObservedIndex = Math.max(
+    0,
+    catalog.days.findLastIndex((row) => row.observed),
   );
+  const [focusIndex, setFocusIndex] = useState(lastObservedIndex);
   const [breakdown, setBreakdown] = useState<"overall" | "provider" | "model">(
     "overall",
   );
   const metric = catalog.availableMetrics.includes(selected)
     ? selected
     : catalog.availableMetrics[0];
+  const effectiveBreakdown =
+    breakdown === "overall" || catalog.availableBreakdowns.includes(breakdown)
+      ? breakdown
+      : "overall";
+  useEffect(() => setFocusIndex(lastObservedIndex), [lastObservedIndex]);
   const maximum = metric
     ? Math.max(...catalog.days.map((row) => row.values[metric] ?? 0), 1)
     : 1;
   const breakdownTotals = new Map<string, number>();
-  if (breakdown !== "overall") {
+  if (effectiveBreakdown !== "overall") {
     for (const point of catalog.tokenSeries) {
-      const values = breakdown === "provider" ? point.providers : point.models;
+      const values = effectiveBreakdown === "provider" ? point.providers : point.models;
       for (const [label, value] of Object.entries(values))
         breakdownTotals.set(label, (breakdownTotals.get(label) ?? 0) + value);
     }
@@ -77,10 +82,29 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .slice(0, 5)
     .map(([label]) => label);
-  const breakdownLabels =
-    breakdown === "overall"
-      ? ["Overall"]
-      : [...leadingLabels, ...(breakdownTotals.size > 5 ? ["Other"] : [])];
+  const breakdownBuckets =
+    effectiveBreakdown === "overall"
+      ? [{ id: "__overall__", label: "Overall", kind: "overall" as const }]
+      : [
+          ...leadingLabels.map((label) => ({
+            id: `label:${label}`,
+            label,
+            sourceLabel: label,
+            kind: "label" as const,
+          })),
+          ...(breakdownTotals.size > 5
+            ? [
+                {
+                  id: "__remainder__",
+                  label:
+                    effectiveBreakdown === "provider"
+                      ? "Other providers"
+                      : "Other models",
+                  kind: "remainder" as const,
+                },
+              ]
+            : []),
+        ];
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const delta =
       event.key === "ArrowRight"
@@ -131,17 +155,19 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
         className="calendar-scroll"
         aria-label="Scrollable 52-week UTC activity calendar"
       >
-        <div className="activity-axis" aria-hidden="true">
-          <span>Sun</span>
-          <span>Tue</span>
-          <span>Thu</span>
-          <span>Sat</span>
-        </div>
         <div className="activity-months" aria-hidden="true">
           {catalog.days
             .filter((row) => row.date.endsWith("-01"))
             .map((row) => (
-              <span key={row.date}>
+              <span
+                key={row.date}
+                style={{
+                  gridColumn:
+                    Math.floor(
+                      catalog.days.findIndex((day) => day.date === row.date) / 7,
+                    ) + 1,
+                }}
+              >
                 {new Date(`${row.date}T00:00:00Z`).toLocaleString("en", {
                   month: "short",
                   timeZone: "UTC",
@@ -149,39 +175,47 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
               </span>
             ))}
         </div>
-        {!metric ? (
-          <p className="empty">
-            No attributable daily measurements in this selection. Aggregate totals
-            remain available below.
-          </p>
-        ) : (
-          <fieldset className="activity-calendar">
-            <legend className="sr-only">{`${ACTIVITY_LABELS[metric]} activity, 52 UTC weeks`}</legend>
-            {catalog.days.map((row, index) => {
-              const value = row.values[metric] ?? 0;
-              const level = row.observed
-                ? Math.min(4, Math.ceil((4 * value) / maximum))
-                : -1;
-              const description = row.observed
-                ? activityValue(metric, value)
-                : "not in selected range";
-              return (
-                <button
-                  aria-label={`${row.date}: ${description}`}
-                  className="activity-cell"
-                  data-level={level}
-                  data-tooltip={`${row.date}: ${description}`}
-                  key={row.date}
-                  onKeyDown={(event) => onKeyDown(event, index)}
-                  onFocus={() => setFocusIndex(index)}
-                  tabIndex={index === focusIndex ? 0 : -1}
-                  title={`${row.date}: ${description}`}
-                  type="button"
-                />
-              );
-            })}
-          </fieldset>
-        )}
+        <div className="calendar-body">
+          <div className="activity-axis" aria-hidden="true">
+            <span style={{ gridRow: 1 }}>Sun</span>
+            <span style={{ gridRow: 3 }}>Tue</span>
+            <span style={{ gridRow: 5 }}>Thu</span>
+            <span style={{ gridRow: 7 }}>Sat</span>
+          </div>
+          {!metric ? (
+            <p className="empty">
+              No attributable daily measurements in this selection. Aggregate totals
+              remain available below.
+            </p>
+          ) : (
+            <fieldset className="activity-calendar">
+              <legend className="sr-only">{`${ACTIVITY_LABELS[metric]} activity, 52 UTC weeks`}</legend>
+              {catalog.days.map((row, index) => {
+                const value = row.values[metric] ?? 0;
+                const level = row.observed
+                  ? Math.min(4, Math.ceil((4 * value) / maximum))
+                  : -1;
+                const description = row.observed
+                  ? activityValue(metric, value)
+                  : "not in selected range";
+                return (
+                  <button
+                    aria-label={`${row.date}: ${description}`}
+                    className="activity-cell"
+                    data-level={level}
+                    data-tooltip={`${row.date}: ${description}`}
+                    key={row.date}
+                    onKeyDown={(event) => onKeyDown(event, index)}
+                    onFocus={() => setFocusIndex(index)}
+                    tabIndex={index === focusIndex ? 0 : -1}
+                    title={`${row.date}: ${description}`}
+                    type="button"
+                  />
+                );
+              })}
+            </fieldset>
+          )}
+        </div>
       </section>
       <div className="activity-legend">
         <span className="sr-only">Calendar scale</span>
@@ -225,7 +259,7 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
             Token series{" "}
             <select
               aria-label="Token series breakdown"
-              value={breakdown}
+              value={effectiveBreakdown}
               onChange={(event) =>
                 setBreakdown(event.target.value as "overall" | "provider" | "model")
               }
@@ -241,22 +275,23 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
           <div
             className="token-series"
             role="img"
-            aria-label={`Daily provider-reported tokens, ${breakdown}`}
+            aria-label={`Daily provider-reported tokens, ${effectiveBreakdown}`}
           >
             {catalog.tokenSeries.map((point) => {
-              const source = breakdown === "provider" ? point.providers : point.models;
-              const groups = breakdownLabels.map(
-                (label) =>
+              const source =
+                effectiveBreakdown === "provider" ? point.providers : point.models;
+              const groups = breakdownBuckets.map(
+                (bucket) =>
                   [
-                    label,
-                    label === "Overall"
+                    bucket,
+                    bucket.kind === "overall"
                       ? point.total
-                      : label === "Other"
+                      : bucket.kind === "remainder"
                         ? Object.entries(source)
                             .filter(([name]) => !leadingLabels.includes(name))
                             .reduce((sum, [, value]) => sum + value, 0)
-                        : (source[label] ?? 0),
-                  ] as [string, number],
+                        : (source[bucket.sourceLabel ?? ""] ?? 0),
+                  ] as const,
               );
               const peak = Math.max(...catalog.tokenSeries.map((row) => row.total), 1);
               return (
@@ -267,12 +302,12 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
                   style={{ height: `${(100 * point.total) / peak}%` }}
                 >
                   {point.total > 0
-                    ? groups.map(([label, value], index) => (
+                    ? groups.map(([bucket, value], index) => (
                         <i
                           className={`series-color-${index % 6}`}
-                          key={label}
+                          key={bucket.id}
                           style={{ flexGrow: value }}
-                          title={`${label}: ${value.toLocaleString("en")}`}
+                          title={`${bucket.label}: ${value.toLocaleString("en")}`}
                         />
                       ))
                     : null}
@@ -281,10 +316,10 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
             })}
           </div>
           <div className="activity-legend">
-            {breakdownLabels.map((label, index) => (
-              <span key={label}>
+            {breakdownBuckets.map((bucket, index) => (
+              <span key={bucket.id}>
                 <i className={`series-color-${index % 6}`} />
-                {label}
+                {bucket.label}
               </span>
             ))}
           </div>
@@ -295,9 +330,9 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
                 <thead>
                   <tr>
                     <th scope="col">UTC date</th>
-                    {breakdownLabels.map((label) => (
-                      <th key={label} scope="col">
-                        {label} tokens
+                    {breakdownBuckets.map((bucket) => (
+                      <th key={bucket.id} scope="col">
+                        {bucket.label} tokens
                       </th>
                     ))}
                   </tr>
@@ -305,19 +340,21 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
                 <tbody>
                   {catalog.tokenSeries.map((point) => {
                     const source =
-                      breakdown === "provider" ? point.providers : point.models;
+                      effectiveBreakdown === "provider"
+                        ? point.providers
+                        : point.models;
                     return (
                       <tr key={point.date}>
                         <th scope="row">{point.date}</th>
-                        {breakdownLabels.map((label) => (
-                          <td key={label}>
-                            {(label === "Overall"
+                        {breakdownBuckets.map((bucket) => (
+                          <td key={bucket.id}>
+                            {(bucket.kind === "overall"
                               ? point.total
-                              : label === "Other"
+                              : bucket.kind === "remainder"
                                 ? Object.entries(source)
                                     .filter(([name]) => !leadingLabels.includes(name))
                                     .reduce((sum, [, value]) => sum + value, 0)
-                                : (source[label] ?? 0)
+                                : (source[bucket.sourceLabel ?? ""] ?? 0)
                             ).toLocaleString("en")}
                           </td>
                         ))}

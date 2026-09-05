@@ -197,6 +197,7 @@ describe("shared dashboard analytics", () => {
     ).toBe(140);
     expect(catalog.availableMetrics).not.toContain("tokens");
     expect(catalog.dailyPeakTokens).toBeNull();
+    expect(catalog.tokenSeries).toEqual([]);
   });
 
   it("clips chart observations to 52 weeks while preserving global totals", () => {

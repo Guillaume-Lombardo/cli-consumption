@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ActivityCatalog } from "../src/react";
+
+afterEach(cleanup);
 
 const days = Array.from({ length: 364 }, (_, index) => ({
   date: new Date(Date.UTC(2025, 7, 31 + index)).toISOString().slice(0, 10),
@@ -95,5 +97,53 @@ describe("activity catalog", () => {
       screen.getByText("provider-with-an-intentionally-very-long-operational-label"),
     ).toBeInTheDocument();
     expect(container.innerHTML).not.toContain("Infinity");
+  });
+
+  it("derives valid selections and focus again when filtered props change", async () => {
+    const { container, rerender } = render(createElement(ActivityCatalog, { catalog }));
+    fireEvent.change(screen.getByLabelText("Token series breakdown"), {
+      target: { value: "provider" },
+    });
+    expect(screen.getByLabelText("Token series breakdown")).toHaveValue("provider");
+    const nextDays = days.map((row, index) => ({ ...row, observed: index === 10 }));
+    rerender(
+      createElement(ActivityCatalog, {
+        catalog: { ...catalog, days: nextDays, availableBreakdowns: [] },
+      }),
+    );
+    expect(screen.getByLabelText("Token series breakdown")).toHaveValue("overall");
+    await waitFor(() =>
+      expect(container.querySelector('.activity-cell[tabindex="0"]')).toHaveAttribute(
+        "aria-label",
+        expect.stringContaining(nextDays[10]?.date ?? "missing"),
+      ),
+    );
+  });
+
+  it("keeps real Other and Overall labels distinct from internal buckets", () => {
+    const providers = {
+      Other: 100,
+      Overall: 90,
+      alpha: 80,
+      beta: 70,
+      gamma: 60,
+      delta: 50,
+      epsilon: 40,
+    };
+    render(
+      createElement(ActivityCatalog, {
+        catalog: {
+          ...catalog,
+          tokenSeries: [{ date: "2026-08-26", total: 490, providers, models: {} }],
+          availableBreakdowns: ["provider"],
+        },
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Token series breakdown"), {
+      target: { value: "provider" },
+    });
+    expect(screen.getAllByText("Other").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Overall").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Other providers").length).toBeGreaterThan(0);
   });
 });

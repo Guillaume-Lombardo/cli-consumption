@@ -46,6 +46,11 @@ export interface DashboardSlice {
 
 export const ACTIVITY_CALENDAR_DAYS = 364;
 
+/** Compare strings by UTF-16 code units, independent of host locale and ICU data. */
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 type ComparisonPreference = "higher" | "lower" | "neutral";
 type CohortDimension =
   | "project"
@@ -408,7 +413,7 @@ export function createDashboardCalculations(input: unknown) {
     totals: ReadonlyMap<string, number>,
   ): Array<Omit<TokenSeriesBucket, "value">> {
     const leaders = [...totals]
-      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .sort((left, right) => right[1] - left[1] || compareCodeUnits(left[0], right[0]))
       .slice(0, MAX_TOKEN_SERIES_LABEL_BUCKETS)
       .map(([label]) => label);
     const buckets: Array<Omit<TokenSeriesBucket, "value">> = leaders.map(
@@ -616,7 +621,9 @@ export function createDashboardCalculations(input: unknown) {
         grouped.set(label, (grouped.get(label) ?? 0) + value);
       }
       return [...grouped]
-        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .sort(
+          (left, right) => right[1] - left[1] || compareCodeUnits(left[0], right[0]),
+        )
         .slice(0, 10);
     };
     return {

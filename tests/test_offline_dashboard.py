@@ -178,6 +178,15 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         assert urlparse(response.url).scheme == "file"
         assert response.ok
         page.wait_for_function("document.querySelectorAll('#cards .card').length >= 8")
+        assert page.evaluate(
+            """async () => {
+                await document.fonts.ready;
+                return document.fonts.check('16px "Inter Variable"') &&
+                    getComputedStyle(document.body).fontFamily.startsWith(
+                        '"Inter Variable"'
+                    );
+            }"""
+        )
         assert page.title() == "CLI Consumption"
         title_box = page.locator(".hero h1").bounding_box()
         eyebrow_box = page.locator(".hero .eyebrow").bounding_box()

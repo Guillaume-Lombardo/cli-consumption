@@ -102,6 +102,15 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
     activity.getByRole("button", { name: /tokens|turns/ }).first(),
   ).toBeVisible();
   expect(
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      return (
+        document.fonts.check('16px "Inter Variable"') &&
+        getComputedStyle(document.body).fontFamily.startsWith('"Inter Variable"')
+      );
+    }),
+  ).toBe(true);
+  expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth + 1,
     ),
@@ -194,12 +203,10 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
   await expect(activity).toHaveScreenshot("activity-dark.png", {
     animations: "disabled",
     maxDiffPixelRatio: 0.005,
-    threshold: 0.4,
   });
   await page.getByRole("button", { name: "Light theme" }).click();
   await expect(activity).toHaveScreenshot("activity-light.png", {
     animations: "disabled",
     maxDiffPixelRatio: 0.005,
-    threshold: 0.4,
   });
 });

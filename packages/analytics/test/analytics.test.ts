@@ -205,10 +205,12 @@ describe("shared dashboard analytics", () => {
     const conversation = data.conversations[0];
     const call = data.modelCalls[0];
     if (!conversation || !call) throw new Error("invalid_test_fixture");
-    const labels = ["Other", "Overall", "alpha", "beta", "gamma", "delta"];
+    const labels = ["Other", "Overall", "alpha", "beta", "zeta", "Alpha"];
+    const values = [700, 600, 500, 400, 300, 300];
     labels.forEach((label, index) => {
       const key = index + 2;
-      const value = 700 - index * 100;
+      const value = values[index];
+      if (value === undefined) throw new Error("invalid_test_fixture");
       data.conversations.push({
         ...conversation,
         key,
@@ -243,7 +245,7 @@ describe("shared dashboard analytics", () => {
       "Overall",
       "alpha",
       "beta",
-      "gamma",
+      "Alpha",
       "Other providers",
     ]);
     expect(new Set(active?.providers.map((bucket) => bucket.id)).size).toBe(6);
@@ -257,6 +259,14 @@ describe("shared dashboard analytics", () => {
       true,
     );
     expect(catalog.tokenSeries.every((point) => point.models.length <= 6)).toBe(true);
+    expect(catalog.rankings.providers.slice(0, 6).map(([label]) => label)).toEqual([
+      "Other",
+      "Overall",
+      "alpha",
+      "beta",
+      "Alpha",
+      "zeta",
+    ]);
   });
 
   it("clips chart observations to 52 weeks while preserving global totals", () => {

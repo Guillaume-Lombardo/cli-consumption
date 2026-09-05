@@ -1,4 +1,5 @@
 import {
+  DASHBOARD_GRID_COLUMNS,
   DASHBOARD_WIDGET_REGISTRY,
   type DashboardLayoutV1,
   type DashboardWidgetType,
@@ -6,7 +7,17 @@ import {
 } from "@cli-consumption/contracts";
 import { useRef, type KeyboardEvent, type PointerEvent } from "react";
 
-import { WIDGET_CATALOG } from "./layout-editor";
+import {
+  pointerGridDelta,
+  type PointerGridGeometry,
+  WIDGET_CATALOG,
+} from "./layout-editor";
+
+function pixelTracks(value: string): number[] {
+  return [...value.matchAll(/([0-9]+(?:\.[0-9]+)?)px/g)].map((match) =>
+    Number(match[1]),
+  );
+}
 
 export function LayoutEditorToolbar({
   canRedo,
@@ -126,21 +137,36 @@ export function WidgetEditorControls({
 }) {
   const title = WIDGET_CATALOG[widget.type].title;
   const pointer = useRef<
-    | { id: number; startX: number; startY: number; width: number; height: number }
+    | {
+        geometry: PointerGridGeometry;
+        id: number;
+        startX: number;
+        startY: number;
+      }
     | undefined
   >(undefined);
 
   function pointerDown(event: PointerEvent<HTMLButtonElement>) {
     const grid = event.currentTarget.closest(".dashboard-layout-grid");
-    if (!(grid instanceof HTMLElement) || matchMedia("(max-width: 36rem)").matches)
+    if (!(grid instanceof HTMLElement) || matchMedia("(max-width: 52rem)").matches)
       return;
-    const box = grid.getBoundingClientRect();
+    const style = getComputedStyle(grid);
+    const columns = pixelTracks(style.gridTemplateColumns);
+    const rows = pixelTracks(style.gridTemplateRows);
+    if (columns.length !== DASHBOARD_GRID_COLUMNS || rows.length <= widget.position.y)
+      return;
     pointer.current = {
-      height: Math.max(48, box.height / 8),
+      geometry: {
+        columnGap: Number.parseFloat(style.columnGap) || 0,
+        columns,
+        rowGap: Number.parseFloat(style.rowGap) || 0,
+        rows,
+        startX: widget.position.x,
+        startY: widget.position.y,
+      },
       id: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      width: box.width / 12,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -148,8 +174,11 @@ export function WidgetEditorControls({
   function pointerUp(event: PointerEvent<HTMLButtonElement>) {
     const start = pointer.current;
     if (!start || start.id !== event.pointerId) return;
-    const x = Math.round((event.clientX - start.startX) / start.width);
-    const y = Math.round((event.clientY - start.startY) / start.height);
+    const { x, y } = pointerGridDelta(
+      start.geometry,
+      event.clientX - start.startX,
+      event.clientY - start.startY,
+    );
     event.currentTarget.releasePointerCapture(event.pointerId);
     pointer.current = undefined;
     if (x || y) onChange(widget.id, { x, y });

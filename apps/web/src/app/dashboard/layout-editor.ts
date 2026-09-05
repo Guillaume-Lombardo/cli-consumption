@@ -12,6 +12,15 @@ import {
 
 export const LAYOUT_HISTORY_LIMIT = 20;
 
+export interface PointerGridGeometry {
+  columnGap: number;
+  columns: number[];
+  rowGap: number;
+  rows: number[];
+  startX: number;
+  startY: number;
+}
+
 export interface LayoutHistory {
   future: DashboardLayoutV1[];
   past: DashboardLayoutV1[];
@@ -93,6 +102,40 @@ export const WIDGET_CATALOG: Record<
 
 function clone(layout: DashboardLayoutV1): DashboardLayoutV1 {
   return structuredClone(layout);
+}
+
+function trackStarts(tracks: number[], gap: number): number[] {
+  let offset = 0;
+  return tracks.map((track) => {
+    const start = offset;
+    offset += track + gap;
+    return start;
+  });
+}
+
+function nearestTrack(starts: number[], target: number): number {
+  return starts.reduce(
+    (nearest, value, index) =>
+      Math.abs(value - target) < Math.abs(starts[nearest] - target) ? index : nearest,
+    0,
+  );
+}
+
+/** Convert pointer pixels to logical grid deltas using resolved tracks and gaps. */
+export function pointerGridDelta(
+  geometry: PointerGridGeometry,
+  deltaX: number,
+  deltaY: number,
+): { x: number; y: number } {
+  const columnStarts = trackStarts(geometry.columns, geometry.columnGap);
+  const rowStarts = trackStarts(geometry.rows, geometry.rowGap);
+  const startColumn = columnStarts[geometry.startX];
+  const startRow = rowStarts[geometry.startY];
+  if (startColumn === undefined || startRow === undefined) return { x: 0, y: 0 };
+  return {
+    x: nearestTrack(columnStarts, startColumn + deltaX) - geometry.startX,
+    y: nearestTrack(rowStarts, startRow + deltaY) - geometry.startY,
+  };
 }
 
 /** Create a bounded in-memory history without browser persistence. */

@@ -53,7 +53,8 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   const activityMoveHandle = page.getByRole("button", {
     name: /Move or resize Activity/,
   });
-  if ((page.viewportSize()?.width ?? 0) <= 576) {
+  const stackedLayout = (page.viewportSize()?.width ?? 0) <= 832;
+  if (stackedLayout) {
     await expect(activityMoveHandle).toBeHidden();
   } else {
     await expect(activityMoveHandle).toBeVisible();
@@ -64,12 +65,48 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(1);
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
-  if ((page.viewportSize()?.width ?? 0) <= 576) {
+  await page.getByRole("button", { name: "Remove Models" }).click();
+  await page.getByRole("button", { name: "Remove Turn performance" }).click();
+  if (stackedLayout) {
     await page.getByRole("button", { name: "Move Activity right" }).click();
   } else {
-    const gridBox = await page.locator(".dashboard-layout-grid").boundingBox();
-    expect(gridBox).not.toBeNull();
-    if (gridBox) {
+    const relativePosition = (widget: Element) => {
+      const grid = widget.closest(".dashboard-layout-grid");
+      if (!grid) return null;
+      const widgetBox = widget.getBoundingClientRect();
+      const gridBox = grid.getBoundingClientRect();
+      return { x: widgetBox.x - gridBox.x, y: widgetBox.y - gridBox.y };
+    };
+    const activityBefore = await page
+      .locator('[data-widget-type="activity"]')
+      .evaluate(relativePosition);
+    const gesture = await page.locator(".dashboard-layout-grid").evaluate((grid) => {
+      const style = getComputedStyle(grid);
+      const pixels = (value: string) =>
+        [...value.matchAll(/([0-9]+(?:\.[0-9]+)?)px/g)].map((match) =>
+          Number(match[1]),
+        );
+      const starts = (tracks: number[], gap: number) => {
+        let offset = 0;
+        return tracks.map((track) => {
+          const start = offset;
+          offset += track + gap;
+          return start;
+        });
+      };
+      const columns = starts(
+        pixels(style.gridTemplateColumns),
+        Number.parseFloat(style.columnGap) || 0,
+      );
+      const rows = starts(
+        pixels(style.gridTemplateRows),
+        Number.parseFloat(style.rowGap) || 0,
+      );
+      return { x: columns[2] - columns[0], y: rows[2] - rows[1] };
+    });
+    expect(gesture.x).toBeGreaterThan(0);
+    expect(gesture.y).toBeGreaterThan(0);
+    if (activityBefore) {
       await activityMoveHandle.evaluate((handle) => {
         handle.setPointerCapture = (pointerId) => {
           handle.dataset.capturedPointer = String(pointerId);
@@ -85,26 +122,39 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
       });
       expect(await activityMoveHandle.getAttribute("data-captured-pointer")).toBe("17");
       await activityMoveHandle.dispatchEvent("pointerup", {
-        clientX: 20 + gridBox.width / 12,
-        clientY: 20,
+        clientX: 20 + gesture.x,
+        clientY: 20 + gesture.y,
         pointerId: 17,
       });
       expect(await activityMoveHandle.getAttribute("data-released-pointer")).toBe("17");
     }
     await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
       "data-position-x",
-      "1",
+      "2",
     );
+    await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+      "data-position-y",
+      "2",
+    );
+    const activityAfter = await page
+      .locator('[data-widget-type="activity"]')
+      .evaluate(relativePosition);
+    expect(activityAfter?.x).toBeGreaterThan(activityBefore?.x ?? Infinity);
+    expect(activityAfter?.y).toBeGreaterThan(activityBefore?.y ?? Infinity);
     await activityMoveHandle.press("ArrowLeft");
     await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
       "data-position-x",
-      "0",
+      "1",
     );
     await activityMoveHandle.press("ArrowRight");
   }
   await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
     "data-position-x",
-    "1",
+    stackedLayout ? "1" : "2",
+  );
+  await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+    "data-position-y",
+    stackedLayout ? "1" : "2",
   );
 
   const cardIsInvisible = await page
@@ -158,7 +208,11 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   await expect(page.locator('[data-widget-type="tools"]')).toHaveCount(0);
   await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
     "data-position-x",
-    "1",
+    stackedLayout ? "1" : "2",
+  );
+  await expect(page.locator('[data-widget-type="activity"]')).toHaveAttribute(
+    "data-position-y",
+    stackedLayout ? "1" : "2",
   );
   await expect(page.locator(".widget-editor-controls")).toHaveCount(0);
 

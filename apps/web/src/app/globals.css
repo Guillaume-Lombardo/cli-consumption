@@ -865,6 +865,10 @@ td button {
 }
 
 @media (max-width: 52rem) {
+  .widget-drag-handle {
+    display: none;
+  }
+
   .dashboard-layout-grid {
     display: block;
   }
@@ -900,10 +904,6 @@ td button {
 }
 
 @media (max-width: 36rem) {
-  .widget-drag-handle {
-    display: none;
-  }
-
   .layout-toolbar,
   .layout-conflict-actions {
     align-items: stretch;

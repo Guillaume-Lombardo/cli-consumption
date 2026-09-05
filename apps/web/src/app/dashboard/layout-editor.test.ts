@@ -7,11 +7,29 @@ import {
   createLayoutHistory,
   firstFitWidget,
   layoutHistoryReducer,
+  pointerGridDelta,
   removeWidget,
   updateWidget,
 } from "./layout-editor";
 
 describe("layout editor model", () => {
+  it("maps pointer pixels through actual gap-aware columns and variable rows", () => {
+    expect(
+      pointerGridDelta(
+        {
+          columnGap: 16,
+          columns: Array.from({ length: 12 }, () => 80),
+          rowGap: 12,
+          rows: [100, 180, 120, 200],
+          startX: 1,
+          startY: 1,
+        },
+        3 * (80 + 16),
+        180 + 12 + 120 + 12,
+      ),
+    ).toEqual({ x: 3, y: 2 });
+  });
+
   it("places duplicate widgets deterministically without collision", () => {
     const widget = firstFitWidget(DEFAULT_DASHBOARD_LAYOUT_V1, "activity");
     expect(widget).toMatchObject({

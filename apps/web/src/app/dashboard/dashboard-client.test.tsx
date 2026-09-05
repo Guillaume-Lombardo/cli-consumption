@@ -130,6 +130,43 @@ afterEach(() => {
 });
 
 describe("persistent dashboard", () => {
+  it("blocks editing until the initial layout baseline and ETag resolve", async () => {
+    let resolveLayout: (response: Response) => void = () => undefined;
+    const pendingLayout = new Promise<Response>((resolve) => {
+      resolveLayout = resolve;
+    });
+    const savedLayout: DashboardLayoutV1 = {
+      ...DEFAULT_DASHBOARD_LAYOUT_V1,
+      widgets: DEFAULT_DASHBOARD_LAYOUT_V1.widgets.slice(0, 2),
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout")) return pendingLayout;
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations")) {
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      }
+      throw new Error("unexpected_test_request");
+    });
+    const user = userEvent.setup();
+    const { container } = render(<DashboardClient />);
+    await screen.findByRole("heading", { name: "Activity" });
+    const edit = screen.getByRole("button", { name: "Edit dashboard" });
+
+    expect(edit).toBeDisabled();
+    expect(edit).toHaveAttribute("aria-busy", "true");
+    await user.click(edit);
+    expect(
+      screen.queryByRole("region", { name: "Dashboard layout editor" }),
+    ).toBeNull();
+
+    resolveLayout(Response.json(savedLayout, { headers: { ETag: ETAG } }));
+    await waitFor(() => expect(edit).toBeEnabled());
+    await user.click(edit);
+    expect(container.querySelectorAll("[data-widget-type]")).toHaveLength(2);
+    expect(container.querySelector('[data-widget-type="tools"]')).toBeNull();
+  });
+
   it("announces a non-blocking default-layout fallback without reflecting upstream data", async () => {
     const canary = "PRIVATE_LAYOUT_UPSTREAM_CANARY";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

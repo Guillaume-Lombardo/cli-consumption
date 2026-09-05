@@ -694,6 +694,7 @@ export function DashboardClient() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
   const [layoutError, setLayoutError] = useState("");
+  const [layoutLoading, setLayoutLoading] = useState(true);
   const [layoutNotice, setLayoutNotice] = useState("");
   const [layoutConflict, setLayoutConflict] = useState(false);
   const [layoutEtag, setLayoutEtag] = useState<string | null>(null);
@@ -737,7 +738,8 @@ export function DashboardClient() {
         setLayoutError(
           "The saved layout could not be loaded. The default layout is displayed.",
         );
-      });
+      })
+      .finally(() => setLayoutLoading(false));
   }, []);
 
   const layoutDirty = useMemo(
@@ -952,7 +954,9 @@ export function DashboardClient() {
         <div className="hero-actions">
           {!editingLayout ? (
             <button
+              aria-busy={layoutLoading}
               className="secondary"
+              disabled={layoutLoading}
               type="button"
               onClick={() => {
                 dispatchLayout({ layout: layoutBaseline, type: "replace" });

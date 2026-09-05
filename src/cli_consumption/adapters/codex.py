@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,11 +15,18 @@ from cli_consumption.adapters._shared import (
     MAX_BIGINT as MAX_BIGINT,
 )
 from cli_consumption.adapters._shared import (
+    ProviderDataLimitError,
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
     open_provider_sqlite,
 )
-from cli_consumption.models import TOKEN_FIELDS, Snapshot, empty_tokens
+from cli_consumption.adapters.base import CollectionBatch
+from cli_consumption.models import (
+    TOKEN_FIELDS,
+    Snapshot,
+    SnapshotValidationError,
+    empty_tokens,
+)
 
 OUTSIDE_PROJECT = "outside-project"
 TOOL_PATTERN = re.compile(r"(?:tools|collaboration)\.([A-Za-z][A-Za-z0-9_]*)\s*\(")
@@ -85,6 +94,24 @@ AGENT_ROLE_ALIASES = {
     "worker": "worker",
 }
 SAFE_DIMENSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
+INCREMENTAL_CANDIDATES_PER_BATCH = 1_000
+
+
+def _iter_session_files(root: Path) -> Iterator[Path]:
+    """Walk a provider tree deterministically without materializing every path."""
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            ordered = sorted(entries, key=lambda entry: entry.name)
+        child_directories: list[Path] = []
+        for entry in ordered:
+            path = Path(entry.path)
+            if entry.is_dir(follow_symlinks=False):
+                child_directories.append(path)
+            elif entry.name.endswith(".jsonl"):
+                yield path
+        pending.extend(reversed(child_directories))
 
 
 def parse_timestamp(value: object) -> datetime | None:
@@ -166,6 +193,73 @@ class CodexAdapter:
             )
         return snapshot
 
+    def collect_incrementally(
+        self,
+        sources: list[tuple[str, Path]],
+        project_mappings: list[tuple[str, str]] | None = None,
+    ) -> Iterator[CollectionBatch]:
+        """Yield deterministic, bounded snapshots from arbitrarily many rollouts."""
+        mappings = project_mappings or []
+        for machine, codex_home in sources:
+            sessions = codex_home / "sessions"
+            if not sessions.is_dir():
+                raise ValueError("Missing Codex sessions directory")
+
+            yielded_sessions = False
+            batch: list[tuple[str, Path]] = []
+            for path in _iter_session_files(sessions):
+                batch.append((machine, path))
+                if len(batch) == INCREMENTAL_CANDIDATES_PER_BATCH:
+                    yielded_sessions = True
+                    yield from self._collect_incremental_batch(batch, mappings)
+                    batch = []
+            if batch:
+                yielded_sessions = True
+                yield from self._collect_incremental_batch(batch, mappings)
+
+            if not yielded_sessions:
+                yield CollectionBatch(Snapshot(provider=self.name), frozenset())
+
+    def _collect_incremental_batch(
+        self,
+        candidates: list[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
+    ) -> Iterator[CollectionBatch]:
+        try:
+            yield CollectionBatch(
+                self._collect_candidates(candidates, mappings), frozenset()
+            )
+        except ProviderDataLimitError as error:
+            if str(error) != "provider_read_limit_exceeded" or len(candidates) == 1:
+                raise
+            midpoint = len(candidates) // 2
+            yield from self._collect_incremental_batch(candidates[:midpoint], mappings)
+            yield from self._collect_incremental_batch(candidates[midpoint:], mappings)
+        except SnapshotValidationError as error:
+            if error.code != "snapshot_too_large" or len(candidates) == 1:
+                raise
+            midpoint = len(candidates) // 2
+            yield from self._collect_incremental_batch(candidates[:midpoint], mappings)
+            yield from self._collect_incremental_batch(candidates[midpoint:], mappings)
+
+    def _collect_candidates(
+        self,
+        candidates: list[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
+    ) -> Snapshot:
+        budget = ProviderInputBudget()
+        selected, duplicates, malformed = self._discover_candidates(candidates, budget)
+        snapshot = Snapshot(
+            provider=self.name,
+            duplicate_conversations=duplicates,
+            malformed_records=malformed,
+        )
+        for machine, path, event_count, digest in selected:
+            self._read_rollout(
+                snapshot, machine, path, event_count, digest, mappings, budget
+            )
+        return snapshot
+
     def _read_subagents(
         self,
         state_path: Path,
@@ -215,46 +309,62 @@ class CodexAdapter:
     def _discover(
         self, sources: list[tuple[str, Path]], budget: ProviderInputBudget
     ) -> tuple[list[tuple[str, Path, int, str]], int, int]:
-        selected: dict[str, tuple[str, Path, int, str]] = {}
-        duplicates = 0
-        malformed = 0
+        candidates: list[tuple[str, Path]] = []
         for machine, codex_home in sources:
             sessions = codex_home / "sessions"
             if not sessions.is_dir():
                 raise ValueError(f"Missing Codex sessions directory: {sessions}")
-            for path in budget.sorted_paths(sessions.rglob("*.jsonl")):
-                event_count = 0
-                conversation_id = ""
-                digest = hashlib.sha256()
-                for raw_line in iter_bounded_jsonl_bytes(path, budget):
-                    digest.update(raw_line)
-                    try:
-                        event = json.loads(raw_line)
-                    except (json.JSONDecodeError, UnicodeDecodeError):
+            candidates.extend(
+                (machine, path)
+                for path in budget.sorted_paths(sessions.rglob("*.jsonl"))
+            )
+        return self._discover_candidates(candidates, budget, charge_candidates=False)
+
+    def _discover_candidates(
+        self,
+        candidates: list[tuple[str, Path]],
+        budget: ProviderInputBudget,
+        *,
+        charge_candidates: bool = True,
+    ) -> tuple[list[tuple[str, Path, int, str]], int, int]:
+        selected: dict[str, tuple[str, Path, int, str]] = {}
+        duplicates = 0
+        malformed = 0
+        for machine, path in candidates:
+            if charge_candidates:
+                budget.item()
+            event_count = 0
+            conversation_id = ""
+            digest = hashlib.sha256()
+            for raw_line in iter_bounded_jsonl_bytes(path, budget):
+                digest.update(raw_line)
+                try:
+                    event = json.loads(raw_line)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    malformed += 1
+                    continue
+                if not isinstance(event, dict):
+                    malformed += 1
+                    continue
+                event_count += 1
+                if event.get("type") == "session_meta":
+                    payload = event.get("payload")
+                    if not isinstance(payload, dict):
                         malformed += 1
                         continue
-                    if not isinstance(event, dict):
-                        malformed += 1
-                        continue
-                    event_count += 1
-                    if event.get("type") == "session_meta":
-                        payload = event.get("payload")
-                        if not isinstance(payload, dict):
-                            malformed += 1
-                            continue
-                        candidate_id = _safe_dimension(payload.get("id"), 512)
-                        if candidate_id and not conversation_id:
-                            conversation_id = candidate_id
-                content_hash = digest.hexdigest()
-                conversation_id = conversation_id or f"content-{content_hash}"
-                candidate = (machine, path, event_count, content_hash)
-                previous = selected.get(conversation_id)
-                if previous is None:
+                    candidate_id = _safe_dimension(payload.get("id"), 512)
+                    if candidate_id and not conversation_id:
+                        conversation_id = candidate_id
+            content_hash = digest.hexdigest()
+            conversation_id = conversation_id or f"content-{content_hash}"
+            candidate = (machine, path, event_count, content_hash)
+            previous = selected.get(conversation_id)
+            if previous is None:
+                selected[conversation_id] = candidate
+            else:
+                duplicates += 1
+                if candidate[2:] > previous[2:]:
                     selected[conversation_id] = candidate
-                else:
-                    duplicates += 1
-                    if candidate[2:] > previous[2:]:
-                        selected[conversation_id] = candidate
         return list(selected.values()), duplicates, malformed
 
     def _read_rollout(

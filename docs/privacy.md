@@ -141,6 +141,21 @@ failures expose only generic codes, never paths or record content. The sync clie
 requires HTTPS beyond loopback unless the operator uses the explicit
 `--allow-insecure` override.
 
+Opt-in Codex incremental collection resets aggregate candidate, actual-read, and
+normalized-snapshot counters only at deterministic batch boundaries. It never resets
+the per-file, per-line, file-identity, file-type, symlink, SQLite-field, or
+single-conversation protections, and a separate 10,000-batch ceiling bounds one
+command. Non-strict batches commit independently and fixed failure output reports only
+aggregate completed-batch counts. Strict mode first serializes up to 4 GiB of validated
+normalized metadata—not provider events, prompts, responses, or paths—into a private
+temporary directory with private files, ingests only after every batch passes, and
+removes the staging directory on every exit.
+
+Incremental Codex collection does not read or replace SQLite subagent relationships.
+Conversation batches explicitly suppress authoritative subagent-scope replacement, so
+a partial run, a stale copied source, or an interleaved writer cannot erase a previously
+validated graph.
+
 A normalized database selected for snapshot extraction is also untrusted. Extraction
 requires the exact current revision and physical layout without running migrations,
 uses an explicit read-only transaction that includes live committed WAL data, and caps

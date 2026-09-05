@@ -6,6 +6,13 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Added opt-in `collect --incremental` automatic bounded batching for large Codex
+  stores, with restart-safe ingestion, strict metadata-only preflight staging,
+  deterministic duplicate convergence, privacy-safe partial results, and unchanged
+  per-file and per-line safety limits; authoritative subagent graphs remain untouched.
+
 ## [0.4.2] - 2026-09-05
 
 ### Added

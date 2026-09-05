@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -1680,6 +1681,301 @@ def test_collect_and_export_machine_readable_results(
     assert refused.exit_code == 2
     assert "malformed provider" in normalized_cli_output(refused.output)
     assert not refused_database.exists()
+
+
+def test_incremental_collect_batches_large_codex_store_and_is_restart_safe(
+    tmp_path: Path,
+    rollout_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home, "conversation-b")
+    rollout_factory(home, "conversation-a")
+    database = tmp_path / "usage.sqlite"
+    monkeypatch.setattr(
+        "cli_consumption.adapters.codex.INCREMENTAL_CANDIDATES_PER_BATCH", 1
+    )
+    arguments = [
+        "collect",
+        "--incremental",
+        "--source",
+        f"desktop={home}",
+        "--database",
+        str(database),
+        "--json",
+    ]
+
+    first = runner.invoke(app, arguments)
+    second = runner.invoke(app, arguments)
+
+    assert first.exit_code == second.exit_code == 0
+    first_ingestion = json.loads(first.stdout)["ingestions"][0]
+    second_ingestion = json.loads(second.stdout)["ingestions"][0]
+    assert first_ingestion == {
+        "provider": "codex",
+        "batches": 2,
+        "received": 2,
+        "written": 2,
+        "skipped": 0,
+        "malformed": 0,
+        "batch_duplicates": 0,
+    }
+    assert second_ingestion == first_ingestion | {"written": 0, "skipped": 2}
+    assert json.loads(first.stdout)["incremental"] is True
+    engine = create_database_engine(database)
+    assert len(read_table(engine, "conversations")) == 2
+    engine.dispose()
+
+
+def test_incremental_strict_preflights_all_batches_before_creating_database(
+    tmp_path: Path,
+    rollout_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canary = "PROMPT_SECRET_CANARY"
+    home = tmp_path / "codex"
+    rollout_factory(home, "conversation-a")
+    malformed = rollout_factory(home, "conversation-b")
+    with malformed.open("a", encoding="utf-8") as handle:
+        handle.write(canary + "\n")
+    database = tmp_path / "strict.sqlite"
+    monkeypatch.setattr(
+        "cli_consumption.adapters.codex.INCREMENTAL_CANDIDATES_PER_BATCH", 1
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--incremental",
+            "--strict",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout) == {
+        "error": {"code": "malformed_records", "provider": "codex"},
+        "incremental": True,
+        "ingestions": [],
+    }
+    assert canary not in result.output
+    assert not database.exists()
+
+
+def test_incremental_strict_staging_has_a_cumulative_byte_limit(
+    tmp_path: Path,
+    rollout_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    database = tmp_path / "strict.sqlite"
+    monkeypatch.setattr(cli_module, "MAX_INCREMENTAL_STAGING_BYTES", 1)
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--incremental",
+            "--strict",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout) == {
+        "error": {"code": "provider_limit_exceeded", "provider": "codex"},
+        "incremental": True,
+        "ingestions": [],
+    }
+    assert not database.exists()
+
+
+def test_incremental_late_limit_failure_reports_committed_batches_privately(
+    tmp_path: Path,
+    rollout_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home, "conversation-a")
+    target = home / "sessions" / "conversation-z.jsonl"
+    target.symlink_to(home / "PRIVATE_PATH_CANARY")
+    database = tmp_path / "partial.sqlite"
+    monkeypatch.setattr(
+        "cli_consumption.adapters.codex.INCREMENTAL_CANDIDATES_PER_BATCH", 1
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "collect",
+            "--incremental",
+            "--source",
+            f"desktop={home}",
+            "--database",
+            str(database),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"] == {
+        "code": "provider_limit_exceeded",
+        "provider": "codex",
+    }
+    assert payload["incremental"] is True
+    assert payload["ingestions"][0]["batches"] == 1
+    assert payload["ingestions"][0]["written"] == 1
+    assert "PRIVATE_PATH_CANARY" not in result.output
+    engine = create_database_engine(database)
+    assert len(read_table(engine, "conversations")) == 1
+    engine.dispose()
+
+
+def test_incremental_collection_preserves_existing_subagent_scope(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout = rollout_factory(home)
+    spec = cli_module.resolve_adapter_spec("codex")
+    assert spec is not None
+    original = spec.adapter_type().collect([("desktop", home)], [])
+    original.subagents.append(
+        {
+            "id": "codex:desktop:child",
+            "provider": "codex",
+            "source_machine": "desktop",
+            "parent_thread_id": "conversation-1",
+            "child_thread_id": "child",
+            "status": "completed",
+            "created_at_ms": 1,
+            "updated_at_ms": 2,
+            "agent_role": "worker",
+            "tokens_used": 3,
+        }
+    )
+    database = tmp_path / "usage.sqlite"
+    engine = create_database_engine(database)
+    cli_module.ingest_snapshot(engine, original)
+    engine.dispose()
+    rollout_factory(home, extra_event=True)
+    arguments = [
+        "collect",
+        "--incremental",
+        "--source",
+        f"desktop={home}",
+        "--database",
+        str(database),
+    ]
+
+    without_state = runner.invoke(app, arguments)
+    engine = create_database_engine(database)
+    assert without_state.exit_code == 0, without_state.output
+    assert len(read_table(engine, "subagents")) == 1
+    engine.dispose()
+
+    with closing(sqlite3.connect(home / "state_5.sqlite")) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE thread_spawn_edges (
+                parent_thread_id, child_thread_id, status
+            );
+            CREATE TABLE threads (
+                id, created_at_ms, updated_at_ms, agent_role, tokens_used
+            );
+            """
+        )
+    with rollout.open("a", encoding="utf-8") as handle:
+        handle.write(
+            '{"timestamp":"2026-08-25T10:00:06Z","type":"compacted","payload":{}}\n'
+        )
+
+    with_complete_state = runner.invoke(app, arguments)
+    engine = create_database_engine(database)
+    assert with_complete_state.exit_code == 0, with_complete_state.output
+    assert len(read_table(engine, "subagents")) == 1
+    engine.dispose()
+
+
+def test_normal_collect_can_initialize_subagents_after_incremental_collect(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    with closing(sqlite3.connect(home / "state_5.sqlite")) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE thread_spawn_edges (
+                parent_thread_id, child_thread_id, status
+            );
+            CREATE TABLE threads (
+                id, created_at_ms, updated_at_ms, agent_role, tokens_used
+            );
+            INSERT INTO thread_spawn_edges VALUES ('parent', 'child', 'done');
+            INSERT INTO threads VALUES ('child', 1, 2, 'worker', 3);
+            """
+        )
+        connection.commit()
+    database = tmp_path / "usage.sqlite"
+    common = [
+        "--source",
+        f"desktop={home}",
+        "--database",
+        str(database),
+    ]
+
+    incremental = runner.invoke(app, ["collect", "--incremental", *common])
+    normal = runner.invoke(app, ["collect", *common])
+
+    assert incremental.exit_code == 0, incremental.output
+    assert normal.exit_code == 0, normal.output
+    engine = create_database_engine(database)
+    assert len(read_table(engine, "subagents")) == 1
+    engine.dispose()
+
+
+def test_incremental_mode_rolls_over_candidate_budget_without_weakening_default(
+    tmp_path: Path,
+    rollout_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home, "conversation-a")
+    rollout_factory(home, "conversation-b")
+    monkeypatch.setattr("cli_consumption.adapters._shared.MAX_PROVIDER_CANDIDATES", 1)
+    monkeypatch.setattr(
+        "cli_consumption.adapters.codex.INCREMENTAL_CANDIDATES_PER_BATCH", 1
+    )
+    common = ["--source", f"desktop={home}"]
+
+    refused = runner.invoke(
+        app,
+        ["collect", *common, "--database", str(tmp_path / "default.sqlite")],
+    )
+    accepted = runner.invoke(
+        app,
+        [
+            "collect",
+            "--incremental",
+            *common,
+            "--database",
+            str(tmp_path / "incremental.sqlite"),
+        ],
+    )
+
+    assert refused.exit_code == 2
+    assert "safety limits" in refused.stderr
+    assert accepted.exit_code == 0, accepted.output
 
 
 def test_export_accepts_bounded_dates_and_rejects_naive_timestamps(

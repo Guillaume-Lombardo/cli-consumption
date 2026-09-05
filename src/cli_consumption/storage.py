@@ -364,8 +364,16 @@ def ingest_snapshot(
     snapshot: Snapshot,
     *,
     idempotency_key: str | None = None,
+    authoritative_subagent_scopes: frozenset[tuple[str, str]] | None = None,
 ) -> IngestionResult:
     snapshot = validate_snapshot(snapshot)
+    if authoritative_subagent_scopes is not None and any(
+        provider != snapshot.provider
+        or not isinstance(source_machine, str)
+        or not 1 <= len(source_machine) <= 255
+        for provider, source_machine in authoritative_subagent_scopes
+    ):
+        raise SnapshotValidationError()
     initialize_database(engine)
     if idempotency_key is not None:
         idempotency_key = _canonical_idempotency_key(idempotency_key)
@@ -381,10 +389,15 @@ def ingest_snapshot(
     context_by_conversation = _group(snapshot.context_samples)
     settings_by_conversation = _group(snapshot.turn_settings)
     compactions_by_conversation = _group(snapshot.compaction_events)
-    subagent_scopes = {
+    inferred_subagent_scopes = {
         (snapshot.provider, str(record["source_machine"]))
         for record in (*snapshot.conversations, *snapshot.subagents)
     }
+    subagent_scopes = (
+        inferred_subagent_scopes
+        if authoritative_subagent_scopes is None
+        else set(authoritative_subagent_scopes)
+    )
     stale_subagent_scopes: set[tuple[str, str]] = set()
     richer_subagent_scopes: set[tuple[str, str]] = set()
     try:
@@ -398,21 +411,20 @@ def ingest_snapshot(
                 conversation_id = str(record["id"])
                 existing = session.get(Conversation, conversation_id)
                 scope = (snapshot.provider, str(record["source_machine"]))
-                if existing is not None and existing.event_count > int(
-                    record["event_count"]
-                ):
+                incoming_rank = (
+                    int(record["event_count"]),
+                    str(record["content_hash"]),
+                )
+                existing_rank = (
+                    (existing.event_count, existing.content_hash)
+                    if existing is not None
+                    else None
+                )
+                if existing_rank is not None and existing_rank > incoming_rank:
                     stale_subagent_scopes.add(scope)
-                elif existing is not None and existing.event_count < int(
-                    record["event_count"]
-                ):
+                elif existing_rank is not None and existing_rank < incoming_rank:
                     richer_subagent_scopes.add(scope)
-                if existing is not None and (
-                    existing.event_count > int(record["event_count"])
-                    or (
-                        existing.event_count == int(record["event_count"])
-                        and existing.content_hash == record["content_hash"]
-                    )
-                ):
+                if existing_rank is not None and existing_rank >= incoming_rank:
                     skipped += 1
                     continue
                 session.execute(
@@ -461,8 +473,13 @@ def ingest_snapshot(
                 for compaction in compactions_by_conversation.get(conversation_id, []):
                     session.add(CompactionEvent(**compaction))
                 written += 1
-            authoritative_scopes = initial_subagent_scopes | (
+            inferred_authoritative_scopes = initial_subagent_scopes | (
                 richer_subagent_scopes - stale_subagent_scopes
+            )
+            authoritative_scopes = (
+                inferred_authoritative_scopes
+                if authoritative_subagent_scopes is None
+                else authoritative_subagent_scopes
             )
             for provider, source_machine in authoritative_scopes:
                 session.execute(

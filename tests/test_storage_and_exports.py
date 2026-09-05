@@ -314,6 +314,86 @@ def test_richer_replacement_is_atomic_and_older_copy_cannot_regress_it(
     engine.dispose()
 
 
+def test_equal_event_count_duplicate_converges_on_content_hash_rank(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    original = CodexAdapter().collect([("desktop", home)])
+    lower = Snapshot.from_dict(original.to_dict())
+    upper = Snapshot.from_dict(original.to_dict())
+    lower.conversations[0]["content_hash"] = "0" * 64
+    lower.conversations[0]["project"] = "lower"
+    upper.conversations[0]["content_hash"] = "f" * 64
+    upper.conversations[0]["project"] = "upper"
+    database = tmp_path / "usage.sqlite"
+    engine = create_database_engine(database)
+
+    ingest_snapshot(engine, upper)
+    skipped = ingest_snapshot(engine, lower)
+
+    assert (skipped.written, skipped.skipped) == (0, 1)
+    conversation = read_table(engine, "conversations")[0]
+    assert conversation["content_hash"] == "f" * 64
+    assert conversation["project"] == "upper"
+    engine.dispose()
+
+    reverse_engine = create_database_engine(tmp_path / "reverse.sqlite")
+    ingest_snapshot(reverse_engine, lower)
+    promoted = ingest_snapshot(reverse_engine, upper)
+
+    assert (promoted.written, promoted.skipped) == (1, 0)
+    conversation = read_table(reverse_engine, "conversations")[0]
+    assert conversation["content_hash"] == "f" * 64
+    assert conversation["project"] == "upper"
+    reverse_engine.dispose()
+
+
+def test_incremental_conversation_batch_preserves_complete_subagent_scope(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    original = CodexAdapter().collect([("desktop", home)])
+    original.subagents.append(
+        {
+            "id": "codex:desktop:child-thread",
+            "provider": "codex",
+            "source_machine": "desktop",
+            "parent_thread_id": "conversation-1",
+            "child_thread_id": "child-thread",
+            "status": "completed",
+            "created_at_ms": 1,
+            "updated_at_ms": 2,
+            "agent_role": "worker",
+            "tokens_used": 3,
+        }
+    )
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+    ingest_snapshot(engine, original)
+    richer = Snapshot.from_dict(original.to_dict())
+    richer.conversations[0]["event_count"] += 1
+    richer.conversations[0]["content_hash"] = "f" * 64
+    richer.subagents.clear()
+
+    ingest_snapshot(engine, richer, authoritative_subagent_scopes=frozenset())
+
+    assert len(read_table(engine, "subagents")) == 1
+    ingest_snapshot(
+        engine,
+        Snapshot(provider="codex"),
+        authoritative_subagent_scopes=frozenset((("codex", "desktop"),)),
+    )
+    assert read_table(engine, "subagents") == []
+    with pytest.raises(ValueError, match="invalid_snapshot"):
+        ingest_snapshot(
+            engine,
+            Snapshot(provider="codex"),
+            authoritative_subagent_scopes=frozenset((("other", "desktop"),)),
+        )
+    engine.dispose()
+
+
 def test_identical_snapshot_cannot_delete_subagent_scope(
     tmp_path: Path, rollout_factory
 ) -> None:

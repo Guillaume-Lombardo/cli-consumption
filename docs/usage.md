@@ -48,6 +48,38 @@ fields. A snapshot may contain at most 250,000 normalized records. Direct provid
 symlinks are refused. Add `--strict` to refuse ingestion when malformed records were
 skipped.
 
+Large Codex stores can opt into automatic bounded batching without copying sessions
+into temporary source directories:
+
+```bash
+uv run cli-consumption collect --provider codex --incremental \
+  --source desktop=/data/codex/desktop \
+  --database usage.sqlite
+```
+
+Each batch is independently committed, so an interrupted non-strict run may leave a
+valid partial import. The failure output reports the number of committed batches, and
+rerunning the same command safely converges without duplicate conversations or child
+records. `--strict` instead validates every metadata-only batch in a private temporary
+staging directory before opening the destination database; any malformed provider
+record leaves the database untouched. Staging is removed on success or failure.
+
+Automatic batching currently applies to Codex JSONL sessions. Other providers retain
+their existing one-snapshot collection when `--incremental` is present. Batching resets
+only aggregate candidate, read, and normalized-record budgets. An individually
+oversized JSONL file or line, an unsafe symlink or file type, an oversized single
+conversation still fail with the generic `provider_limit_exceeded` code. Incremental
+mode deliberately leaves the Codex SQLite subagent graph unchanged because safely
+refreshing that authoritative scope requires whole-collection freshness; normal
+collection remains responsible for it. A separate 10,000-batch command ceiling bounds
+total work, and strict metadata staging is capped at 4 GiB.
+
+Incremental JSON summaries call the adapter-level counter `batch_duplicates` because
+duplicate copies separated by a batch boundary are resolved deterministically by SQL
+replacement and therefore appear in the actual `written` or `skipped` totals. The
+database result is independent of the boundary even though physical ingestion-run
+counts necessarily are not.
+
 ## Transfer signed offline snapshots
 
 Install the `snapshots` extra on both machines. Generate an Ed25519 PEM key pair with

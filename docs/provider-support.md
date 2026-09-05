@@ -107,6 +107,16 @@ selected rows, 8 MiB per structured field, and 256 MiB across structured fields.
 Exceeding a limit aborts collection with a generic code rather than silently producing
 a partial snapshot.
 
+`collect --incremental` gives the Codex adapter an opt-in streaming path for stores
+that exceed aggregate candidate, provider-read, or normalized-record limits. It walks
+session files deterministically, keeps every conversation graph within one snapshot,
+and subdivides a batch only when an aggregate read or snapshot limit is reached.
+Per-file, per-line, file-identity, symlink, SQLite, and single-conversation limits are
+unchanged. Providers without this optional adapter capability use their normal bounded
+single snapshot. Incremental Codex batches do not read or replace the authoritative
+SQLite subagent graph, so an existing graph is preserved until a normal collection can
+refresh it atomically.
+
 ## Mistral Vibe CLI
 
 Mistral Vibe CLI reads top-level session directories under

@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import cache
+from html import escape
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, TextIO
@@ -89,6 +90,19 @@ def _react_dashboard_styles() -> str:
         files("cli_consumption")
         .joinpath("dashboard_react.css")
         .read_text(encoding="utf-8")
+    )
+
+
+@cache
+def _inter_font_license_notice() -> str:
+    """Load and HTML-escape the bundled Inter OFL notice without network URLs."""
+    license_text = (
+        files("cli_consumption")
+        .joinpath("INTER_FONT_LICENSE.txt")
+        .read_text(encoding="utf-8")
+    )
+    return escape(
+        license_text.replace("https://", "").replace("http://", ""), quote=False
     )
 
 
@@ -598,6 +612,7 @@ def _react_document_parts() -> tuple[str, str]:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CLI Consumption</title>
+  <script id="inter-font-license" type="text/plain">{_inter_font_license_notice()}</script>
   <style>{_react_dashboard_styles()}</style>
 </head>
 <body>

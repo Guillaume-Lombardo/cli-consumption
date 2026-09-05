@@ -37,4 +37,6 @@ No API or persistence field is added. Detailed operational labels and share-safe
 pseudonyms retain their existing privacy semantics. A daily series may be unavailable
 when a global total exists; the UI states this rather than displaying a false zero.
 Web and offline builds use the pinned Inter variable font; the offline stylesheet
-inlines its package-owned WOFF2 files and rejects unresolved asset URLs.
+inlines its package-owned WOFF2 files and rejects unresolved asset URLs. The Python
+distribution retains the official OFL file, and each standalone HTML embeds its
+human-readable notice with network URL schemes neutralized.

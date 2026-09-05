@@ -936,6 +936,7 @@ export function DashboardClient() {
 
   function prepareOfflineExport() {
     if (!renderedQuery || !layoutEtag || loading) return;
+    setExportError("");
     setExportSnapshot({
       layout: structuredClone(editingLayout ? layoutHistory.present : layoutBaseline),
       query: { ...structuredClone(renderedQuery), profile: exportProfile },

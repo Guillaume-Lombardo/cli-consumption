@@ -5,7 +5,7 @@ import {
   type DashboardLayoutV1,
   DEFAULT_DASHBOARD_LAYOUT_V1,
 } from "@cli-consumption/contracts";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -688,6 +688,16 @@ describe("persistent dashboard", () => {
     expect(alert).not.toHaveTextContent("PRIVATE_UPSTREAM_EXPORT_CANARY");
     expect(alert).toHaveFocus();
     expect(screen.getByRole("dialog")).toContainElement(alert);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(exportButton);
+    const reopened = screen.getByRole("dialog", {
+      name: "Review offline snapshot",
+    });
+    expect(within(reopened).queryByRole("alert")).toBeNull();
+    expect(
+      within(reopened).getByRole("button", { name: "Download snapshot" }),
+    ).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Download snapshot" }));
 
     await waitFor(() => expect(requests).toHaveLength(2));

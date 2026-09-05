@@ -718,6 +718,7 @@ export function DashboardClient() {
   const exportAbortRef = useRef<AbortController>(null);
   const exportConfirmRef = useRef<HTMLButtonElement>(null);
   const exportDialogRef = useRef<HTMLDialogElement>(null);
+  const exportErrorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
@@ -961,6 +962,10 @@ export function DashboardClient() {
     exportConfirmRef.current?.focus();
   }, [exportSnapshot]);
 
+  useEffect(() => {
+    if (exportSnapshot && exportError) exportErrorRef.current?.focus();
+  }, [exportError, exportSnapshot]);
+
   async function exportOffline() {
     if (!exportSnapshot) return;
     const controller = new AbortController();
@@ -1110,6 +1115,17 @@ export function DashboardClient() {
             saved widgets are omitted deterministically; an incompatible layout resolves
             to the safe default before this review.
           </p>
+          {exportError ? (
+            <div
+              className="callout error"
+              ref={exportErrorRef}
+              role="alert"
+              tabIndex={-1}
+            >
+              <strong>Offline export failed.</strong>
+              <span>{exportError}</span>
+            </div>
+          ) : null}
           <div className="dialog-actions">
             <button className="secondary" type="button" onClick={cancelOfflineExport}>
               Cancel
@@ -1125,7 +1141,7 @@ export function DashboardClient() {
           </div>
         </dialog>
       ) : null}
-      {exportError ? (
+      {exportError && !exportSnapshot ? (
         <section className="callout error" role="alert">
           <strong>Offline export failed.</strong>
           <span>{exportError}</span>

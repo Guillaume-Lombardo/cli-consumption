@@ -643,4 +643,55 @@ describe("persistent dashboard", () => {
     expect(aborted).toBe(true);
     expect(screen.queryByText("Offline export failed.")).toBeNull();
   });
+
+  it("keeps a failed snapshot accessible and retries the identical envelope", async () => {
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout"))
+        return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+          headers: { ETag: ETAG },
+        });
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations"))
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      if (url.endsWith("/export")) {
+        requests.push(String(init?.body));
+        if (requests.length === 1) {
+          return Response.json(
+            { detail: "PRIVATE_UPSTREAM_EXPORT_CANARY" },
+            { status: 503 },
+          );
+        }
+        return new Response("<!doctype html><title>Offline</title>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      throw new Error("unexpected_test_request");
+    });
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:offline-export"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    render(<DashboardClient />);
+    const exportButton = await screen.findByRole("button", {
+      name: "Export offline",
+    });
+    await waitFor(() => expect(exportButton).toBeEnabled());
+    await user.click(exportButton);
+    await user.click(screen.getByRole("button", { name: "Download snapshot" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Reporting is temporarily unavailable.");
+    expect(alert).not.toHaveTextContent("PRIVATE_UPSTREAM_EXPORT_CANARY");
+    expect(alert).toHaveFocus();
+    expect(screen.getByRole("dialog")).toContainElement(alert);
+    await user.click(screen.getByRole("button", { name: "Download snapshot" }));
+
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toBe(requests[0]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
 });

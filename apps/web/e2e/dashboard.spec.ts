@@ -115,11 +115,21 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
       () => document.documentElement.scrollWidth <= window.innerWidth + 1,
     ),
   ).toBe(true);
-  expect(
-    await activity
-      .locator(".calendar-scroll")
-      .evaluate((node) => node.scrollWidth >= node.clientWidth),
-  ).toBe(true);
+  const calendarDimensions = await activity
+    .locator(".calendar-scroll")
+    .evaluate((node) => ({
+      clientWidth: node.clientWidth,
+      scrollWidth: node.scrollWidth,
+    }));
+  if ((page.viewportSize()?.width ?? 0) <= 600) {
+    expect(calendarDimensions.scrollWidth).toBeGreaterThan(
+      calendarDimensions.clientWidth,
+    );
+  } else {
+    expect(calendarDimensions.scrollWidth).toBeGreaterThanOrEqual(
+      calendarDimensions.clientWidth,
+    );
+  }
   expect(
     await activity.evaluate((root) => {
       const cells = [...root.querySelectorAll<HTMLElement>(".activity-cell")];
@@ -148,37 +158,72 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
   for (const index of [0, 6, 357, 363]) {
     const edgeCell = calendarCells.nth(index);
     await edgeCell.hover();
-    expect(
-      await edgeCell.evaluate((cell) => {
-        const tooltip = getComputedStyle(cell, "::after");
-        const cellBox = cell.getBoundingClientRect();
-        const viewport = cell.closest(".calendar-scroll")?.getBoundingClientRect();
-        const width = Number.parseFloat(tooltip.width);
-        const height = Number.parseFloat(tooltip.height);
-        const horizontalEdge = cell.getAttribute("data-tooltip-edge");
-        const left =
-          horizontalEdge === "start"
-            ? cellBox.left
-            : horizontalEdge === "end"
-              ? cellBox.right - width
-              : cellBox.left + (cellBox.width - width) / 2;
-        const top =
-          cell.getAttribute("data-tooltip-row-edge") === "end"
-            ? cellBox.bottom - 14 - height
-            : cellBox.top + 14;
-        return Boolean(
-          viewport &&
-            tooltip.content.includes(cell.getAttribute("data-tooltip") ?? "missing") &&
-            left >= viewport.left - 1 &&
-            left + width <= viewport.right + 1 &&
-            top >= viewport.top - 1 &&
-            top + height <= viewport.bottom + 1,
-        );
-      }),
-    ).toBe(true);
+    const renderedTooltip = await edgeCell.evaluate((cell) => {
+      const tooltip = getComputedStyle(cell, "::after");
+      const cellBox = cell.getBoundingClientRect();
+      const viewport = cell.closest(".calendar-scroll")?.getBoundingClientRect();
+      const width = Number.parseFloat(tooltip.width);
+      const height = Number.parseFloat(tooltip.height);
+      const offset = (value: string) =>
+        value === "auto" ? undefined : Number.parseFloat(value);
+      const leftOffset = offset(tooltip.left);
+      const rightOffset = offset(tooltip.right);
+      const topOffset = offset(tooltip.top);
+      const bottomOffset = offset(tooltip.bottom);
+      const paddingLeft = cellBox.left + cell.clientLeft;
+      const paddingTop = cellBox.top + cell.clientTop;
+      const untransformedLeft =
+        leftOffset === undefined
+          ? paddingLeft + cell.clientWidth - (rightOffset ?? 0) - width
+          : paddingLeft + leftOffset;
+      const untransformedTop =
+        topOffset === undefined
+          ? paddingTop + cell.clientHeight - (bottomOffset ?? 0) - height
+          : paddingTop + topOffset;
+      const transform =
+        tooltip.transform === "none"
+          ? new DOMMatrixReadOnly()
+          : new DOMMatrixReadOnly(tooltip.transform);
+      const left = untransformedLeft + transform.e;
+      const top = untransformedTop + transform.f;
+      return {
+        contentMatches: tooltip.content.includes(
+          cell.getAttribute("data-tooltip") ?? "missing",
+        ),
+        height,
+        left,
+        top,
+        viewport: viewport
+          ? {
+              bottom: viewport.bottom,
+              left: viewport.left,
+              right: viewport.right,
+              top: viewport.top,
+            }
+          : undefined,
+        width,
+      };
+    });
+    expect(renderedTooltip.contentMatches).toBe(true);
+    expect(renderedTooltip.width).toBeGreaterThan(0);
+    expect(renderedTooltip.height).toBeGreaterThan(0);
+    expect(renderedTooltip.viewport).toBeDefined();
+    expect(renderedTooltip.left).toBeGreaterThanOrEqual(
+      (renderedTooltip.viewport?.left ?? Number.POSITIVE_INFINITY) - 1,
+    );
+    expect(renderedTooltip.left + renderedTooltip.width).toBeLessThanOrEqual(
+      (renderedTooltip.viewport?.right ?? Number.NEGATIVE_INFINITY) + 1,
+    );
+    expect(renderedTooltip.top).toBeGreaterThanOrEqual(
+      (renderedTooltip.viewport?.top ?? Number.POSITIVE_INFINITY) - 1,
+    );
+    expect(renderedTooltip.top + renderedTooltip.height).toBeLessThanOrEqual(
+      (renderedTooltip.viewport?.bottom ?? Number.NEGATIVE_INFINITY) + 1,
+    );
   }
   await calendarCell.focus();
   await page.keyboard.press("ArrowRight");
+  await expect(calendarCells.nth(7)).toBeFocused();
   const keyboardFocusedCell = page.locator(".activity-cell:focus");
   expect(
     await keyboardFocusedCell.evaluate((cell) => {

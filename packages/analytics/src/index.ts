@@ -1,15 +1,21 @@
 import {
   assertDashboardDatasetV1,
+  type ActivityDay,
+  type ActivityMetric,
   type DashboardCompaction,
   type DashboardConversation,
   type DashboardContextSample,
   type DashboardDatasetV1,
+  type DashboardChartCatalog,
   type DashboardModelCall,
   type DashboardSubagent,
   type DashboardToolCall,
   type DashboardTurn,
   type DashboardTurnSetting,
   type DashboardWorkItem,
+  MAX_TOKEN_SERIES_LABEL_BUCKETS,
+  type TokenBreakdownDimension,
+  type TokenSeriesBucket,
 } from "@cli-consumption/contracts";
 
 export interface DashboardRange {
@@ -36,6 +42,13 @@ export interface DashboardSlice {
   settings: DashboardTurnSetting[];
   compactions: DashboardCompaction[];
   subagents: DashboardSubagent[];
+}
+
+export const ACTIVITY_CALENDAR_DAYS = 364;
+
+/** Compare strings by UTF-16 code units, independent of host locale and ICU data. */
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 type ComparisonPreference = "higher" | "lower" | "neutral";
@@ -66,7 +79,7 @@ export function createDashboardCalculations(input: unknown) {
   const validDate = (value: string | null | undefined): value is string =>
     typeof value === "string" && value.length > 0 && Number.isFinite(Date.parse(value));
   const day = (value: string | null | undefined) =>
-    validDate(value) ? value.slice(0, 10) : "unknown";
+    validDate(value) ? new Date(value).toISOString().slice(0, 10) : "unknown";
   const total = (rows: readonly object[], key: string) =>
     rows.reduce(
       (sum, row) =>
@@ -167,6 +180,7 @@ export function createDashboardCalculations(input: unknown) {
     };
   }
 
+  /** Test an ISO timestamp against the inclusive analytical range. */
   function inRange(value: string | null | undefined, range: DashboardRange | null) {
     if (!range || !validDate(value)) return !range?.start;
     const time = Date.parse(value);
@@ -175,6 +189,7 @@ export function createDashboardCalculations(input: unknown) {
     );
   }
 
+  /** Test an epoch-millisecond timestamp against the inclusive analytical range. */
   function inEpochRange(
     value: number | null | undefined,
     range: DashboardRange | null,
@@ -187,6 +202,7 @@ export function createDashboardCalculations(input: unknown) {
     );
   }
 
+  /** Retain conversations whose known interval intersects the requested range. */
   function conversationInRange(
     conversation: DashboardConversation,
     range: DashboardRange | null,
@@ -316,6 +332,7 @@ export function createDashboardCalculations(input: unknown) {
     };
   }
 
+  /** Merge overlapping per-machine turn intervals into honest active time. */
   function activeMs(turns: readonly DashboardTurn[]) {
     if (data.meta.shareSafe) return total(turns, "durationMs");
     const groups: Record<string, Array<[number, number]>> = {};
@@ -345,6 +362,7 @@ export function createDashboardCalculations(input: unknown) {
     return sum;
   }
 
+  /** Return peak per-machine turn concurrency when detailed timing is allowed. */
   function maxConcurrent(turns: readonly DashboardTurn[]) {
     if (data.meta.shareSafe) return null;
     const byMachine: Record<string, Array<[number, number]>> = {};
@@ -369,6 +387,7 @@ export function createDashboardCalculations(input: unknown) {
     return peak;
   }
 
+  /** Select token calls that are complete and additive or valid aggregate snapshots. */
   function semanticTokenCalls(slice: DashboardSlice) {
     const closedKeys = new Set(
       slice.turns
@@ -386,6 +405,266 @@ export function createDashboardCalculations(input: unknown) {
         (call.turnKey === null || closedKeys.has(call.turnKey))
       );
     });
+  }
+
+  /** Select a stable global bucket plan once for the complete visible series. */
+  function tokenBucketPlan(
+    dimension: TokenBreakdownDimension,
+    totals: ReadonlyMap<string, number>,
+  ): Array<Omit<TokenSeriesBucket, "value">> {
+    const leaders = [...totals]
+      .sort((left, right) => right[1] - left[1] || compareCodeUnits(left[0], right[0]))
+      .slice(0, MAX_TOKEN_SERIES_LABEL_BUCKETS)
+      .map(([label]) => label);
+    const buckets: Array<Omit<TokenSeriesBucket, "value">> = leaders.map(
+      (label, index) => ({
+        id: `${dimension}:label:${index}`,
+        kind: "label",
+        label,
+      }),
+    );
+    if (totals.size > MAX_TOKEN_SERIES_LABEL_BUCKETS)
+      buckets.push({
+        id: `${dimension}:remainder`,
+        kind: "remainder",
+        label: dimension === "provider" ? "Other providers" : "Other models",
+      });
+    return buckets;
+  }
+
+  /** Populate one day's values using a precomputed bounded global bucket plan. */
+  function materializeTokenBuckets(
+    plan: ReadonlyArray<Omit<TokenSeriesBucket, "value">>,
+    daily: ReadonlyMap<string, number>,
+  ): TokenSeriesBucket[] {
+    const leaders = new Set(
+      plan.filter((bucket) => bucket.kind === "label").map((bucket) => bucket.label),
+    );
+    return plan.map((bucket) => ({
+      ...bucket,
+      value:
+        bucket.kind === "label"
+          ? (daily.get(bucket.label) ?? 0)
+          : [...daily].reduce(
+              (sum, [label, value]) => sum + (leaders.has(label) ? 0 : value),
+              0,
+            ),
+    }));
+  }
+
+  /**
+   * Build the bounded, provider-neutral chart data shared by online and offline UIs.
+   * Calendar boundaries and bucketing are UTC. Aggregate/context-snapshot token
+   * counters deliberately do not enter a time series because they have no honest
+   * per-day attribution.
+   */
+  function chartCatalog(
+    slice: DashboardSlice,
+    range: DashboardRange | null,
+  ): DashboardChartCatalog {
+    const selectedEnd =
+      range?.end ??
+      (() => {
+        const timestamps = slice.turns.map((turn) => turn.startedAt).filter(validDate);
+        return timestamps.length
+          ? new Date(Math.max(...timestamps.map(Date.parse)))
+          : new Date(0);
+      })();
+    const endDay = new Date(selectedEnd);
+    endDay.setUTCHours(0, 0, 0, 0);
+    // Stable Sunday-to-Saturday columns, independent of locale and wall-clock time.
+    endDay.setUTCDate(endDay.getUTCDate() + (6 - endDay.getUTCDay()));
+    const startDay = new Date(endDay);
+    startDay.setUTCDate(startDay.getUTCDate() - ACTIVITY_CALENDAR_DAYS + 1);
+    const observedStart = range?.start
+      ? new Date(
+          Date.UTC(
+            range.start.getUTCFullYear(),
+            range.start.getUTCMonth(),
+            range.start.getUTCDate(),
+          ),
+        )
+      : startDay;
+    const observedEnd = range
+      ? new Date(
+          Date.UTC(
+            range.end.getUTCFullYear(),
+            range.end.getUTCMonth(),
+            range.end.getUTCDate(),
+          ),
+        )
+      : endDay;
+    const byDate = new Map<string, ActivityDay>();
+    for (let offset = 0; offset < ACTIVITY_CALENDAR_DAYS; offset += 1) {
+      const current = new Date(startDay);
+      current.setUTCDate(current.getUTCDate() + offset);
+      const date = current.toISOString().slice(0, 10);
+      const observed = current >= observedStart && current <= observedEnd;
+      const row: ActivityDay = { date, observed, values: {} };
+      if (observed) row.values = { conversations: 0, duration: 0, tokens: 0, turns: 0 };
+      byDate.set(date, row);
+    }
+    const add = (timestamp: string | null, metric: ActivityMetric, value: number) => {
+      if (!validDate(timestamp)) return;
+      const row = byDate.get(new Date(timestamp).toISOString().slice(0, 10));
+      if (!row?.observed || !Number.isFinite(value)) return;
+      row.values[metric] = (row.values[metric] ?? 0) + value;
+    };
+    const visibleConversations = slice.conversations.filter(
+      (conversation) =>
+        validDate(conversation.startedAt) &&
+        byDate.get(new Date(conversation.startedAt).toISOString().slice(0, 10))
+          ?.observed,
+    );
+    visibleConversations.forEach((conversation) => {
+      add(conversation.startedAt, "conversations", 1);
+    });
+    const visibleTurns = slice.turns.filter(
+      (turn) =>
+        validDate(turn.startedAt) &&
+        byDate.get(new Date(turn.startedAt).toISOString().slice(0, 10))?.observed,
+    );
+    visibleTurns.forEach((turn) => {
+      add(turn.startedAt, "turns", 1);
+      if (turn.durationMs !== null) add(turn.startedAt, "duration", turn.durationMs);
+    });
+    const timedTokenCalls = semanticTokenCalls(slice).filter((call) => {
+      const semantics = conversationByKey[call.conversationKey]?.tokenSemantics;
+      return (
+        semantics === "additive" &&
+        validDate(call.timestamp) &&
+        byDate.get(new Date(call.timestamp).toISOString().slice(0, 10))?.observed
+      );
+    });
+    timedTokenCalls.forEach((call) => {
+      add(call.timestamp, "tokens", call.total_tokens);
+    });
+    const tokenSeriesValues = (timedTokenCalls.length ? [...byDate.values()] : [])
+      .filter((row) => row.observed)
+      .map((row) => ({
+        date: row.date,
+        total: row.values.tokens ?? 0,
+        providers: new Map<string, number>(),
+        models: new Map<string, number>(),
+      }));
+    const seriesByDate = new Map(tokenSeriesValues.map((row) => [row.date, row]));
+    const providerTotals = new Map<string, number>();
+    const modelTotals = new Map<string, number>();
+    for (const call of timedTokenCalls) {
+      if (!validDate(call.timestamp)) continue;
+      const point = seriesByDate.get(
+        new Date(call.timestamp).toISOString().slice(0, 10),
+      );
+      if (!point) continue;
+      const provider = conversationByKey[call.conversationKey]?.provider || "unknown";
+      const model = call.model || "unknown";
+      point.providers.set(
+        provider,
+        (point.providers.get(provider) ?? 0) + call.total_tokens,
+      );
+      point.models.set(model, (point.models.get(model) ?? 0) + call.total_tokens);
+      providerTotals.set(
+        provider,
+        (providerTotals.get(provider) ?? 0) + call.total_tokens,
+      );
+      modelTotals.set(model, (modelTotals.get(model) ?? 0) + call.total_tokens);
+    }
+    const providerBucketPlan = tokenBucketPlan("provider", providerTotals);
+    const modelBucketPlan = tokenBucketPlan("model", modelTotals);
+    const tokenSeries = tokenSeriesValues.map((point) => ({
+      date: point.date,
+      total: point.total,
+      providers: materializeTokenBuckets(providerBucketPlan, point.providers),
+      models: materializeTokenBuckets(modelBucketPlan, point.models),
+    }));
+    const availableBreakdowns: TokenBreakdownDimension[] = [];
+    if (
+      timedTokenCalls.length &&
+      timedTokenCalls.every(
+        (call) =>
+          (conversationByKey[call.conversationKey]?.provider || "unknown") !==
+          "unknown",
+      )
+    )
+      availableBreakdowns.push("provider");
+    if (
+      timedTokenCalls.length &&
+      timedTokenCalls.every((call) => Boolean(call.model) && call.model !== "unknown")
+    )
+      availableBreakdowns.push("model");
+    const availableMetrics: ActivityMetric[] = [];
+    if (timedTokenCalls.length) availableMetrics.push("tokens");
+    if (visibleTurns.length) availableMetrics.push("turns");
+    if (visibleConversations.length) availableMetrics.push("conversations");
+    if (visibleTurns.some((turn) => turn.durationMs !== null))
+      availableMetrics.push("duration");
+    const activity = [...byDate.values()].map(
+      (row) =>
+        row.observed &&
+        ((row.values.turns ?? 0) > 0 || (row.values.conversations ?? 0) > 0),
+    );
+    let longestStreak = 0;
+    let running = 0;
+    for (const active of activity) {
+      running = active ? running + 1 : 0;
+      longestStreak = Math.max(longestStreak, running);
+    }
+    let currentStreak = 0;
+    let finalObserved = [...byDate.values()].findLastIndex((row) => row.observed);
+    for (; finalObserved >= 0 && activity[finalObserved]; finalObserved -= 1)
+      currentStreak += 1;
+    const tokenCalls = semanticTokenCalls(slice);
+    const rank = (rows: Array<[string, number]>) => {
+      const grouped = new Map<string, number>();
+      for (const [rawLabel, value] of rows) {
+        const label = rawLabel || "unknown";
+        grouped.set(label, (grouped.get(label) ?? 0) + value);
+      }
+      return [...grouped]
+        .sort(
+          (left, right) => right[1] - left[1] || compareCodeUnits(left[0], right[0]),
+        )
+        .slice(0, 10);
+    };
+    return {
+      days: [...byDate.values()],
+      availableMetrics,
+      currentStreak,
+      longestStreak,
+      dailyPeakTokens: timedTokenCalls.length
+        ? Math.max(...[...byDate.values()].map((row) => row.values.tokens ?? 0))
+        : null,
+      tokenComposition: [
+        [
+          "Input",
+          total(tokenCalls, "uncached_input_tokens") +
+            total(tokenCalls, "cache_write_input_tokens"),
+        ],
+        ["Cache", total(tokenCalls, "cached_input_tokens")],
+        ["Output", total(tokenCalls, "visible_output_tokens")],
+        ["Reasoning", total(tokenCalls, "reasoning_output_tokens")],
+      ],
+      tokenSeries,
+      availableBreakdowns,
+      rankings: {
+        models: rank(
+          tokenCalls.map((call) => [call.model || "unknown", call.total_tokens]),
+        ),
+        providers: rank(
+          tokenCalls.map((call) => [
+            conversationByKey[call.conversationKey]?.provider || "unknown",
+            call.total_tokens,
+          ]),
+        ),
+        projects: rank(
+          tokenCalls.map((call) => [
+            conversationByKey[call.conversationKey]?.project || "unknown",
+            call.total_tokens,
+          ]),
+        ),
+        tools: rank(slice.tools.map((call) => [call.tool || "unknown", 1])),
+      },
+    };
   }
 
   /** Aggregate the exact metric values displayed by dashboard cards and tables. */
@@ -472,6 +751,7 @@ export function createDashboardCalculations(input: unknown) {
     };
   }
 
+  /** Resolve one provider-neutral cohort label from already-approved metadata. */
   function cohortLabel(
     turn: DashboardTurn,
     dimension: CohortDimension,
@@ -569,6 +849,7 @@ export function createDashboardCalculations(input: unknown) {
 
   return Object.freeze({
     activeMs,
+    chartCatalog,
     cohortComparison,
     compareMetric,
     conversationByKey,

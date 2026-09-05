@@ -223,6 +223,55 @@ export interface TokenComposition {
   total_tokens: number;
 }
 
+export const MAX_TOKEN_SERIES_LABEL_BUCKETS = 5 as const;
+
+export type ActivityMetric = "tokens" | "turns" | "conversations" | "duration";
+export type TokenBreakdownDimension = "provider" | "model";
+export type TokenSeriesBucketId =
+  | `${TokenBreakdownDimension}:label:${number}`
+  | `${TokenBreakdownDimension}:remainder`;
+
+/** One calendar day; unobserved cells distinguish missing coverage from a zero. */
+export interface ActivityDay {
+  date: string;
+  values: Partial<Record<ActivityMetric, number>>;
+  observed: boolean;
+}
+
+/** A bounded category in one token-series day. IDs never reuse display labels. */
+export interface TokenSeriesBucket {
+  id: TokenSeriesBucketId;
+  kind: "label" | "remainder";
+  label: string;
+  value: number;
+}
+
+/** Daily token total plus bounded provider and model category projections. */
+export interface TokenSeriesPoint {
+  date: string;
+  total: number;
+  providers: TokenSeriesBucket[];
+  models: TokenSeriesBucket[];
+}
+
+/** Provider-neutral chart output consumed unchanged by online and offline renderers. */
+export interface DashboardChartCatalog {
+  days: ActivityDay[];
+  availableMetrics: ActivityMetric[];
+  currentStreak: number;
+  longestStreak: number;
+  dailyPeakTokens: number | null;
+  tokenComposition: Array<[string, number]>;
+  tokenSeries: TokenSeriesPoint[];
+  availableBreakdowns: TokenBreakdownDimension[];
+  rankings: {
+    models: Array<[string, number]>;
+    providers: Array<[string, number]>;
+    projects: Array<[string, number]>;
+    tools: Array<[string, number]>;
+  };
+}
+
 export interface DashboardConversation extends TokenComposition {
   key: LocalKey;
   provider: string;

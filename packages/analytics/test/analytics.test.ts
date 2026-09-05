@@ -104,6 +104,226 @@ function fixture(): DashboardDatasetV1 {
 }
 
 describe("shared dashboard analytics", () => {
+  it("normalizes active-day buckets to UTC across timestamp offsets", () => {
+    const data = fixture();
+    const first = data.turns[0];
+    if (!first) throw new Error("invalid_test_fixture");
+    first.startedAt = "2026-08-01T23:30:00-02:00";
+    data.turns.push({ ...first, key: 11, startedAt: "2026-08-02T02:00:00Z" });
+    const calculations = createDashboardCalculations(data);
+    const range = calculations.rangeFor("all");
+    const slice = calculations.selectSlice({
+      provider: "",
+      machine: "",
+      project: "",
+      model: "",
+      range,
+    });
+    expect(calculations.day(first.startedAt)).toBe("2026-08-02");
+    expect(calculations.metrics(slice).activeDays).toBe(1);
+    expect(calculations.day("not-a-date")).toBe("unknown");
+  });
+
+  it("builds a bounded Sunday-to-Saturday UTC calendar with honest availability", () => {
+    const data = fixture();
+    const [modelCall] = data.modelCalls;
+    if (!modelCall) throw new Error("invalid_test_fixture");
+    modelCall.timestamp = "2026-08-01T23:30:00-02:00";
+    const calculations = createDashboardCalculations(data);
+    const range = calculations.rangeFor("all");
+    const catalog = calculations.chartCatalog(
+      calculations.selectSlice({
+        provider: "",
+        machine: "",
+        project: "",
+        model: "",
+        range,
+      }),
+      range,
+    );
+
+    expect(catalog.days).toHaveLength(364);
+    expect(new Date(`${catalog.days[0]?.date}T00:00:00Z`).getUTCDay()).toBe(0);
+    expect(new Date(`${catalog.days.at(-1)?.date}T00:00:00Z`).getUTCDay()).toBe(6);
+    expect(catalog.days.find((row) => row.date === "2026-08-02")?.values.tokens).toBe(
+      140,
+    );
+    expect(catalog.days.at(-1)?.observed).toBe(false);
+    expect(catalog.currentStreak).toBe(1);
+    expect(catalog.longestStreak).toBe(1);
+    expect(catalog.availableMetrics).toEqual([
+      "tokens",
+      "turns",
+      "conversations",
+      "duration",
+    ]);
+    expect(catalog.tokenComposition).toEqual([
+      ["Input", 75],
+      ["Cache", 25],
+      ["Output", 30],
+      ["Reasoning", 10],
+    ]);
+  });
+
+  it("does not fabricate daily tokens from unattributable aggregate counters", () => {
+    const data = fixture();
+    const [conversation] = data.conversations;
+    const [modelCall] = data.modelCalls;
+    if (!conversation || !modelCall) throw new Error("invalid_test_fixture");
+    conversation.tokenSemantics = "conversation-aggregate";
+    modelCall.timestamp = null;
+    const calculations = createDashboardCalculations(data);
+    const range = calculations.rangeFor("all");
+    const catalog = calculations.chartCatalog(
+      calculations.selectSlice({
+        provider: "",
+        machine: "",
+        project: "",
+        model: "",
+        range,
+      }),
+      range,
+    );
+    expect(
+      calculations.metrics(
+        calculations.selectSlice({
+          provider: "",
+          machine: "",
+          project: "",
+          model: "",
+          range,
+        }),
+      ).tokens,
+    ).toBe(140);
+    expect(catalog.availableMetrics).not.toContain("tokens");
+    expect(catalog.dailyPeakTokens).toBeNull();
+    expect(catalog.tokenSeries).toEqual([]);
+  });
+
+  it("bounds token breakdowns globally without colliding with real labels", () => {
+    const data = fixture();
+    const conversation = data.conversations[0];
+    const call = data.modelCalls[0];
+    if (!conversation || !call) throw new Error("invalid_test_fixture");
+    const labels = ["Other", "Overall", "alpha", "beta", "zeta", "Alpha"];
+    const values = [700, 600, 500, 400, 300, 300];
+    labels.forEach((label, index) => {
+      const key = index + 2;
+      const value = values[index];
+      if (value === undefined) throw new Error("invalid_test_fixture");
+      data.conversations.push({
+        ...conversation,
+        key,
+        provider: label,
+        models: [label],
+      });
+      data.modelCalls.push({
+        ...call,
+        conversationKey: key,
+        model: label,
+        total_tokens: value,
+        turnKey: null,
+      });
+    });
+    const calculations = createDashboardCalculations(data);
+    const range = calculations.rangeFor("all");
+    const catalog = calculations.chartCatalog(
+      calculations.selectSlice({
+        provider: "",
+        machine: "",
+        project: "",
+        model: "",
+        range,
+      }),
+      range,
+    );
+    const active = catalog.tokenSeries.find((point) => point.date === "2026-08-02");
+    expect(active).toBeDefined();
+    expect(active?.providers).toHaveLength(6);
+    expect(active?.providers.map((bucket) => bucket.label)).toEqual([
+      "Other",
+      "Overall",
+      "alpha",
+      "beta",
+      "Alpha",
+      "Other providers",
+    ]);
+    expect(new Set(active?.providers.map((bucket) => bucket.id)).size).toBe(6);
+    expect(active?.providers.reduce((sum, bucket) => sum + bucket.value, 0)).toBe(
+      active?.total,
+    );
+    expect(active?.models.reduce((sum, bucket) => sum + bucket.value, 0)).toBe(
+      active?.total,
+    );
+    expect(catalog.tokenSeries.every((point) => point.providers.length <= 6)).toBe(
+      true,
+    );
+    expect(catalog.tokenSeries.every((point) => point.models.length <= 6)).toBe(true);
+    expect(catalog.rankings.providers.slice(0, 6).map(([label]) => label)).toEqual([
+      "Other",
+      "Overall",
+      "alpha",
+      "beta",
+      "Alpha",
+      "zeta",
+    ]);
+  });
+
+  it("clips chart observations to 52 weeks while preserving global totals", () => {
+    const data = fixture();
+    data.meta.exportWindow = {
+      since: "2025-01-01T00:00:00Z",
+      until: "2026-08-03T00:00:00Z",
+    };
+    const current = data.modelCalls[0];
+    if (!current) throw new Error("invalid_test_fixture");
+    data.modelCalls.push({
+      ...current,
+      timestamp: "2025-02-01T00:00:00Z",
+      total_tokens: 100_000,
+    });
+    const calculations = createDashboardCalculations(data);
+    const range = calculations.rangeFor("all");
+    const slice = calculations.selectSlice({
+      provider: "",
+      machine: "",
+      project: "",
+      model: "",
+      range,
+    });
+    const catalog = calculations.chartCatalog(slice, range);
+    expect(calculations.metrics(slice).tokens).toBe(100_140);
+    expect(catalog.dailyPeakTokens).toBe(140);
+    expect(catalog.tokenSeries).toHaveLength(358);
+    expect(catalog.tokenSeries.at(-1)?.date).toBe("2026-08-02");
+    expect(catalog.days.some((row) => row.date === "2025-02-01")).toBe(false);
+  });
+
+  it("represents leap day as one stable UTC cell", () => {
+    const data = fixture();
+    data.meta.exportWindow = {
+      since: "2024-02-28T00:00:00Z",
+      until: "2024-03-02T00:00:00Z",
+    };
+    for (const conversation of data.conversations)
+      conversation.startedAt = "2024-02-29T12:00:00Z";
+    for (const turn of data.turns) turn.startedAt = "2024-02-29T12:00:00Z";
+    for (const call of data.modelCalls) call.timestamp = "2024-02-29T12:00:00Z";
+    const calculations = createDashboardCalculations(data);
+    const range = calculations.rangeFor("all");
+    const catalog = calculations.chartCatalog(
+      calculations.selectSlice({
+        provider: "",
+        machine: "",
+        project: "",
+        model: "",
+        range,
+      }),
+      range,
+    );
+    expect(catalog.days.filter((row) => row.date === "2024-02-29")).toHaveLength(1);
+  });
+
   it("keeps percentile and comparison edge cases explicit", () => {
     const calculations = createDashboardCalculations(fixture());
 

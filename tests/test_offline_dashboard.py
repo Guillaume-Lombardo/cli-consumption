@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from html import escape
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -127,6 +128,16 @@ def test_generated_dashboard_opens_and_interacts_without_network(
     engine.dispose()
 
     html = output.read_text(encoding="utf-8")
+    license_text = (
+        Path(__file__)
+        .parents[1]
+        .joinpath("src", "cli_consumption", "INTER_FONT_LICENSE.txt")
+        .read_text(encoding="utf-8")
+        .replace("https://", "")
+        .replace("http://", "")
+    )
+    assert '<script id="inter-font-license" type="text/plain">' in html
+    assert escape(license_text, quote=False) in html
     for prohibited in (
         "secret value",
         "https://",
@@ -178,6 +189,15 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         assert urlparse(response.url).scheme == "file"
         assert response.ok
         page.wait_for_function("document.querySelectorAll('#cards .card').length >= 8")
+        assert page.evaluate(
+            """async () => {
+                await document.fonts.ready;
+                return document.fonts.check('16px "Inter Variable"') &&
+                    getComputedStyle(document.body).fontFamily.startsWith(
+                        '"Inter Variable"'
+                    );
+            }"""
+        )
         assert page.title() == "CLI Consumption"
         title_box = page.locator(".hero h1").bounding_box()
         eyebrow_box = page.locator(".hero .eyebrow").bounding_box()

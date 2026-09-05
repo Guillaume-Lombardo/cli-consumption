@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { build } from "esbuild";
+import { sanitizeOfflineScript, sanitizeOfflineStylesheet } from "./offline-assets.mjs";
 
 const execute = promisify(execFile);
 const assets = [["src/cli_consumption/dashboard_react.js", "src/app.tsx", true]];
@@ -23,12 +24,7 @@ for (const [path, entryPoint, react] of assets) {
     write: false,
   });
   let contents = result.outputFiles[0]?.text;
-  if (react) {
-    contents = contents?.replaceAll(
-      "https://react.dev/errors/",
-      "about:blank#react-error-",
-    );
-  }
+  if (react && contents !== undefined) contents = sanitizeOfflineScript(contents);
   const tracked = await readFile(path, "utf8");
   if (contents === undefined || tracked !== contents) {
     process.stderr.write(
@@ -46,9 +42,7 @@ try {
     ["-i", "src/styles.css", "-o", output, "--minify"],
     { cwd: resolve("packages/offline") },
   );
-  const generated = (await readFile(output, "utf8"))
-    .replaceAll("https://tailwindcss.com", "tailwindcss.com")
-    .replace(/\n?$/, "\n");
+  const generated = await sanitizeOfflineStylesheet(await readFile(output, "utf8"));
   const tracked = await readFile("src/cli_consumption/dashboard_react.css", "utf8");
   if (generated !== tracked) {
     process.stderr.write(

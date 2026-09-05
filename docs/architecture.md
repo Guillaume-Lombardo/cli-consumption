@@ -402,3 +402,7 @@ validation and schema revision `0003`. Reporting and retention bind values in th
 form and use direct indexed predicates with explicit null branches. The representation,
 migration, and rollback boundary are documented in
 [ADR 0002](decisions/0002-canonical-utc-timestamps.md).
+
+The bounded chart calculations and identical online/offline rendering semantics are
+defined by [ADR 0006](decisions/0006-bounded-dashboard-chart-catalog.md). Daily attribution
+uses UTC and never guesses timestamps for aggregate provider counters.

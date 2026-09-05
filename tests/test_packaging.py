@@ -37,6 +37,7 @@ def test_python_support_and_optional_dependencies_are_declared() -> None:
 
 def test_distribution_artifact_contract(tmp_path: Path) -> None:
     project_root = Path(__file__).parents[1]
+    font_license = project_root / "src" / "cli_consumption" / "INTER_FONT_LICENSE.txt"
     distributions = tmp_path / "dist"
 
     _run_build("--sdist", "--out-dir", str(distributions), str(project_root))
@@ -56,6 +57,11 @@ def test_distribution_artifact_contract(tmp_path: Path) -> None:
         sdist_files = {
             member.name for member in archive.getmembers() if member.isfile()
         }
+        archived_font_license = archive.extractfile(
+            f"{distribution_root}/src/cli_consumption/INTER_FONT_LICENSE.txt"
+        )
+        assert archived_font_license is not None
+        assert archived_font_license.read() == font_license.read_bytes()
 
     assert sdist_files == expected_source_files | {
         # Hatchling deliberately carries the active VCS ignore file into sdists so
@@ -76,6 +82,10 @@ def test_distribution_artifact_contract(tmp_path: Path) -> None:
     }
     with zipfile.ZipFile(wheel) as archive:
         wheel_files = set(archive.namelist())
+        assert (
+            archive.read("cli_consumption/INTER_FONT_LICENSE.txt")
+            == font_license.read_bytes()
+        )
 
     wheel_metadata = f"{distribution_root}.dist-info"
     assert wheel_files == expected_package_files | {
@@ -98,10 +108,13 @@ def test_distribution_artifact_contract(tmp_path: Path) -> None:
                 "import cli_consumption, cli_consumption.migrations, "
                 "cli_consumption.snapshot_files; "
                 "from cli_consumption.dashboard import "
-                "_react_dashboard_script, _react_dashboard_styles; "
+                "_inter_font_license_notice, _react_dashboard_script, "
+                "_react_dashboard_styles; "
                 "assert cli_consumption.__version__ != '0.0.0'; "
                 "assert 'offline_dashboard_root_missing' in _react_dashboard_script(); "
-                "assert '.dashboard-shell' in _react_dashboard_styles()"
+                "assert '.dashboard-shell' in _react_dashboard_styles(); "
+                "assert 'SIL OPEN FONT LICENSE Version 1.1' in "
+                "_inter_font_license_notice()"
             ),
         ],
         check=False,

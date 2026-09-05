@@ -9,7 +9,13 @@ import {
   type DashboardWidgetType,
 } from "@cli-consumption/contracts";
 import { formatDuration, formatPercent } from "@cli-consumption/ui";
-import { Bars, DashboardLayoutGrid, Metric, Section } from "@cli-consumption/ui/react";
+import {
+  ActivityCatalog,
+  Bars,
+  DashboardLayoutGrid,
+  Metric,
+  Section,
+} from "@cli-consumption/ui/react";
 import { type ReactNode, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -149,17 +155,7 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
   const slice = calculations.selectSlice({ ...filters, range });
   const metrics = calculations.metrics(slice);
   const calls = calculations.semanticTokenCalls(slice);
-  const activity = group(
-    calls,
-    (call) => calculations.day(call.timestamp),
-    (call) => call.total_tokens,
-  );
-  const modelRows = group(
-    calls,
-    (call) => call.model,
-    (call) => call.total_tokens,
-  );
-  const toolRows = group(slice.tools, (tool) => tool.tool ?? "unknown");
+  const catalog = calculations.chartCatalog(slice, range);
   const outcomes = group(slice.turns, (turn) => turn.status);
   const work = group(
     slice.work,
@@ -203,6 +199,7 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
           value={number(metrics.completed + metrics.aborted)}
         />
         <Metric label="Active days" value={number(metrics.activeDays)} />
+        <Metric label="Conversations" value={number(slice.conversations.length)} />
         <Metric
           label="Total tokens"
           value={short(metrics.tokens)}
@@ -211,30 +208,31 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
         <Metric label="Median tokens / turn" value={short(metrics.tokensPerTurn)} />
         <Metric label="Median TTFT" value={formatDuration(metrics.ttftP50)} />
         <Metric label="Median duration" value={formatDuration(metrics.durationP50)} />
+        <Metric
+          label={data.meta.shareSafe ? "Summed turn time" : "Active time"}
+          value={formatDuration(metrics.activeMs)}
+        />
+        <Metric label="Daily token peak" value={short(catalog.dailyPeakTokens)} />
         <Metric label="Turn rate" value={`${metrics.throughput.toFixed(1)}/h`} />
         <Metric
           label="Context pressure p95"
           value={formatPercent(metrics.pressureP95)}
         />
-        <Metric
-          label={data.meta.shareSafe ? "Summed turn time" : "Active time"}
-          value={formatDuration(metrics.activeMs)}
-        />
       </section>
     ),
     activity: (
-      <Section title="Activity" note="tokens by UTC day">
-        <Bars rows={activity} value={short} />
+      <Section title="Activity" note="52 UTC weeks · missing days are not zero">
+        <ActivityCatalog catalog={catalog} />
       </Section>
     ),
     tools: (
       <Section title="Tools" note="names only">
-        <Bars rows={toolRows} />
+        <Bars rows={catalog.rankings.tools} />
       </Section>
     ),
     models: (
       <Section title="Models" note="provider-reported tokens">
-        <Bars rows={modelRows} value={short} />
+        <Bars rows={catalog.rankings.models} value={short} />
       </Section>
     ),
     "turn-performance": (

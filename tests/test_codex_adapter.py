@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import cli_consumption.adapters.codex as codex_module
 from cli_consumption.adapters.codex import (
     MAX_BIGINT,
     CodexAdapter,
@@ -65,6 +66,73 @@ def test_collects_and_deduplicates_copied_rollouts(
     assert snapshot.turn_settings[0]["service_tier"] == "priority"
     assert snapshot.compaction_events[0]["timestamp"] == "2026-08-25T10:00:05+00:00"
     assert "secret value" not in str(snapshot.to_dict())
+
+
+def test_incremental_collection_streams_deterministic_bounded_batches(
+    tmp_path: Path, rollout_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home, "conversation-b")
+    rollout_factory(home, "conversation-a")
+    rollout_factory(home, "conversation-c")
+    monkeypatch.setattr(codex_module, "INCREMENTAL_CANDIDATES_PER_BATCH", 1)
+
+    batches = list(CodexAdapter().collect_incrementally([("desktop", home)]))
+    snapshots = [batch.snapshot for batch in batches if batch.snapshot.conversations]
+
+    assert [snapshot.conversations[0]["external_id"] for snapshot in snapshots] == [
+        "conversation-a",
+        "conversation-b",
+        "conversation-c",
+    ]
+    assert all(len(snapshot.conversations) == 1 for snapshot in snapshots)
+    assert "secret value" not in str([snapshot.to_dict() for snapshot in snapshots])
+
+
+def test_incremental_collection_subdivides_only_aggregate_read_limits(
+    tmp_path: Path, rollout_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "codex"
+    first = rollout_factory(home, "conversation-a")
+    second = rollout_factory(home, "conversation-b")
+    single_rollout_reads = max(first.stat().st_size, second.stat().st_size) * 2
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES",
+        single_rollout_reads + 1,
+    )
+
+    batches = list(CodexAdapter().collect_incrementally([("desktop", home)]))
+    snapshots = [batch.snapshot for batch in batches if batch.snapshot.conversations]
+
+    assert [len(snapshot.conversations) for snapshot in snapshots] == [1, 1]
+
+
+def test_incremental_collection_never_mutates_subagent_scopes(
+    tmp_path: Path, rollout_factory
+) -> None:
+    home = tmp_path / "codex"
+    rollout_factory(home)
+    with closing(sqlite3.connect(home / "state_5.sqlite")) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE thread_spawn_edges (
+                parent_thread_id, child_thread_id, status
+            );
+            CREATE TABLE threads (
+                id, created_at_ms, updated_at_ms, agent_role, tokens_used
+            );
+            INSERT INTO thread_spawn_edges VALUES ('parent', 'child', 'done');
+            INSERT INTO threads VALUES ('child', 1, 2, 'worker', 3);
+            """
+        )
+        connection.commit()
+
+    batches = list(CodexAdapter().collect_incrementally([("desktop", home)]))
+
+    assert len(batches) == 1
+    assert batches[0].snapshot.conversations
+    assert batches[0].snapshot.subagents == []
+    assert batches[0].authoritative_subagent_scopes == frozenset()
 
 
 def test_project_inference_falls_back_to_repository_then_safe_category() -> None:

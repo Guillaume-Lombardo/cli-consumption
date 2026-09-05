@@ -41,6 +41,11 @@ export default defineConfig({
   },
   test: {
     coverage: { enabled: false },
-    include: ["apps/**/*.test.ts", "apps/**/*.test.tsx", "packages/**/*.test.ts"],
+    include: [
+      "apps/**/*.test.ts",
+      "apps/**/*.test.tsx",
+      "packages/**/*.test.ts",
+      "packages/**/*.test.tsx",
+    ],
   },
 });

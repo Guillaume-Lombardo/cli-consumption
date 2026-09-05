@@ -11,7 +11,13 @@ import {
   type DashboardWidgetType,
 } from "@cli-consumption/contracts";
 import { formatDuration, formatPercent } from "@cli-consumption/ui";
-import { Bars, DashboardLayoutGrid, Metric, Section } from "@cli-consumption/ui/react";
+import {
+  ActivityCatalog,
+  Bars,
+  DashboardLayoutGrid,
+  Metric,
+  Section,
+} from "@cli-consumption/ui/react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -192,17 +198,7 @@ function MetricsView({
   const closed = slice.turns.filter(
     (turn) => turn.status === "completed" || turn.status === "aborted",
   );
-  const activity = groupSum(
-    semanticCalls,
-    (call) => calculations.day(call.timestamp),
-    (call) => call.total_tokens,
-  );
-  const tools = groupCount(slice.tools, (call) => call.tool ?? "unknown");
-  const models = groupSum(
-    semanticCalls,
-    (call) => call.model || "unknown",
-    (call) => call.total_tokens,
-  );
+  const catalog = calculations.chartCatalog(slice, calculations.rangeFor("all"));
   const outcomes = groupCount(slice.turns, (turn) => turn.status);
   const workKinds = groupSum(
     slice.work,
@@ -235,6 +231,7 @@ function MetricsView({
           value={number(metrics.completed + metrics.aborted)}
         />
         <Metric label="Active days" value={number(metrics.activeDays)} />
+        <Metric label="Conversations" value={number(slice.conversations.length)} />
         <Metric
           label="Total tokens"
           value={short(metrics.tokens)}
@@ -246,6 +243,8 @@ function MetricsView({
         />
         <Metric label="Median TTFT" value={formatDuration(metrics.ttftP50)} />
         <Metric label="Median duration" value={formatDuration(metrics.durationP50)} />
+        <Metric label="Active time" value={formatDuration(metrics.activeMs)} />
+        <Metric label="Daily token peak" value={short(catalog.dailyPeakTokens)} />
         <Metric label="Turn rate" value={`${metrics.throughput.toFixed(1)}/h`} />
         <Metric
           label="Context pressure p95"
@@ -254,18 +253,18 @@ function MetricsView({
       </section>
     ),
     activity: (
-      <Section title="Activity" note="tokens by UTC day">
-        <Bars rows={activity} value={short} />
+      <Section title="Activity" note="52 UTC weeks · missing days are not zero">
+        <ActivityCatalog catalog={catalog} />
       </Section>
     ),
     tools: (
       <Section title="Tools" note="names only">
-        <Bars rows={tools} />
+        <Bars rows={catalog.rankings.tools} />
       </Section>
     ),
     models: (
       <Section title="Models" note="provider-reported tokens">
-        <Bars rows={models} value={short} />
+        <Bars rows={catalog.rankings.models} value={short} />
       </Section>
     ),
     "turn-performance": (

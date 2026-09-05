@@ -306,3 +306,11 @@ timestamps, and activity aggregates remain sensitive wherever normalized databas
 detailed CSV files survive. Internal subagent-scope replay guards also survive
 retention and retain provider and source-machine labels plus a lock counter; they are
 not included in reports or exports.
+
+Chart data is calculated in the browser from the same minimized dashboard contract; it
+adds no API, SQL, log, or export fields. The calendar excludes token counters without an
+attributable timestamp instead of fabricating a date. Detailed rankings may show the
+already-documented operational project, provider, model, and tool labels, while
+share-safe exports retain their existing pseudonymized or grouped forms. Charts never
+contain prompt or response text, tool arguments, raw events, paths, environment values,
+credentials, or provider payloads, and token counts are not billing data.

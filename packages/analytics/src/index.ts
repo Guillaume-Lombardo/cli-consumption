@@ -38,6 +38,39 @@ export interface DashboardSlice {
   subagents: DashboardSubagent[];
 }
 
+export type ActivityMetric = "tokens" | "turns" | "conversations" | "duration";
+
+export interface ActivityDay {
+  date: string;
+  values: Partial<Record<ActivityMetric, number>>;
+  /** Missing means outside the selected/exported window; zero is an observed empty day. */
+  observed: boolean;
+}
+
+export interface DashboardChartCatalog {
+  days: ActivityDay[];
+  availableMetrics: ActivityMetric[];
+  currentStreak: number;
+  longestStreak: number;
+  dailyPeakTokens: number | null;
+  tokenComposition: Array<[string, number]>;
+  tokenSeries: Array<{
+    date: string;
+    total: number;
+    providers: Record<string, number>;
+    models: Record<string, number>;
+  }>;
+  availableBreakdowns: Array<"provider" | "model">;
+  rankings: {
+    models: Array<[string, number]>;
+    providers: Array<[string, number]>;
+    projects: Array<[string, number]>;
+    tools: Array<[string, number]>;
+  };
+}
+
+export const ACTIVITY_CALENDAR_DAYS = 364;
+
 type ComparisonPreference = "higher" | "lower" | "neutral";
 type CohortDimension =
   | "project"
@@ -388,6 +421,201 @@ export function createDashboardCalculations(input: unknown) {
     });
   }
 
+  /**
+   * Build the bounded, provider-neutral chart data shared by online and offline UIs.
+   * Calendar boundaries and bucketing are UTC. Aggregate/context-snapshot token
+   * counters deliberately do not enter a time series because they have no honest
+   * per-day attribution.
+   */
+  function chartCatalog(
+    slice: DashboardSlice,
+    range: DashboardRange | null,
+  ): DashboardChartCatalog {
+    const selectedEnd =
+      range?.end ??
+      (() => {
+        const timestamps = slice.turns.map((turn) => turn.startedAt).filter(validDate);
+        return timestamps.length
+          ? new Date(Math.max(...timestamps.map(Date.parse)))
+          : new Date(0);
+      })();
+    const endDay = new Date(selectedEnd);
+    endDay.setUTCHours(0, 0, 0, 0);
+    // Stable Sunday-to-Saturday columns, independent of locale and wall-clock time.
+    endDay.setUTCDate(endDay.getUTCDate() + (6 - endDay.getUTCDay()));
+    const startDay = new Date(endDay);
+    startDay.setUTCDate(startDay.getUTCDate() - ACTIVITY_CALENDAR_DAYS + 1);
+    const observedStart = range?.start
+      ? new Date(
+          Date.UTC(
+            range.start.getUTCFullYear(),
+            range.start.getUTCMonth(),
+            range.start.getUTCDate(),
+          ),
+        )
+      : startDay;
+    const observedEnd = range
+      ? new Date(
+          Date.UTC(
+            range.end.getUTCFullYear(),
+            range.end.getUTCMonth(),
+            range.end.getUTCDate(),
+          ),
+        )
+      : endDay;
+    const byDate = new Map<string, ActivityDay>();
+    for (let offset = 0; offset < ACTIVITY_CALENDAR_DAYS; offset += 1) {
+      const current = new Date(startDay);
+      current.setUTCDate(current.getUTCDate() + offset);
+      const date = current.toISOString().slice(0, 10);
+      const observed = current >= observedStart && current <= observedEnd;
+      const row: ActivityDay = { date, observed, values: {} };
+      if (observed) row.values = { conversations: 0, duration: 0, tokens: 0, turns: 0 };
+      byDate.set(date, row);
+    }
+    const add = (timestamp: string | null, metric: ActivityMetric, value: number) => {
+      if (!validDate(timestamp)) return;
+      const row = byDate.get(new Date(timestamp).toISOString().slice(0, 10));
+      if (!row?.observed || !Number.isFinite(value)) return;
+      row.values[metric] = (row.values[metric] ?? 0) + value;
+    };
+    const visibleConversations = slice.conversations.filter(
+      (conversation) =>
+        validDate(conversation.startedAt) &&
+        byDate.get(new Date(conversation.startedAt).toISOString().slice(0, 10))
+          ?.observed,
+    );
+    visibleConversations.forEach((conversation) => {
+      add(conversation.startedAt, "conversations", 1);
+    });
+    const visibleTurns = slice.turns.filter(
+      (turn) =>
+        validDate(turn.startedAt) &&
+        byDate.get(new Date(turn.startedAt).toISOString().slice(0, 10))?.observed,
+    );
+    visibleTurns.forEach((turn) => {
+      add(turn.startedAt, "turns", 1);
+      if (turn.durationMs !== null) add(turn.startedAt, "duration", turn.durationMs);
+    });
+    const timedTokenCalls = semanticTokenCalls(slice).filter((call) => {
+      const semantics = conversationByKey[call.conversationKey]?.tokenSemantics;
+      return (
+        semantics === "additive" &&
+        validDate(call.timestamp) &&
+        byDate.get(new Date(call.timestamp).toISOString().slice(0, 10))?.observed
+      );
+    });
+    timedTokenCalls.forEach((call) => {
+      add(call.timestamp, "tokens", call.total_tokens);
+    });
+    const tokenSeries = [...byDate.values()]
+      .filter((row) => row.observed)
+      .map((row) => ({
+        date: row.date,
+        total: row.values.tokens ?? 0,
+        providers: {} as Record<string, number>,
+        models: {} as Record<string, number>,
+      }));
+    const seriesByDate = new Map(tokenSeries.map((row) => [row.date, row]));
+    for (const call of timedTokenCalls) {
+      if (!validDate(call.timestamp)) continue;
+      const point = seriesByDate.get(
+        new Date(call.timestamp).toISOString().slice(0, 10),
+      );
+      if (!point) continue;
+      const provider = conversationByKey[call.conversationKey]?.provider || "unknown";
+      const model = call.model || "unknown";
+      point.providers[provider] = (point.providers[provider] ?? 0) + call.total_tokens;
+      point.models[model] = (point.models[model] ?? 0) + call.total_tokens;
+    }
+    const availableBreakdowns: Array<"provider" | "model"> = [];
+    if (
+      timedTokenCalls.length &&
+      timedTokenCalls.every(
+        (call) =>
+          (conversationByKey[call.conversationKey]?.provider || "unknown") !==
+          "unknown",
+      )
+    )
+      availableBreakdowns.push("provider");
+    if (
+      timedTokenCalls.length &&
+      timedTokenCalls.every((call) => Boolean(call.model) && call.model !== "unknown")
+    )
+      availableBreakdowns.push("model");
+    const availableMetrics: ActivityMetric[] = [];
+    if (timedTokenCalls.length) availableMetrics.push("tokens");
+    if (visibleTurns.length) availableMetrics.push("turns");
+    if (visibleConversations.length) availableMetrics.push("conversations");
+    if (visibleTurns.some((turn) => turn.durationMs !== null))
+      availableMetrics.push("duration");
+    const activity = [...byDate.values()].map(
+      (row) =>
+        row.observed &&
+        ((row.values.turns ?? 0) > 0 || (row.values.conversations ?? 0) > 0),
+    );
+    let longestStreak = 0;
+    let running = 0;
+    for (const active of activity) {
+      running = active ? running + 1 : 0;
+      longestStreak = Math.max(longestStreak, running);
+    }
+    let currentStreak = 0;
+    let finalObserved = [...byDate.values()].findLastIndex((row) => row.observed);
+    for (; finalObserved >= 0 && activity[finalObserved]; finalObserved -= 1)
+      currentStreak += 1;
+    const tokenCalls = semanticTokenCalls(slice);
+    const rank = (rows: Array<[string, number]>) => {
+      const grouped = new Map<string, number>();
+      for (const [rawLabel, value] of rows) {
+        const label = rawLabel || "unknown";
+        grouped.set(label, (grouped.get(label) ?? 0) + value);
+      }
+      return [...grouped]
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .slice(0, 10);
+    };
+    return {
+      days: [...byDate.values()],
+      availableMetrics,
+      currentStreak,
+      longestStreak,
+      dailyPeakTokens: timedTokenCalls.length
+        ? Math.max(...[...byDate.values()].map((row) => row.values.tokens ?? 0))
+        : null,
+      tokenComposition: [
+        [
+          "Input",
+          total(tokenCalls, "uncached_input_tokens") +
+            total(tokenCalls, "cache_write_input_tokens"),
+        ],
+        ["Cache", total(tokenCalls, "cached_input_tokens")],
+        ["Output", total(tokenCalls, "visible_output_tokens")],
+        ["Reasoning", total(tokenCalls, "reasoning_output_tokens")],
+      ],
+      tokenSeries,
+      availableBreakdowns,
+      rankings: {
+        models: rank(
+          tokenCalls.map((call) => [call.model || "unknown", call.total_tokens]),
+        ),
+        providers: rank(
+          tokenCalls.map((call) => [
+            conversationByKey[call.conversationKey]?.provider || "unknown",
+            call.total_tokens,
+          ]),
+        ),
+        projects: rank(
+          tokenCalls.map((call) => [
+            conversationByKey[call.conversationKey]?.project || "unknown",
+            call.total_tokens,
+          ]),
+        ),
+        tools: rank(slice.tools.map((call) => [call.tool || "unknown", 1])),
+      },
+    };
+  }
+
   /** Aggregate the exact metric values displayed by dashboard cards and tables. */
   function metrics(slice: DashboardSlice) {
     const closed = slice.turns.filter(
@@ -569,6 +797,7 @@ export function createDashboardCalculations(input: unknown) {
 
   return Object.freeze({
     activeMs,
+    chartCatalog,
     cohortComparison,
     compareMetric,
     conversationByKey,

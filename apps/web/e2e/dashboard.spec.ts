@@ -83,8 +83,41 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   expect(exported).not.toContain("e2e-export-token");
   expect(exported).not.toMatch(/https?:\/\//);
 
-  await page.getByRole("button", { name: "Inspect" }).click();
+  await page
+    .locator(".conversation-card button:visible, .conversation-table button:visible")
+    .click();
   await expect(page.getByRole("region", { name: "Conversation detail" })).toBeVisible();
   const dashboardAccessibility = await new AxeBuilder({ page }).analyze();
   expect(dashboardAccessibility.violations).toEqual([]);
+});
+
+test("keeps the chart catalog stable in light and dark responsive layouts", async ({
+  page,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("Dashboard password").fill("e2e dashboard password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  const activity = page.locator('[data-widget-type="activity"]');
+  await expect(
+    activity.getByRole("button", { name: /tokens|turns/ }).first(),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+    ),
+  ).toBe(true);
+  expect(
+    await activity
+      .locator(".calendar-scroll")
+      .evaluate((node) => node.scrollWidth >= node.clientWidth),
+  ).toBe(true);
+  const darkTheme = page.getByRole("button", { name: "Dark theme" });
+  if (await darkTheme.isVisible()) await darkTheme.click();
+  await expect(activity).toHaveScreenshot("activity-dark.png", {
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Light theme" }).click();
+  await expect(activity).toHaveScreenshot("activity-light.png", {
+    animations: "disabled",
+  });
 });

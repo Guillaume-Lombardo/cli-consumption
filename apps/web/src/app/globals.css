@@ -337,6 +337,46 @@ h2 {
   justify-content: flex-end;
 }
 
+.export-dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  color: var(--text);
+  max-width: min(40rem, calc(100vw - 2rem));
+  padding: 1.25rem;
+}
+
+.export-dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+.export-summary {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+
+.export-summary div {
+  min-width: 0;
+}
+
+.export-summary dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.export-summary dd {
+  margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
 .filter-panel {
   align-items: end;
   background: var(--background);

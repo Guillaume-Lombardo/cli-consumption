@@ -22,6 +22,7 @@ import { createRoot } from "react-dom/client";
 declare global {
   var __CLI_CONSUMPTION_DATASET__: unknown;
   var __CLI_CONSUMPTION_LAYOUT__: unknown;
+  var __CLI_CONSUMPTION_THEME__: unknown;
 }
 type FilterKey = "provider" | "machine" | "project" | "model";
 type Filters = Record<FilterKey, string>;
@@ -145,9 +146,13 @@ function Dashboard({ data }: { data: DashboardDatasetV1 }) {
     project: "",
     provider: "",
   });
-  const [theme, setTheme] = useState<"dark" | "light">(() =>
-    window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark",
-  );
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const embedded = globalThis.__CLI_CONSUMPTION_THEME__;
+    if (embedded === "dark" || embedded === "light") return embedded;
+    return window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
+  });
   const [selectedConversation, setSelectedConversation] = useState<number | null>(null);
   document.documentElement.dataset.theme = theme;
 

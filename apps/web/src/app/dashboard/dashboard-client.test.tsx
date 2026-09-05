@@ -5,7 +5,7 @@ import {
   type DashboardLayoutV1,
   DEFAULT_DASHBOARD_LAYOUT_V1,
 } from "@cli-consumption/contracts";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -509,6 +509,11 @@ describe("persistent dashboard", () => {
     const requests: unknown[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
+      if (url.endsWith("/api/layout")) {
+        return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+          headers: { ETag: ETAG },
+        });
+      }
       if (url.endsWith("/dashboard")) return Response.json(dataset());
       if (url.endsWith("/conversations")) {
         return Response.json({ contractVersion: 1, items: [], nextCursor: null });
@@ -532,21 +537,171 @@ describe("persistent dashboard", () => {
 
     const project = await screen.findByRole("combobox", { name: "Project" });
     await user.selectOptions(project, PROJECT);
+    await user.click(screen.getByRole("button", { name: "Edit dashboard" }));
+    await user.click(screen.getByRole("button", { name: "Remove Tools" }));
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Offline export profile" }),
       "share-safe",
     );
     await user.click(screen.getByRole("button", { name: "Export offline" }));
+    expect(requests).toHaveLength(0);
+    const dialog = screen.getByRole("dialog", { name: "Review offline snapshot" });
+    expect(dialog).toHaveTextContent("Share-safe");
+    expect(dialog).toHaveTextContent("dark");
+    expect(dialog).toHaveTextContent("11 visible widgets");
+    expect(dialog).toHaveTextContent("1 active filters");
+    expect(dialog).not.toHaveTextContent(PROJECT);
+    await user.click(screen.getByRole("button", { name: "Download snapshot" }));
 
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0]).toMatchObject({
-      filters: { machines: [], models: [], projects: [PROJECT], providers: [] },
-      profile: "share-safe",
+      layout: {
+        widgets: expect.not.arrayContaining([
+          expect.objectContaining({ type: "tools" }),
+        ]),
+      },
+      query: {
+        filters: { machines: [], models: [], projects: [PROJECT], providers: [] },
+        profile: "share-safe",
+        version: 1,
+      },
+      theme: "dark",
       version: 1,
     });
     expect(window.location.href).not.toContain(PROJECT);
     expect(createObjectURL).toHaveBeenCalledOnce();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:offline-export");
     expect(click).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a frozen export preview without making an export request", async () => {
+    let exports = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout"))
+        return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+          headers: { ETag: ETAG },
+        });
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations"))
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      if (url.endsWith("/export")) {
+        exports += 1;
+        return new Response("offline");
+      }
+      throw new Error("unexpected_test_request");
+    });
+    const user = userEvent.setup();
+    render(<DashboardClient />);
+    const exportButton = await screen.findByRole("button", {
+      name: "Export offline",
+    });
+    await waitFor(() => expect(exportButton).toBeEnabled());
+    await user.click(exportButton);
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(exports).toBe(0);
+    expect(exportButton).toHaveFocus();
+  });
+
+  it("aborts an in-flight download and closes its private preview", async () => {
+    let exports = 0;
+    let aborted = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout"))
+        return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+          headers: { ETag: ETAG },
+        });
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations"))
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      if (url.endsWith("/export")) {
+        exports += 1;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        });
+      }
+      throw new Error("unexpected_test_request");
+    });
+    const user = userEvent.setup();
+    render(<DashboardClient />);
+    const exportButton = await screen.findByRole("button", {
+      name: "Export offline",
+    });
+    await waitFor(() => expect(exportButton).toBeEnabled());
+    await user.click(exportButton);
+    await user.click(screen.getByRole("button", { name: "Download snapshot" }));
+    await waitFor(() => expect(exports).toBe(1));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(aborted).toBe(true);
+    expect(screen.queryByText("Offline export failed.")).toBeNull();
+  });
+
+  it("keeps a failed snapshot accessible and retries the identical envelope", async () => {
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout"))
+        return Response.json(DEFAULT_DASHBOARD_LAYOUT_V1, {
+          headers: { ETag: ETAG },
+        });
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations"))
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      if (url.endsWith("/export")) {
+        requests.push(String(init?.body));
+        if (requests.length === 1) {
+          return Response.json(
+            { detail: "PRIVATE_UPSTREAM_EXPORT_CANARY" },
+            { status: 503 },
+          );
+        }
+        return new Response("<!doctype html><title>Offline</title>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+      throw new Error("unexpected_test_request");
+    });
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:offline-export"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    render(<DashboardClient />);
+    const exportButton = await screen.findByRole("button", {
+      name: "Export offline",
+    });
+    await waitFor(() => expect(exportButton).toBeEnabled());
+    await user.click(exportButton);
+    await user.click(screen.getByRole("button", { name: "Download snapshot" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Reporting is temporarily unavailable.");
+    expect(alert).not.toHaveTextContent("PRIVATE_UPSTREAM_EXPORT_CANARY");
+    expect(alert).toHaveFocus();
+    expect(screen.getByRole("dialog")).toContainElement(alert);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(exportButton);
+    const reopened = screen.getByRole("dialog", {
+      name: "Review offline snapshot",
+    });
+    expect(within(reopened).queryByRole("alert")).toBeNull();
+    expect(
+      within(reopened).getByRole("button", { name: "Download snapshot" }),
+    ).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Download snapshot" }));
+
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toBe(requests[0]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });

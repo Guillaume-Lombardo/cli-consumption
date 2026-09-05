@@ -222,17 +222,29 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   );
   await expect(page.locator(".widget-editor-controls")).toHaveCount(0);
 
+  await page.getByRole("combobox", { name: "Project" }).selectOption("project-a");
+  await expect(page.getByText("Loading the bounded selection…")).toHaveCount(0);
   await page
     .getByRole("combobox", { name: "Offline export profile" })
     .selectOption("share-safe");
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export offline" }).click();
+  const exportDialog = page.getByRole("dialog", {
+    name: "Review offline snapshot",
+  });
+  await expect(exportDialog).toContainText("Share-safe");
+  await expect(exportDialog).toContainText("9 visible widgets");
+  await expect(exportDialog).toContainText("1 active filters");
+  await expect(exportDialog).not.toContainText("project-a");
+  await page.getByRole("button", { name: "Download snapshot" }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("cli-consumption-dashboard.html");
   const stream = await download.createReadStream();
   let exported = "";
   for await (const chunk of stream) exported += chunk.toString();
   expect(exported).toContain('data-profile="share-safe"');
+  expect(exported).toContain('data-theme="dark"');
+  expect(exported).toContain('data-widget-count="9"');
   expect(exported).toContain("project-a offline export");
   expect(exported).not.toContain("e2e-export-token");
   expect(exported).not.toMatch(/https?:\/\//);

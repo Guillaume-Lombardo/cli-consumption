@@ -33,6 +33,7 @@ from cli_consumption.models import (
 )
 from cli_consumption.reporting_api import (
     CACHE_HEADERS,
+    EXPORT_REQUEST_BYTES,
     EXPORT_TIMEOUT_SECONDS,
     MAX_CONCURRENT_EXPORTS,
     MAX_CONCURRENT_REPORTS,
@@ -360,9 +361,12 @@ class RequestSizeLimitMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        path = str(scope.get("path", ""))
         maximum = (
-            REPORTING_REQUEST_BYTES
-            if str(scope.get("path", "")).startswith("/api/v1/reporting/")
+            EXPORT_REQUEST_BYTES
+            if path == "/api/v1/reporting/export"
+            else REPORTING_REQUEST_BYTES
+            if path.startswith("/api/v1/reporting/")
             else self.maximum
         )
         headers = dict(scope.get("headers", []))
@@ -569,6 +573,7 @@ def create_app(
             "max_dashboard_layout_bytes": MAX_DASHBOARD_LAYOUT_BYTES,
             "cursor_versions": [1],
             "max_reporting_request_bytes": REPORTING_REQUEST_BYTES,
+            "max_export_request_bytes": EXPORT_REQUEST_BYTES,
             "max_reporting_filter_values": MAX_FILTER_VALUES,
             "max_reporting_records": MAX_REPORTING_RECORDS,
             "max_reporting_scalar_bytes": MAX_REPORTING_SCALAR_BYTES,

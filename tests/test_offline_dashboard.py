@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from html import escape
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 import pytest
@@ -27,15 +28,17 @@ pytestmark = pytest.mark.skipif(
 LAYOUT_FIXTURE = Path(__file__).parent / "fixtures" / "dashboard_layout_v1_custom.json"
 
 
-def test_offline_uses_the_same_layout_composition_and_geometry(
-    tmp_path: Path,
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize("width", [1440, 768, 390])
+def test_offline_uses_the_same_layout_composition_geometry_and_theme(
+    tmp_path: Path, theme: Literal["light", "dark"], width: int
 ) -> None:
     layout = DashboardLayoutV1.model_validate_json(
         LAYOUT_FIXTURE.read_text(encoding="utf-8")
     )
     output = tmp_path / "layout.html"
     engine = create_database_engine(tmp_path / "layout.sqlite")
-    generate_dashboard(engine, output, layout=layout)
+    generate_dashboard(engine, output, layout=layout, theme=theme)
     engine.dispose()
 
     expected = [
@@ -58,9 +61,19 @@ def test_offline_uses_the_same_layout_composition_and_geometry(
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        page = browser.new_page()
+        page = browser.new_page(viewport={"width": width, "height": 900})
+        network_requests: list[str] = []
+        page.on(
+            "request",
+            lambda request: (
+                network_requests.append(request.url)
+                if urlparse(request.url).scheme in {"http", "https"}
+                else None
+            ),
+        )
         response = page.goto(output.resolve().as_uri(), wait_until="load")
         assert response is not None and response.ok
+        assert page.locator("html").get_attribute("data-theme") == theme
         actual = page.locator("[data-widget-type]").evaluate_all(
             """widgets => widgets.map(widget => ({
                 height: widget.getAttribute('data-size-height'),
@@ -73,6 +86,7 @@ def test_offline_uses_the_same_layout_composition_and_geometry(
         browser.close()
 
     assert actual == expected
+    assert network_requests == []
     assert [widget["type"] for widget in actual].index("technical-work-items") < [
         widget["type"] for widget in actual
     ].index("context-pressure")
@@ -137,6 +151,9 @@ def test_generated_dashboard_opens_and_interacts_without_network(
         .replace("http://", "")
     )
     assert '<script id="inter-font-license" type="text/plain">' in html
+    assert "globalThis.__CLI_CONSUMPTION_THEME__=null" in html
+    assert 'http-equiv="Content-Security-Policy"' in html
+    assert "connect-src 'none'" in html
     assert escape(license_text, quote=False) in html
     for prohibited in (
         "secret value",

@@ -361,8 +361,10 @@ former Python-string renderer and its compatibility calculation bundle were remo
 after detailed/share-safe parity, packaging, privacy, performance, and rollback gates
 passed.
 
-The web offline action posts the exact current `DashboardQuery v1` to a same-origin
-Next.js route. The BFF authenticates the browser session, keeps its dedicated export
+The web offline action freezes the last successfully rendered `DashboardQuery v1`,
+currently visible validated layout, and selected theme in a strict versioned envelope
+after an explicit review dialog. The same-origin Next.js route receives it. The BFF
+authenticates the browser session, keeps its dedicated export
 credential server-side, bounds both request and response, and buffers the complete
 collector result before returning a fixed-name `no-store` attachment. FastAPI creates
 the file from one coherent SQL snapshot with the React renderer and removes its private
@@ -393,6 +395,9 @@ the preceding application version against the same supported database schema; it
 not require a data downgrade. Node remains a build-time dependency only. Installed CLI
 exports, FastAPI exports, and downloaded files remain autonomous and require no Node or
 application server to open.
+Each file starts with the reviewed theme, applies the shared registry and relative grid
+composition, and declares a deny-by-default CSP with `connect-src 'none'`. Offline
+selectors refine the already copied bounded dataset rather than issuing server queries.
 
 ## Adapter qualification
 

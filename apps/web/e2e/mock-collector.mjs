@@ -209,7 +209,11 @@ createServer((request, response) => {
       return;
     }
     if (isExport) {
-      const html = `<!doctype html><meta charset="utf-8"><title>CLI Consumption offline</title><main data-profile="${JSON.parse(body).profile}">project-a offline export</main>`;
+      const request = JSON.parse(body);
+      const profile = request.query?.profile ?? request.profile;
+      const theme = request.theme ?? "system";
+      const widgetCount = request.layout?.widgets?.length ?? savedLayout.widgets.length;
+      const html = `<!doctype html><meta charset="utf-8"><title>CLI Consumption offline</title><main data-profile="${profile}" data-theme="${theme}" data-widget-count="${widgetCount}">project-a offline export</main>`;
       response.writeHead(200, {
         "Cache-Control": "no-store",
         "Content-Length": Buffer.byteLength(html),

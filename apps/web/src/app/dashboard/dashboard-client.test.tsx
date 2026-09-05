@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DashboardLayoutV1 } from "@cli-consumption/contracts";
 
 import type { DashboardDatasetResponse } from "../../lib/reporting";
 import { DashboardClient } from "./dashboard-client";
@@ -125,6 +126,92 @@ afterEach(() => {
 });
 
 describe("persistent dashboard", () => {
+  it("announces a non-blocking default-layout fallback without reflecting upstream data", async () => {
+    const canary = "PRIVATE_LAYOUT_UPSTREAM_CANARY";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout")) {
+        return Response.json({ detail: canary }, { status: 503 });
+      }
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations")) {
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      }
+      throw new Error("unexpected_test_request");
+    });
+
+    const { container } = render(<DashboardClient />);
+    const message = await screen.findByText(
+      "The saved layout could not be loaded. The default layout is displayed.",
+    );
+
+    expect(message.closest("[role='status']")).toHaveTextContent(
+      "Saved layout unavailable.",
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Activity" }),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll("[data-widget-type]")).toHaveLength(12);
+    expect(document.body).not.toHaveTextContent(canary);
+  });
+
+  it("uses the resolved layout for visibility, order, and relative geometry", async () => {
+    const layout: DashboardLayoutV1 = {
+      columns: 12,
+      version: 1,
+      widgets: [
+        {
+          config: {},
+          id: "activity-2",
+          position: { x: 6, y: 1 },
+          size: { height: 2, width: 6 },
+          type: "activity",
+        },
+        {
+          config: {},
+          id: "technical-work-items",
+          position: { x: 0, y: 0 },
+          size: { height: 1, width: 6 },
+          type: "technical-work-items",
+        },
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/layout")) return Response.json(layout);
+      if (url.endsWith("/dashboard")) return Response.json(dataset());
+      if (url.endsWith("/conversations")) {
+        return Response.json({ contractVersion: 1, items: [], nextCursor: null });
+      }
+      throw new Error("unexpected_test_request");
+    });
+
+    const { container } = render(<DashboardClient />);
+    await screen.findByRole("heading", { name: "Technical work items" });
+    const widgets = [...container.querySelectorAll<HTMLElement>("[data-widget-type]")];
+
+    expect(widgets.map((widget) => widget.dataset.widgetType)).toEqual([
+      "technical-work-items",
+      "activity",
+    ]);
+    expect(
+      widgets.map((widget) => ({
+        height: widget.dataset.sizeHeight,
+        width: widget.dataset.sizeWidth,
+        x: widget.dataset.positionX,
+        y: widget.dataset.positionY,
+      })),
+    ).toEqual([
+      { height: "1", width: "6", x: "0", y: "0" },
+      { height: "2", width: "6", x: "6", y: "1" },
+    ]);
+    expect(screen.getByRole("heading", { name: "Activity" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Models" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Conversation explorer" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders every analytics area with accessible controls", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

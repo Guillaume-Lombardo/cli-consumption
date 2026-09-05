@@ -12,6 +12,7 @@ function configure(exportToken: string | null = CANARY) {
   process.env.CLI_CONSUMPTION_DASHBOARD_ORIGIN = ORIGIN;
   process.env.CLI_CONSUMPTION_DASHBOARD_PASSWORD = "dashboard password value";
   process.env.CLI_CONSUMPTION_READ_TOKEN = "read-token";
+  process.env.CLI_CONSUMPTION_LAYOUT_TOKEN = "layout-token";
   process.env.CLI_CONSUMPTION_SESSION_SECRET = SESSION_SECRET;
   if (exportToken === null) delete process.env.CLI_CONSUMPTION_EXPORT_TOKEN;
   else process.env.CLI_CONSUMPTION_EXPORT_TOKEN = exportToken;
@@ -33,6 +34,7 @@ afterEach(() => {
     "CLI_CONSUMPTION_DASHBOARD_PASSWORD",
     "CLI_CONSUMPTION_EXPORT_TOKEN",
     "CLI_CONSUMPTION_READ_TOKEN",
+    "CLI_CONSUMPTION_LAYOUT_TOKEN",
     "CLI_CONSUMPTION_SESSION_SECRET",
   ]) {
     delete process.env[name];

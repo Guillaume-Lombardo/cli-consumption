@@ -19,6 +19,11 @@ from sqlalchemy import select
 from sqlalchemy.engine import Connection, Engine
 
 from cli_consumption.adapters.registry import ADAPTER_SPECS
+from cli_consumption.dashboard_layouts import (
+    DEFAULT_DASHBOARD_LAYOUT_V1,
+    DashboardLayoutV1,
+    revalidate_dashboard_layout,
+)
 from cli_consumption.reporting import (
     ExportWindow,
     ReportEstimate,
@@ -99,7 +104,11 @@ def generate_dashboard(
     window: ExportWindow | None = None,
     filters: ReportFilters | None = None,
     timeout_seconds: float | None = None,
+    layout: DashboardLayoutV1 | None = None,
 ) -> None:
+    validated_layout = revalidate_dashboard_layout(
+        DEFAULT_DASHBOARD_LAYOUT_V1 if layout is None else layout
+    )
     initialize_database(engine)
     with _dashboard_snapshot(engine, timeout_seconds=timeout_seconds) as connection:
         _enforce_estimate(_estimate_selection(connection, window, filters))
@@ -115,6 +124,7 @@ def generate_dashboard(
                 handle,
                 connection,
                 context,
+                validated_layout,
             ),
         )
 
@@ -552,6 +562,7 @@ def _stream_dashboard(
     handle: TextIO,
     connection: Connection,
     context: _DashboardContext,
+    layout: DashboardLayoutV1,
 ) -> None:
     prefix, suffix = _react_document_parts()
     writer = _BudgetedWriter(handle)
@@ -574,6 +585,8 @@ def _stream_dashboard(
             first = False
         writer.write("]")
     writer.write("}")
+    writer.write(";globalThis.__CLI_CONSUMPTION_LAYOUT__=")
+    writer.write(_encode_json(layout.model_dump(mode="json")))
     writer.write(suffix)
 
 

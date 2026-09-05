@@ -957,6 +957,12 @@ def serve(
             help="Environment variable containing the reporting export bearer token."
         ),
     ] = "CLI_CONSUMPTION_EXPORT_TOKEN",
+    layout_token_env: Annotated[
+        str,
+        typer.Option(
+            help="Environment variable containing the dashboard layout mutation token."
+        ),
+    ] = "CLI_CONSUMPTION_LAYOUT_TOKEN",
 ) -> None:
     """Run the optional central HTTP collector."""
     try:
@@ -971,6 +977,7 @@ def serve(
     token = os.environ.get(token_env)
     read_token = os.environ.get(read_token_env)
     export_token = os.environ.get(export_token_env)
+    layout_token = os.environ.get(layout_token_env) or None
     if any(value == "" for value in (token, read_token, export_token)):
         raise typer.BadParameter(
             "Configured token environment variables must be non-empty."
@@ -979,13 +986,19 @@ def serve(
         token is None
         and read_token is None
         and export_token is None
+        and layout_token is None
         and host not in {"127.0.0.1", "localhost", "::1"}
     ):
         raise typer.BadParameter(
             "Set at least one configured token environment variable before exposing "
             "the service beyond localhost."
         )
-    if token is None and read_token is None and export_token is None:
+    if (
+        token is None
+        and read_token is None
+        and export_token is None
+        and layout_token is None
+    ):
         typer.echo(
             "Warning: service authentication is disabled on localhost.", err=True
         )
@@ -993,12 +1006,13 @@ def serve(
     try:
         application = (
             create_app(engine, token)
-            if read_token is None and export_token is None
+            if read_token is None and export_token is None and layout_token is None
             else create_app(
                 engine,
                 token,
                 read_token=read_token,
                 export_token=export_token,
+                layout_token=layout_token,
             )
         )
         uvicorn.run(application, host=host, port=port, access_log=False)

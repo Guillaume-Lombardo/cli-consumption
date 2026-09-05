@@ -153,6 +153,7 @@ start the metadata-only API:
 export CLI_CONSUMPTION_API_TOKEN="$(your-secret-provider)"
 export CLI_CONSUMPTION_READ_TOKEN="$(your-secret-provider)"
 export CLI_CONSUMPTION_EXPORT_TOKEN="$(your-secret-provider)"
+export CLI_CONSUMPTION_LAYOUT_TOKEN="$(your-secret-provider)"
 uv run cli-consumption serve \
   --database postgresql+psycopg://usage@localhost/cli_consumption \
   --host 0.0.0.0

@@ -43,6 +43,12 @@ payload digest or exported analytics field. Downgrade removes only replay receip
 normalized usage and ingestion runs remain intact. Mixed writers are still unsupported,
 so deploy and initialize the server before enabling retry-capable clients.
 
+Revision `0006` adds the internal `dashboard_layouts` singleton used for the current
+mono-operator presentation preference. It contains only a fixed internal owner key and
+strict canonical layout JSON. Downgrade removes this disposable preference without
+altering normalized usage. As with earlier revisions, deploy the collector before the
+BFF and do not run mixed-version writers during migration.
+
 Schema inspection, adoption, and migration are serialized for concurrent processes of
 the same application version in one outer transaction. SQLite waits at most 15 seconds
 for `BEGIN IMMEDIATE`, then holds that transaction across the decision and migration.

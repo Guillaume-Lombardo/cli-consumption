@@ -19,6 +19,10 @@ from sqlalchemy.engine import Engine
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from cli_consumption import __version__
+from cli_consumption.dashboard_layouts import (
+    DASHBOARD_LAYOUT_VERSION,
+    MAX_DASHBOARD_LAYOUT_BYTES,
+)
 from cli_consumption.models import (
     CURRENT_SNAPSHOT_SCHEMA,
     MAX_SNAPSHOT_RECORDS,
@@ -69,6 +73,7 @@ READINESS_TABLES = (
     "subagent_scopes",
     "ingestion_runs",
     "sync_receipts",
+    "dashboard_layouts",
 )
 READINESS_RESPONSE_TIMEOUT_SECONDS = 2.0
 READINESS_CONNECT_TIMEOUT_SECONDS = 2
@@ -94,6 +99,7 @@ SAFE_ROUTES = frozenset(
         "/api/v1/reporting/conversations",
         "/api/v1/reporting/conversation",
         "/api/v1/reporting/export",
+        "/api/v1/reporting/layout",
     }
 )
 SAFE_EXCEPTION_TYPES = frozenset(
@@ -405,6 +411,7 @@ def _configured_credentials(
     api_token: str | None,
     read_token: str | None,
     export_token: str | None,
+    layout_token: str | None,
 ) -> list[tuple[str, frozenset[str]]]:
     credentials: list[tuple[str, frozenset[str]]] = []
     configured_values: set[str] = set()
@@ -412,6 +419,7 @@ def _configured_credentials(
         (api_token, frozenset({"ingest"})),
         (read_token, frozenset({"read"})),
         (export_token, frozenset({"read", "export"})),
+        (layout_token, frozenset({"layout"})),
     ):
         if credential is None:
             continue
@@ -436,8 +444,11 @@ def create_app(
     *,
     read_token: str | None = None,
     export_token: str | None = None,
+    layout_token: str | None = None,
 ) -> SafeExceptionBoundary:
-    credentials = _configured_credentials(api_token, read_token, export_token)
+    credentials = _configured_credentials(
+        api_token, read_token, export_token, layout_token
+    )
     initialize_database(engine)
     if engine.dialect.name == "postgresql":
         probe_engine = create_postgresql_readiness_engine(
@@ -553,6 +564,9 @@ def create_app(
             "idempotent_snapshot_uploads": True,
             "dashboard_query_versions": [1],
             "dashboard_dataset_versions": [1],
+            "dashboard_layout_versions": [DASHBOARD_LAYOUT_VERSION],
+            "dashboard_layout_mutation_scope": "layout",
+            "max_dashboard_layout_bytes": MAX_DASHBOARD_LAYOUT_BYTES,
             "cursor_versions": [1],
             "max_reporting_request_bytes": REPORTING_REQUEST_BYTES,
             "max_reporting_filter_values": MAX_FILTER_VALUES,
@@ -599,6 +613,7 @@ def create_app(
         engine,
         authorize_read=require_scopes("read"),
         authorize_export=require_scopes("read", "export"),
+        authorize_layout=require_scopes("layout"),
     )
 
     return SafeExceptionBoundary(app)

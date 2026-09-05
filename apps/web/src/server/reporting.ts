@@ -5,6 +5,7 @@ import { readBoundedBytes, readBoundedJsonObject } from "./body";
 import { sameOrigin, verifySessionToken } from "./session";
 
 const REQUEST_BYTES = 64 * 1024;
+const LAYOUT_RESPONSE_BYTES = 64 * 1024;
 const ROUTES = {
   conversation: { path: "conversation", responseBytes: 16 * 1024 * 1024 },
   conversations: { path: "conversations", responseBytes: 4 * 1024 * 1024 },
@@ -113,5 +114,60 @@ export async function proxyReportingRequest(
   return new Response(responseBody, {
     headers: { "Cache-Control": "no-store", "Content-Type": "application/json" },
     status: 200,
+  });
+}
+
+export async function proxyLayoutRequest(
+  request: Request,
+  sessionToken: string | undefined,
+): Promise<Response> {
+  let config: DashboardServerConfig;
+  try {
+    config = dashboardServerConfig();
+  } catch {
+    return json("reporting_unavailable", 503);
+  }
+  if (
+    !verifySessionToken(sessionToken, config.sessionSecret) ||
+    (request.method !== "GET" && !sameOrigin(request, config.dashboardOrigin))
+  )
+    return json("session_expired", 401);
+  if (request.method !== "GET" && config.layoutToken === null)
+    return json("layout_unavailable", 503);
+  let body: string | undefined;
+  if (request.method === "PUT") {
+    const parsed = await readBoundedJsonObject(request, REQUEST_BYTES);
+    if (parsed.status !== "ok") return json("invalid_dashboard_layout", 400);
+    body = JSON.stringify(parsed.body);
+  }
+  const endpoint = new URL("/api/v1/reporting/layout", config.apiUrl);
+  let upstream: Response;
+  try {
+    upstream = await fetch(endpoint, {
+      body,
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${request.method === "GET" ? config.readToken : config.layoutToken}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      method: request.method,
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    return json("reporting_unavailable", 502);
+  }
+  const response = await readBoundedBytes(upstream.body, LAYOUT_RESPONSE_BYTES);
+  if (response.status !== "ok") return json("reporting_unavailable", 502);
+  if (!upstream.ok) {
+    return json(
+      upstream.status === 422 ? "invalid_dashboard_layout" : "reporting_unavailable",
+      upstream.status >= 400 && upstream.status < 500 ? upstream.status : 502,
+    );
+  }
+  if (!upstream.headers.get("content-type")?.startsWith("application/json"))
+    return json("reporting_unavailable", 502);
+  return new Response(response.bytes, {
+    headers: { "Cache-Control": "no-store", "Content-Type": "application/json" },
   });
 }

@@ -15,6 +15,32 @@ test("authenticates and renders the bounded persistent dashboard", async ({ page
   await expect(
     page.getByRole("heading", { name: "Conversation explorer" }),
   ).toBeVisible();
+  const layoutWidgets = page.locator("[data-widget-type]");
+  await expect(layoutWidgets).toHaveCount(12);
+  expect(
+    await layoutWidgets.evaluateAll((widgets) =>
+      widgets.map((widget) => ({
+        height: widget.getAttribute("data-size-height"),
+        type: widget.getAttribute("data-widget-type"),
+        width: widget.getAttribute("data-size-width"),
+        x: widget.getAttribute("data-position-x"),
+        y: widget.getAttribute("data-position-y"),
+      })),
+    ),
+  ).toEqual([
+    { height: "1", type: "headline-metrics", width: "12", x: "0", y: "0" },
+    { height: "1", type: "activity", width: "6", x: "0", y: "1" },
+    { height: "1", type: "tools", width: "6", x: "6", y: "1" },
+    { height: "1", type: "models", width: "6", x: "0", y: "2" },
+    { height: "1", type: "turn-performance", width: "6", x: "6", y: "2" },
+    { height: "1", type: "workflow-complexity", width: "6", x: "0", y: "3" },
+    { height: "1", type: "turn-outcomes", width: "6", x: "6", y: "3" },
+    { height: "1", type: "technical-work-items", width: "6", x: "0", y: "4" },
+    { height: "1", type: "context-pressure", width: "6", x: "6", y: "4" },
+    { height: "1", type: "cohorts", width: "6", x: "0", y: "5" },
+    { height: "1", type: "data-quality", width: "6", x: "6", y: "5" },
+    { height: "2", type: "conversation-explorer", width: "12", x: "0", y: "6" },
+  ]);
 
   const cardIsInvisible = await page
     .locator(".metric-card")

@@ -249,6 +249,15 @@ class SyncReceipt(Base):
     )
 
 
+class DashboardLayout(Base):
+    """Singleton presentation preference for the current dashboard operator."""
+
+    __tablename__ = "dashboard_layouts"
+
+    owner_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    layout_json: Mapped[str] = mapped_column(Text)
+
+
 TABLES = {
     "conversations": Conversation,
     "turns": Turn,
@@ -266,6 +275,7 @@ SCHEMA_TABLES = {
     **TABLES,
     "subagent_scopes": SubagentScope,
     "sync_receipts": SyncReceipt,
+    "dashboard_layouts": DashboardLayout,
 }
 
 

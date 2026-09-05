@@ -202,6 +202,12 @@ def test_extracts_valid_provider_snapshots_and_excludes_internal_state(
             text("INSERT INTO subagent_scopes VALUES (:canary, :canary, 0)"),
             {"canary": CANARY},
         )
+        connection.execute(
+            text(
+                "INSERT INTO dashboard_layouts VALUES ('deployment-operator', :canary)"
+            ),
+            {"canary": CANARY},
+        )
     engine.dispose()
 
     extracted = extract_snapshots(database)
@@ -234,6 +240,7 @@ def test_extracts_valid_provider_snapshots_and_excludes_internal_state(
     assert "sync_receipts" not in output
     assert "subagent_scopes" not in output
     assert "ingestion_runs" not in output
+    assert "dashboard_layouts" not in output
 
 
 def test_window_keeps_complete_selected_conversation_records_and_edges(
@@ -359,7 +366,7 @@ def test_rejects_non_current_or_modified_schema_without_migrating(
     with check.connect() as connection:
         revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
     assert revision == (
-        "0004" if mutation == "old" else "9999" if mutation == "new" else "0005"
+        "0004" if mutation == "old" else "9999" if mutation == "new" else "0006"
     )
     check.dispose()
 

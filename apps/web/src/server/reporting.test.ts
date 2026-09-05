@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSessionToken } from "./session";
-import { proxyReportingRequest, safeUpstreamCode } from "./reporting";
+import {
+  proxyLayoutRequest,
+  proxyReportingRequest,
+  safeUpstreamCode,
+} from "./reporting";
 
 const CANARY = "CANARY_DO_NOT_EXPOSE_7d9f";
 const ORIGIN = "https://dashboard.example";
@@ -12,6 +16,7 @@ function configure() {
   process.env.CLI_CONSUMPTION_DASHBOARD_ORIGIN = ORIGIN;
   process.env.CLI_CONSUMPTION_DASHBOARD_PASSWORD = "dashboard password value";
   process.env.CLI_CONSUMPTION_READ_TOKEN = CANARY;
+  process.env.CLI_CONSUMPTION_LAYOUT_TOKEN = "layout-token";
   process.env.CLI_CONSUMPTION_SESSION_SECRET = SESSION_SECRET;
 }
 
@@ -30,6 +35,7 @@ afterEach(() => {
     "CLI_CONSUMPTION_DASHBOARD_ORIGIN",
     "CLI_CONSUMPTION_DASHBOARD_PASSWORD",
     "CLI_CONSUMPTION_READ_TOKEN",
+    "CLI_CONSUMPTION_LAYOUT_TOKEN",
     "CLI_CONSUMPTION_SESSION_SECRET",
   ]) {
     delete process.env[name];
@@ -37,6 +43,56 @@ afterEach(() => {
 });
 
 describe("reporting BFF", () => {
+  it("keeps layout mutation optional and uses its least-privilege credential", async () => {
+    configure();
+    const token = createSessionToken(SESSION_SECRET);
+    const body = JSON.stringify({ version: 1, columns: 12, widgets: [] });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_url, init) => {
+        expect(new Headers(init?.headers).get("Authorization")).toBe(
+          "Bearer layout-token",
+        );
+        return Response.json({ version: 1, columns: 12, widgets: [] });
+      });
+    const request = new Request(`${ORIGIN}/api/layout`, {
+      body,
+      headers: { "Content-Type": "application/json", Origin: ORIGIN },
+      method: "PUT",
+    });
+    expect((await proxyLayoutRequest(request, token)).status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    fetchMock.mockClear();
+    delete process.env.CLI_CONSUMPTION_LAYOUT_TOKEN;
+    const unavailable = await proxyLayoutRequest(
+      new Request(`${ORIGIN}/api/layout`, {
+        body,
+        headers: { "Content-Type": "application/json", Origin: ORIGIN },
+        method: "PUT",
+      }),
+      token,
+    );
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toEqual({ detail: "layout_unavailable" });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockImplementation(async (_url, init) => {
+      expect(new Headers(init?.headers).get("Authorization")).toBe(`Bearer ${CANARY}`);
+      return Response.json({ contractVersion: 1 });
+    });
+    const read = await proxyReportingRequest(
+      new Request(`${ORIGIN}/api/reporting/dashboard`, {
+        body: "{}",
+        headers: { "Content-Type": "application/json", Origin: ORIGIN },
+        method: "POST",
+      }),
+      "dashboard",
+      token,
+    );
+    expect(read.status).toBe(200);
+  });
+
   it("keeps the upstream credential server-side and disables caching", async () => {
     configure();
     const fetchMock = vi

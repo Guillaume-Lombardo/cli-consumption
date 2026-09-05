@@ -1,4 +1,9 @@
-import type { DashboardDatasetV1 } from "@cli-consumption/contracts";
+import {
+  assertDashboardLayoutV1,
+  resolveDashboardLayoutV1,
+  type DashboardDatasetV1,
+  type DashboardLayoutV1,
+} from "@cli-consumption/contracts";
 
 export type RangeChoice = "7" | "30" | "90" | "all" | "custom";
 
@@ -115,6 +120,39 @@ export async function postReporting<T>(
     throw new Error(code);
   }
   return (await response.json()) as T;
+}
+
+export async function fetchDashboardLayout(): Promise<DashboardLayoutV1> {
+  const response = await fetch("/api/layout", { cache: "no-store" });
+  if (response.status === 401) throw new Error("session_expired");
+  if (!response.ok) throw new Error("reporting_unavailable");
+  return resolveDashboardLayoutV1(await response.json());
+}
+
+export async function saveDashboardLayout(
+  layout: DashboardLayoutV1,
+): Promise<DashboardLayoutV1> {
+  assertDashboardLayoutV1(layout);
+  const response = await fetch("/api/layout", {
+    body: JSON.stringify(layout),
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    method: "PUT",
+  });
+  if (response.status === 401) throw new Error("session_expired");
+  if (!response.ok) throw new Error("invalid_dashboard_layout");
+  const result: unknown = await response.json();
+  assertDashboardLayoutV1(result);
+  return result;
+}
+
+export async function resetDashboardLayout(): Promise<DashboardLayoutV1> {
+  const response = await fetch("/api/layout", { cache: "no-store", method: "DELETE" });
+  if (response.status === 401) throw new Error("session_expired");
+  if (!response.ok) throw new Error("reporting_unavailable");
+  const result: unknown = await response.json();
+  assertDashboardLayoutV1(result);
+  return result;
 }
 
 /** Request a self-contained export for the exact query currently shown. */

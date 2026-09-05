@@ -1,0 +1,43 @@
+{
+  "constraints": {
+    "version": 1,
+    "columns": 12,
+    "rows": 64,
+    "maxWidgets": 32,
+    "maxBytes": 65536,
+    "instanceSuffixMin": 1,
+    "instanceSuffixMax": 32
+  },
+  "registry": {
+    "headline-metrics": { "minWidth": 12, "maxWidth": 12, "minHeight": 1, "maxHeight": 2 },
+    "activity": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "tools": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "models": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "turn-performance": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "workflow-complexity": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "turn-outcomes": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "context-pressure": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "technical-work-items": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "cohorts": { "minWidth": 6, "maxWidth": 12, "minHeight": 1, "maxHeight": 6 },
+    "data-quality": { "minWidth": 3, "maxWidth": 12, "minHeight": 1, "maxHeight": 4 },
+    "conversation-explorer": { "minWidth": 12, "maxWidth": 12, "minHeight": 2, "maxHeight": 8 }
+  },
+  "default": {
+    "version": 1,
+    "columns": 12,
+    "widgets": [
+      { "id": "headline-metrics", "type": "headline-metrics", "position": { "x": 0, "y": 0 }, "size": { "width": 12, "height": 1 }, "config": {} },
+      { "id": "activity", "type": "activity", "position": { "x": 0, "y": 1 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "tools", "type": "tools", "position": { "x": 6, "y": 1 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "models", "type": "models", "position": { "x": 0, "y": 2 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "turn-performance", "type": "turn-performance", "position": { "x": 6, "y": 2 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "workflow-complexity", "type": "workflow-complexity", "position": { "x": 0, "y": 3 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "turn-outcomes", "type": "turn-outcomes", "position": { "x": 6, "y": 3 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "context-pressure", "type": "context-pressure", "position": { "x": 0, "y": 4 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "technical-work-items", "type": "technical-work-items", "position": { "x": 6, "y": 4 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "cohorts", "type": "cohorts", "position": { "x": 0, "y": 5 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "data-quality", "type": "data-quality", "position": { "x": 6, "y": 5 }, "size": { "width": 6, "height": 1 }, "config": {} },
+      { "id": "conversation-explorer", "type": "conversation-explorer", "position": { "x": 0, "y": 6 }, "size": { "width": 12, "height": 2 }, "config": {} }
+    ]
+  }
+}

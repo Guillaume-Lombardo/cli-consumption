@@ -1,15 +1,21 @@
 import {
   assertDashboardDatasetV1,
+  type ActivityDay,
+  type ActivityMetric,
   type DashboardCompaction,
   type DashboardConversation,
   type DashboardContextSample,
   type DashboardDatasetV1,
+  type DashboardChartCatalog,
   type DashboardModelCall,
   type DashboardSubagent,
   type DashboardToolCall,
   type DashboardTurn,
   type DashboardTurnSetting,
   type DashboardWorkItem,
+  MAX_TOKEN_SERIES_LABEL_BUCKETS,
+  type TokenBreakdownDimension,
+  type TokenSeriesBucket,
 } from "@cli-consumption/contracts";
 
 export interface DashboardRange {
@@ -36,37 +42,6 @@ export interface DashboardSlice {
   settings: DashboardTurnSetting[];
   compactions: DashboardCompaction[];
   subagents: DashboardSubagent[];
-}
-
-export type ActivityMetric = "tokens" | "turns" | "conversations" | "duration";
-
-export interface ActivityDay {
-  date: string;
-  values: Partial<Record<ActivityMetric, number>>;
-  /** Missing means outside the selected/exported window; zero is an observed empty day. */
-  observed: boolean;
-}
-
-export interface DashboardChartCatalog {
-  days: ActivityDay[];
-  availableMetrics: ActivityMetric[];
-  currentStreak: number;
-  longestStreak: number;
-  dailyPeakTokens: number | null;
-  tokenComposition: Array<[string, number]>;
-  tokenSeries: Array<{
-    date: string;
-    total: number;
-    providers: Record<string, number>;
-    models: Record<string, number>;
-  }>;
-  availableBreakdowns: Array<"provider" | "model">;
-  rankings: {
-    models: Array<[string, number]>;
-    providers: Array<[string, number]>;
-    projects: Array<[string, number]>;
-    tools: Array<[string, number]>;
-  };
 }
 
 export const ACTIVITY_CALENDAR_DAYS = 364;
@@ -200,6 +175,7 @@ export function createDashboardCalculations(input: unknown) {
     };
   }
 
+  /** Test an ISO timestamp against the inclusive analytical range. */
   function inRange(value: string | null | undefined, range: DashboardRange | null) {
     if (!range || !validDate(value)) return !range?.start;
     const time = Date.parse(value);
@@ -208,6 +184,7 @@ export function createDashboardCalculations(input: unknown) {
     );
   }
 
+  /** Test an epoch-millisecond timestamp against the inclusive analytical range. */
   function inEpochRange(
     value: number | null | undefined,
     range: DashboardRange | null,
@@ -220,6 +197,7 @@ export function createDashboardCalculations(input: unknown) {
     );
   }
 
+  /** Retain conversations whose known interval intersects the requested range. */
   function conversationInRange(
     conversation: DashboardConversation,
     range: DashboardRange | null,
@@ -349,6 +327,7 @@ export function createDashboardCalculations(input: unknown) {
     };
   }
 
+  /** Merge overlapping per-machine turn intervals into honest active time. */
   function activeMs(turns: readonly DashboardTurn[]) {
     if (data.meta.shareSafe) return total(turns, "durationMs");
     const groups: Record<string, Array<[number, number]>> = {};
@@ -378,6 +357,7 @@ export function createDashboardCalculations(input: unknown) {
     return sum;
   }
 
+  /** Return peak per-machine turn concurrency when detailed timing is allowed. */
   function maxConcurrent(turns: readonly DashboardTurn[]) {
     if (data.meta.shareSafe) return null;
     const byMachine: Record<string, Array<[number, number]>> = {};
@@ -402,6 +382,7 @@ export function createDashboardCalculations(input: unknown) {
     return peak;
   }
 
+  /** Select token calls that are complete and additive or valid aggregate snapshots. */
   function semanticTokenCalls(slice: DashboardSlice) {
     const closedKeys = new Set(
       slice.turns
@@ -419,6 +400,51 @@ export function createDashboardCalculations(input: unknown) {
         (call.turnKey === null || closedKeys.has(call.turnKey))
       );
     });
+  }
+
+  /** Select a stable global bucket plan once for the complete visible series. */
+  function tokenBucketPlan(
+    dimension: TokenBreakdownDimension,
+    totals: ReadonlyMap<string, number>,
+  ): Array<Omit<TokenSeriesBucket, "value">> {
+    const leaders = [...totals]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .slice(0, MAX_TOKEN_SERIES_LABEL_BUCKETS)
+      .map(([label]) => label);
+    const buckets: Array<Omit<TokenSeriesBucket, "value">> = leaders.map(
+      (label, index) => ({
+        id: `${dimension}:label:${index}`,
+        kind: "label",
+        label,
+      }),
+    );
+    if (totals.size > MAX_TOKEN_SERIES_LABEL_BUCKETS)
+      buckets.push({
+        id: `${dimension}:remainder`,
+        kind: "remainder",
+        label: dimension === "provider" ? "Other providers" : "Other models",
+      });
+    return buckets;
+  }
+
+  /** Populate one day's values using a precomputed bounded global bucket plan. */
+  function materializeTokenBuckets(
+    plan: ReadonlyArray<Omit<TokenSeriesBucket, "value">>,
+    daily: ReadonlyMap<string, number>,
+  ): TokenSeriesBucket[] {
+    const leaders = new Set(
+      plan.filter((bucket) => bucket.kind === "label").map((bucket) => bucket.label),
+    );
+    return plan.map((bucket) => ({
+      ...bucket,
+      value:
+        bucket.kind === "label"
+          ? (daily.get(bucket.label) ?? 0)
+          : [...daily].reduce(
+              (sum, [label, value]) => sum + (leaders.has(label) ? 0 : value),
+              0,
+            ),
+    }));
   }
 
   /**
@@ -508,15 +534,17 @@ export function createDashboardCalculations(input: unknown) {
     timedTokenCalls.forEach((call) => {
       add(call.timestamp, "tokens", call.total_tokens);
     });
-    const tokenSeries = (timedTokenCalls.length ? [...byDate.values()] : [])
+    const tokenSeriesValues = (timedTokenCalls.length ? [...byDate.values()] : [])
       .filter((row) => row.observed)
       .map((row) => ({
         date: row.date,
         total: row.values.tokens ?? 0,
-        providers: {} as Record<string, number>,
-        models: {} as Record<string, number>,
+        providers: new Map<string, number>(),
+        models: new Map<string, number>(),
       }));
-    const seriesByDate = new Map(tokenSeries.map((row) => [row.date, row]));
+    const seriesByDate = new Map(tokenSeriesValues.map((row) => [row.date, row]));
+    const providerTotals = new Map<string, number>();
+    const modelTotals = new Map<string, number>();
     for (const call of timedTokenCalls) {
       if (!validDate(call.timestamp)) continue;
       const point = seriesByDate.get(
@@ -525,10 +553,26 @@ export function createDashboardCalculations(input: unknown) {
       if (!point) continue;
       const provider = conversationByKey[call.conversationKey]?.provider || "unknown";
       const model = call.model || "unknown";
-      point.providers[provider] = (point.providers[provider] ?? 0) + call.total_tokens;
-      point.models[model] = (point.models[model] ?? 0) + call.total_tokens;
+      point.providers.set(
+        provider,
+        (point.providers.get(provider) ?? 0) + call.total_tokens,
+      );
+      point.models.set(model, (point.models.get(model) ?? 0) + call.total_tokens);
+      providerTotals.set(
+        provider,
+        (providerTotals.get(provider) ?? 0) + call.total_tokens,
+      );
+      modelTotals.set(model, (modelTotals.get(model) ?? 0) + call.total_tokens);
     }
-    const availableBreakdowns: Array<"provider" | "model"> = [];
+    const providerBucketPlan = tokenBucketPlan("provider", providerTotals);
+    const modelBucketPlan = tokenBucketPlan("model", modelTotals);
+    const tokenSeries = tokenSeriesValues.map((point) => ({
+      date: point.date,
+      total: point.total,
+      providers: materializeTokenBuckets(providerBucketPlan, point.providers),
+      models: materializeTokenBuckets(modelBucketPlan, point.models),
+    }));
+    const availableBreakdowns: TokenBreakdownDimension[] = [];
     if (
       timedTokenCalls.length &&
       timedTokenCalls.every(
@@ -700,6 +744,7 @@ export function createDashboardCalculations(input: unknown) {
     };
   }
 
+  /** Resolve one provider-neutral cohort label from already-approved metadata. */
   function cohortLabel(
     turn: DashboardTurn,
     dimension: CohortDimension,

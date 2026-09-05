@@ -26,7 +26,10 @@ alignment.
 Token composition uses mutually exclusive normalized counters: uncached plus cache-write
 input, cached input, visible output, and reasoning output. Counts are provider-reported
 usage, never price or billing data. Rankings are deterministically sorted and bounded to
-ten rows.
+ten rows. Provider and model time-series categories are ranked globally across the
+visible series, limited to five labelled buckets, and folded into one typed remainder
+bucket. Each day carries the same stable bucket IDs; display labels never serve as IDs,
+so legitimate labels such as `Other` or `Overall` cannot collide with UI sentinels.
 
 ## Consequences
 

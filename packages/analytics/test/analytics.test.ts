@@ -200,6 +200,65 @@ describe("shared dashboard analytics", () => {
     expect(catalog.tokenSeries).toEqual([]);
   });
 
+  it("bounds token breakdowns globally without colliding with real labels", () => {
+    const data = fixture();
+    const conversation = data.conversations[0];
+    const call = data.modelCalls[0];
+    if (!conversation || !call) throw new Error("invalid_test_fixture");
+    const labels = ["Other", "Overall", "alpha", "beta", "gamma", "delta"];
+    labels.forEach((label, index) => {
+      const key = index + 2;
+      const value = 700 - index * 100;
+      data.conversations.push({
+        ...conversation,
+        key,
+        provider: label,
+        models: [label],
+      });
+      data.modelCalls.push({
+        ...call,
+        conversationKey: key,
+        model: label,
+        total_tokens: value,
+        turnKey: null,
+      });
+    });
+    const calculations = createDashboardCalculations(data);
+    const range = calculations.rangeFor("all");
+    const catalog = calculations.chartCatalog(
+      calculations.selectSlice({
+        provider: "",
+        machine: "",
+        project: "",
+        model: "",
+        range,
+      }),
+      range,
+    );
+    const active = catalog.tokenSeries.find((point) => point.date === "2026-08-02");
+    expect(active).toBeDefined();
+    expect(active?.providers).toHaveLength(6);
+    expect(active?.providers.map((bucket) => bucket.label)).toEqual([
+      "Other",
+      "Overall",
+      "alpha",
+      "beta",
+      "gamma",
+      "Other providers",
+    ]);
+    expect(new Set(active?.providers.map((bucket) => bucket.id)).size).toBe(6);
+    expect(active?.providers.reduce((sum, bucket) => sum + bucket.value, 0)).toBe(
+      active?.total,
+    );
+    expect(active?.models.reduce((sum, bucket) => sum + bucket.value, 0)).toBe(
+      active?.total,
+    );
+    expect(catalog.tokenSeries.every((point) => point.providers.length <= 6)).toBe(
+      true,
+    );
+    expect(catalog.tokenSeries.every((point) => point.models.length <= 6)).toBe(true);
+  });
+
   it("clips chart observations to 52 weeks while preserving global totals", () => {
     const data = fixture();
     data.meta.exportWindow = {

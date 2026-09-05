@@ -1,3 +1,9 @@
+import type {
+  ActivityMetric,
+  DashboardChartCatalog,
+  TokenBreakdownDimension,
+  TokenSeriesBucket,
+} from "@cli-consumption/contracts";
 import {
   type CSSProperties,
   type KeyboardEvent,
@@ -6,33 +12,6 @@ import {
   useState,
 } from "react";
 
-type ActivityMetric = "tokens" | "turns" | "conversations" | "duration";
-interface ChartCatalogData {
-  days: Array<{
-    date: string;
-    observed: boolean;
-    values: Partial<Record<ActivityMetric, number>>;
-  }>;
-  availableMetrics: ActivityMetric[];
-  currentStreak: number;
-  longestStreak: number;
-  dailyPeakTokens: number | null;
-  tokenComposition: Array<[string, number]>;
-  tokenSeries: Array<{
-    date: string;
-    total: number;
-    providers: Record<string, number>;
-    models: Record<string, number>;
-  }>;
-  availableBreakdowns: Array<"provider" | "model">;
-  rankings: {
-    models: Array<[string, number]>;
-    providers: Array<[string, number]>;
-    projects: Array<[string, number]>;
-    tools: Array<[string, number]>;
-  };
-}
-
 const ACTIVITY_LABELS: Record<ActivityMetric, string> = {
   tokens: "Tokens",
   turns: "Turns",
@@ -40,6 +19,7 @@ const ACTIVITY_LABELS: Record<ActivityMetric, string> = {
   duration: "Turn duration",
 };
 
+/** Format an exact daily value with the unit exposed by the selected metric. */
 function activityValue(metric: ActivityMetric, value: number) {
   return metric === "duration"
     ? `${Math.round(value / 60000).toLocaleString("en")} min`
@@ -47,7 +27,7 @@ function activityValue(metric: ActivityMetric, value: number) {
 }
 
 /** Shared chart catalog renderer: the same data and semantics are used online/offline. */
-export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
+export function ActivityCatalog({ catalog }: { catalog: DashboardChartCatalog }) {
   const [selected, setSelected] = useState<ActivityMetric>(
     catalog.availableMetrics[0] ?? "turns",
   );
@@ -56,7 +36,7 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
     catalog.days.findLastIndex((row) => row.observed),
   );
   const [focusIndex, setFocusIndex] = useState(lastObservedIndex);
-  const [breakdown, setBreakdown] = useState<"overall" | "provider" | "model">(
+  const [breakdown, setBreakdown] = useState<"overall" | TokenBreakdownDimension>(
     "overall",
   );
   const metric = catalog.availableMetrics.includes(selected)
@@ -70,41 +50,13 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
   const maximum = metric
     ? Math.max(...catalog.days.map((row) => row.values[metric] ?? 0), 1)
     : 1;
-  const breakdownTotals = new Map<string, number>();
-  if (effectiveBreakdown !== "overall") {
-    for (const point of catalog.tokenSeries) {
-      const values = effectiveBreakdown === "provider" ? point.providers : point.models;
-      for (const [label, value] of Object.entries(values))
-        breakdownTotals.set(label, (breakdownTotals.get(label) ?? 0) + value);
-    }
-  }
-  const leadingLabels = [...breakdownTotals]
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
-    .slice(0, 5)
-    .map(([label]) => label);
-  const breakdownBuckets =
+  const breakdownBuckets: Array<
+    TokenSeriesBucket | { id: "overall"; label: "Overall"; kind: "overall" }
+  > =
     effectiveBreakdown === "overall"
-      ? [{ id: "__overall__", label: "Overall", kind: "overall" as const }]
-      : [
-          ...leadingLabels.map((label) => ({
-            id: `label:${label}`,
-            label,
-            sourceLabel: label,
-            kind: "label" as const,
-          })),
-          ...(breakdownTotals.size > 5
-            ? [
-                {
-                  id: "__remainder__",
-                  label:
-                    effectiveBreakdown === "provider"
-                      ? "Other providers"
-                      : "Other models",
-                  kind: "remainder" as const,
-                },
-              ]
-            : []),
-        ];
+      ? [{ id: "overall", label: "Overall", kind: "overall" }]
+      : (catalog.tokenSeries[0]?.[`${effectiveBreakdown}s`] ?? []);
+  const seriesPeak = Math.max(...catalog.tokenSeries.map((row) => row.total), 1);
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const delta =
       event.key === "ArrowRight"
@@ -210,6 +162,7 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
                           ? "end"
                           : "middle"
                     }
+                    data-tooltip-row-edge={index % 7 === 6 ? "end" : "middle"}
                     data-tooltip={`${row.date}: ${description}`}
                     key={row.date}
                     onKeyDown={(event) => onKeyDown(event, index)}
@@ -268,7 +221,7 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
               aria-label="Token series breakdown"
               value={effectiveBreakdown}
               onChange={(event) =>
-                setBreakdown(event.target.value as "overall" | "provider" | "model")
+                setBreakdown(event.target.value as "overall" | TokenBreakdownDimension)
               }
             >
               <option value="overall">Overall</option>
@@ -293,20 +246,15 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
                     bucket,
                     bucket.kind === "overall"
                       ? point.total
-                      : bucket.kind === "remainder"
-                        ? Object.entries(source)
-                            .filter(([name]) => !leadingLabels.includes(name))
-                            .reduce((sum, [, value]) => sum + value, 0)
-                        : (source[bucket.sourceLabel ?? ""] ?? 0),
+                      : (source.find((item) => item.id === bucket.id)?.value ?? 0),
                   ] as const,
               );
-              const peak = Math.max(...catalog.tokenSeries.map((row) => row.total), 1);
               return (
                 <div
                   className="token-series-day"
                   key={point.date}
                   title={`${point.date}: ${point.total.toLocaleString("en")} tokens`}
-                  style={{ height: `${(100 * point.total) / peak}%` }}
+                  style={{ height: `${(100 * point.total) / seriesPeak}%` }}
                 >
                   {point.total > 0
                     ? groups.map(([bucket, value], index) => (
@@ -357,11 +305,8 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
                           <td key={bucket.id}>
                             {(bucket.kind === "overall"
                               ? point.total
-                              : bucket.kind === "remainder"
-                                ? Object.entries(source)
-                                    .filter(([name]) => !leadingLabels.includes(name))
-                                    .reduce((sum, [, value]) => sum + value, 0)
-                                : (source[bucket.sourceLabel ?? ""] ?? 0)
+                              : (source.find((item) => item.id === bucket.id)?.value ??
+                                0)
                             ).toLocaleString("en")}
                           </td>
                         ))}
@@ -453,6 +398,7 @@ export function DashboardLayoutGrid({
   );
 }
 
+/** Render one compact metric with an optional semantic caveat. */
 export function Metric({
   help,
   label,
@@ -471,6 +417,7 @@ export function Metric({
   );
 }
 
+/** Render a bounded ranking with an exact textual value for every bar. */
 export function Bars({
   rows,
   value = (count) => Intl.NumberFormat("en").format(count),
@@ -495,6 +442,7 @@ export function Bars({
   );
 }
 
+/** Wrap dashboard content in a consistently labelled panel. */
 export function Section({
   children,
   note,

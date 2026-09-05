@@ -198,7 +198,10 @@ function MetricsView({
   const closed = slice.turns.filter(
     (turn) => turn.status === "completed" || turn.status === "aborted",
   );
-  const catalog = calculations.chartCatalog(slice, calculations.rangeFor("all"));
+  const catalog = useMemo(
+    () => calculations.chartCatalog(slice, calculations.rangeFor("all")),
+    [calculations, slice],
+  );
   const outcomes = groupCount(slice.turns, (turn) => turn.status);
   const workKinds = groupSum(
     slice.work,

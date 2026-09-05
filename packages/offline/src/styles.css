@@ -329,6 +329,10 @@ details {
   right: 0;
   transform: none;
 }
+.activity-cell[data-tooltip-row-edge="end"]::after {
+  bottom: 14px;
+  top: auto;
+}
 .activity-axis {
   color: var(--muted);
   display: grid;

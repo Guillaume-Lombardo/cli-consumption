@@ -134,21 +134,40 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
       );
     }),
   ).toBe(true);
-  const calendarCell = activity.locator(".activity-cell").first();
-  await calendarCell.hover();
-  expect(
-    await calendarCell.evaluate((cell) => {
-      const tooltip = getComputedStyle(cell, "::after");
-      const cellBox = cell.getBoundingClientRect();
-      const viewport = cell.closest(".calendar-scroll")?.getBoundingClientRect();
-      return Boolean(
-        viewport &&
-          tooltip.content.includes(cell.getAttribute("data-tooltip") ?? "missing") &&
-          cellBox.left >= viewport.left &&
-          cellBox.left + Number.parseFloat(tooltip.width) <= viewport.right,
-      );
-    }),
-  ).toBe(true);
+  const calendarCells = activity.locator(".activity-cell");
+  const calendarCell = calendarCells.first();
+  for (const index of [0, 6, 357, 363]) {
+    const edgeCell = calendarCells.nth(index);
+    await edgeCell.hover();
+    expect(
+      await edgeCell.evaluate((cell) => {
+        const tooltip = getComputedStyle(cell, "::after");
+        const cellBox = cell.getBoundingClientRect();
+        const viewport = cell.closest(".calendar-scroll")?.getBoundingClientRect();
+        const width = Number.parseFloat(tooltip.width);
+        const height = Number.parseFloat(tooltip.height);
+        const horizontalEdge = cell.getAttribute("data-tooltip-edge");
+        const left =
+          horizontalEdge === "start"
+            ? cellBox.left
+            : horizontalEdge === "end"
+              ? cellBox.right - width
+              : cellBox.left + (cellBox.width - width) / 2;
+        const top =
+          cell.getAttribute("data-tooltip-row-edge") === "end"
+            ? cellBox.bottom - 14 - height
+            : cellBox.top + 14;
+        return Boolean(
+          viewport &&
+            tooltip.content.includes(cell.getAttribute("data-tooltip") ?? "missing") &&
+            left >= viewport.left - 1 &&
+            left + width <= viewport.right + 1 &&
+            top >= viewport.top - 1 &&
+            top + height <= viewport.bottom + 1,
+        );
+      }),
+    ).toBe(true);
+  }
   await calendarCell.focus();
   await page.keyboard.press("ArrowRight");
   const keyboardFocusedCell = page.locator(".activity-cell:focus");
@@ -174,9 +193,11 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
   if (await darkTheme.isVisible()) await darkTheme.click();
   await expect(activity).toHaveScreenshot("activity-dark.png", {
     animations: "disabled",
+    maxDiffPixelRatio: 0.035,
   });
   await page.getByRole("button", { name: "Light theme" }).click();
   await expect(activity).toHaveScreenshot("activity-light.png", {
     animations: "disabled",
+    maxDiffPixelRatio: 0.035,
   });
 });

@@ -338,6 +338,16 @@ def test_equal_event_count_duplicate_converges_on_content_hash_rank(
     assert conversation["project"] == "upper"
     engine.dispose()
 
+    reverse_engine = create_database_engine(tmp_path / "reverse.sqlite")
+    ingest_snapshot(reverse_engine, lower)
+    promoted = ingest_snapshot(reverse_engine, upper)
+
+    assert (promoted.written, promoted.skipped) == (1, 0)
+    conversation = read_table(reverse_engine, "conversations")[0]
+    assert conversation["content_hash"] == "f" * 64
+    assert conversation["project"] == "upper"
+    reverse_engine.dispose()
+
 
 def test_incremental_conversation_batch_preserves_complete_subagent_scope(
     tmp_path: Path, rollout_factory

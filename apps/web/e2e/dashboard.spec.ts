@@ -166,6 +166,10 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
     }),
   ).toEqual({ outline: true, tooltip: true });
   await keyboardFocusedCell.evaluate((cell) => (cell as HTMLElement).blur());
+  await page.mouse.move(0, 0);
+  await expect(page.locator(".activity-cell:hover, .activity-cell:focus")).toHaveCount(
+    0,
+  );
   const darkTheme = page.getByRole("button", { name: "Dark theme" });
   if (await darkTheme.isVisible()) await darkTheme.click();
   await expect(activity).toHaveScreenshot("activity-dark.png", {

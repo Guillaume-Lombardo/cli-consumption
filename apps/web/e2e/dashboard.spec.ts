@@ -193,11 +193,13 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
   if (await darkTheme.isVisible()) await darkTheme.click();
   await expect(activity).toHaveScreenshot("activity-dark.png", {
     animations: "disabled",
-    maxDiffPixelRatio: 0.035,
+    maxDiffPixelRatio: 0.005,
+    threshold: 0.4,
   });
   await page.getByRole("button", { name: "Light theme" }).click();
   await expect(activity).toHaveScreenshot("activity-light.png", {
     animations: "disabled",
-    maxDiffPixelRatio: 0.035,
+    maxDiffPixelRatio: 0.005,
+    threshold: 0.4,
   });
 });

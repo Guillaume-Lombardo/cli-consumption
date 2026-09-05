@@ -25,6 +25,12 @@ const catalog = {
   ] as Array<[string, number]>,
   tokenSeries: [
     {
+      date: "2026-08-25",
+      total: 0,
+      providers: {},
+      models: {},
+    },
+    {
       date: "2026-08-26",
       total: 12,
       providers: { codex: 12 },
@@ -50,6 +56,11 @@ describe("activity catalog", () => {
     );
     expect(screen.getByText("Daily values table")).toBeInTheDocument();
     expect(container.querySelectorAll('.activity-cell[tabindex="0"]')).toHaveLength(1);
+    const seriesDays = container.querySelectorAll<HTMLElement>(".token-series-day");
+    expect(seriesDays[0]).toHaveStyle({ height: "0%" });
+    expect(seriesDays[0]?.children).toHaveLength(0);
+    expect(seriesDays[1]).toHaveStyle({ height: "100%" });
+    expect(seriesDays[1]?.children.length).toBeGreaterThan(0);
     const focused = container.querySelector<HTMLButtonElement>(
       '.activity-cell[tabindex="0"]',
     );

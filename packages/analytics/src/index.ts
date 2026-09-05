@@ -99,7 +99,7 @@ export function createDashboardCalculations(input: unknown) {
   const validDate = (value: string | null | undefined): value is string =>
     typeof value === "string" && value.length > 0 && Number.isFinite(Date.parse(value));
   const day = (value: string | null | undefined) =>
-    validDate(value) ? value.slice(0, 10) : "unknown";
+    validDate(value) ? new Date(value).toISOString().slice(0, 10) : "unknown";
   const total = (rows: readonly object[], key: string) =>
     rows.reduce(
       (sum, row) =>

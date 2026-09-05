@@ -104,6 +104,26 @@ function fixture(): DashboardDatasetV1 {
 }
 
 describe("shared dashboard analytics", () => {
+  it("normalizes active-day buckets to UTC across timestamp offsets", () => {
+    const data = fixture();
+    const first = data.turns[0];
+    if (!first) throw new Error("invalid_test_fixture");
+    first.startedAt = "2026-08-01T23:30:00-02:00";
+    data.turns.push({ ...first, key: 11, startedAt: "2026-08-02T02:00:00Z" });
+    const calculations = createDashboardCalculations(data);
+    const range = calculations.rangeFor("all");
+    const slice = calculations.selectSlice({
+      provider: "",
+      machine: "",
+      project: "",
+      model: "",
+      range,
+    });
+    expect(calculations.day(first.startedAt)).toBe("2026-08-02");
+    expect(calculations.metrics(slice).activeDays).toBe(1);
+    expect(calculations.day("not-a-date")).toBe("unknown");
+  });
+
   it("builds a bounded Sunday-to-Saturday UTC calendar with honest availability", () => {
     const data = fixture();
     const [modelCall] = data.modelCalls;

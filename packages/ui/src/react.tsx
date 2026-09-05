@@ -264,16 +264,18 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
                   className="token-series-day"
                   key={point.date}
                   title={`${point.date}: ${point.total.toLocaleString("en")} tokens`}
-                  style={{ height: `${Math.max(1, (100 * point.total) / peak)}%` }}
+                  style={{ height: `${(100 * point.total) / peak}%` }}
                 >
-                  {groups.map(([label, value], index) => (
-                    <i
-                      className={`series-color-${index % 6}`}
-                      key={label}
-                      style={{ flexGrow: value }}
-                      title={`${label}: ${value.toLocaleString("en")}`}
-                    />
-                  ))}
+                  {point.total > 0
+                    ? groups.map(([label, value], index) => (
+                        <i
+                          className={`series-color-${index % 6}`}
+                          key={label}
+                          style={{ flexGrow: value }}
+                          title={`${label}: ${value.toLocaleString("en")}`}
+                        />
+                      ))
+                    : null}
                 </div>
               );
             })}

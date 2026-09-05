@@ -407,7 +407,7 @@ h2 {
   padding: 2px;
 }
 .calendar-scroll:focus-visible {
-  outline: 2px solid var(--foreground);
+  outline: 2px solid var(--text);
   outline-offset: 1px;
 }
 .activity-summary > span {
@@ -437,7 +437,7 @@ h2 {
   margin: 0;
   min-width: 570px;
   overflow-x: auto;
-  padding: 2px;
+  padding: 0;
 }
 .activity-cell,
 .activity-legend i {
@@ -464,11 +464,21 @@ h2 {
   white-space: nowrap;
   z-index: 20;
 }
+.activity-cell[data-tooltip-edge="start"]::after {
+  left: 0;
+  transform: none;
+}
+.activity-cell[data-tooltip-edge="end"]::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
 .activity-axis {
   color: var(--muted);
   display: grid;
   font-size: 0.65rem;
   grid-template-rows: repeat(7, 10px);
+  row-gap: 3px;
   min-width: 2.5rem;
 }
 .activity-months {
@@ -476,6 +486,7 @@ h2 {
   display: grid;
   font-size: 0.65rem;
   grid-template-columns: repeat(52, minmax(8px, 1fr));
+  column-gap: 3px;
   min-width: 570px;
   margin-left: 2.5rem;
 }

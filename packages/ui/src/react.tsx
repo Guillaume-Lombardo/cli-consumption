@@ -203,6 +203,13 @@ export function ActivityCatalog({ catalog }: { catalog: ChartCatalogData }) {
                     aria-label={`${row.date}: ${description}`}
                     className="activity-cell"
                     data-level={level}
+                    data-tooltip-edge={
+                      index < 7
+                        ? "start"
+                        : index >= catalog.days.length - 7
+                          ? "end"
+                          : "middle"
+                    }
                     data-tooltip={`${row.date}: ${description}`}
                     key={row.date}
                     onKeyDown={(event) => onKeyDown(event, index)}

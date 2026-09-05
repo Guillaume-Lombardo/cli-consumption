@@ -111,7 +111,44 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
       .locator(".calendar-scroll")
       .evaluate((node) => node.scrollWidth >= node.clientWidth),
   ).toBe(true);
+  expect(
+    await activity.evaluate((root) => {
+      const cells = [...root.querySelectorAll<HTMLElement>(".activity-cell")];
+      const weekdays = [...root.querySelectorAll<HTMLElement>(".activity-axis span")];
+      const month = root.querySelector<HTMLElement>(".activity-months span");
+      if (!month || cells.length !== 364 || weekdays.length !== 4) return false;
+      const rowsAligned = [0, 2, 4, 6].every(
+        (row, index) =>
+          Math.abs(
+            (weekdays[index]?.getBoundingClientRect().top ?? -99) -
+              (cells[row]?.getBoundingClientRect().top ?? 99),
+          ) < 8,
+      );
+      const week = Number.parseInt(month.style.gridColumn, 10) - 1;
+      return (
+        rowsAligned &&
+        Math.abs(
+          month.getBoundingClientRect().left -
+            (cells[week * 7]?.getBoundingClientRect().left ?? 99),
+        ) < 8
+      );
+    }),
+  ).toBe(true);
   const calendarCell = activity.locator(".activity-cell").first();
+  await calendarCell.hover();
+  expect(
+    await calendarCell.evaluate((cell) => {
+      const tooltip = getComputedStyle(cell, "::after");
+      const cellBox = cell.getBoundingClientRect();
+      const viewport = cell.closest(".calendar-scroll")?.getBoundingClientRect();
+      return Boolean(
+        viewport &&
+          tooltip.content.includes(cell.getAttribute("data-tooltip") ?? "missing") &&
+          cellBox.left >= viewport.left &&
+          cellBox.left + Number.parseFloat(tooltip.width) <= viewport.right,
+      );
+    }),
+  ).toBe(true);
   await calendarCell.focus();
   await page.keyboard.press("ArrowRight");
   const keyboardFocusedCell = page.locator(".activity-cell:focus");
@@ -128,6 +165,7 @@ test("keeps the chart catalog stable in light and dark responsive layouts", asyn
       };
     }),
   ).toEqual({ outline: true, tooltip: true });
+  await keyboardFocusedCell.evaluate((cell) => (cell as HTMLElement).blur());
   const darkTheme = page.getByRole("button", { name: "Dark theme" });
   if (await darkTheme.isVisible()) await darkTheme.click();
   await expect(activity).toHaveScreenshot("activity-dark.png", {

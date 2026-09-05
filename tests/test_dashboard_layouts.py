@@ -6,6 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -236,6 +237,25 @@ def test_retired_widget_is_dropped_and_corruption_resets_to_default() -> None:
         },
     )
     assert resolve_dashboard_layout(stored) == DEFAULT_DASHBOARD_LAYOUT_V1
+    mixed = {
+        "version": 1,
+        "columns": 12,
+        "widgets": [
+            DEFAULT_DASHBOARD_LAYOUT_V1.widgets[1].model_dump(mode="json"),
+            {
+                "id": CANARY,
+                "type": "retired-widget",
+                "position": {"x": 6, "y": 1},
+                "size": {"width": 6, "height": 1},
+                "config": {},
+            },
+        ],
+    }
+    resolved = resolve_dashboard_layout(mixed)
+    assert resolved.widgets == [DEFAULT_DASHBOARD_LAYOUT_V1.widgets[1]]
+    assert CANARY not in resolved.model_dump_json()
+    all_retired = {**mixed, "widgets": [mixed["widgets"][1]]}
+    assert resolve_dashboard_layout(all_retired) == DEFAULT_DASHBOARD_LAYOUT_V1
     assert resolve_dashboard_layout({"widgets": CANARY}) == DEFAULT_DASHBOARD_LAYOUT_V1
 
 
@@ -462,6 +482,19 @@ def test_dashboard_export_revalidates_a_mutated_layout_before_writing(
 
     assert ID_CANARY not in str(caught.value)
     assert CANARY not in str(caught.value)
+    assert not output.exists()
+    engine.dispose()
+
+
+def test_dashboard_export_rejects_an_untrusted_theme_before_writing(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "unsafe-theme.sqlite")
+    output = tmp_path / "unsafe-theme.html"
+
+    with pytest.raises(ValueError, match=r"^invalid_dashboard_theme$"):
+        generate_dashboard(engine, output, theme=cast(Any, CANARY))
+
     assert not output.exists()
     engine.dispose()
 

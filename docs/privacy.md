@@ -243,8 +243,11 @@ layout response ETag, same-origin `If-Match` request header, authenticated edit 
 synthetic fixtures; CSV, normalized snapshots, offline HTML, and provider ingestion are
 unchanged.
 
-Offline downloads reuse the exact bounded POST query visible in the dashboard and add
-only the selected `detailed` or `share-safe` profile. A dedicated server-side token
+Offline downloads freeze the last successfully rendered bounded POST query, the
+content-free visible layout, and a `light` or `dark` theme after a pre-export review.
+The review exposes counts rather than selected operational labels. The strict envelope
+contains no revision, ETag, owner key, cookie, endpoint, widget state, or credential.
+A dedicated server-side token
 carrying `read` and `export` never reaches browser state or the generated file. The BFF
 buffers at most 128 MiB before sending any HTML, uses fixed generic errors and
 `no-store` headers, and recommends narrowing an oversized selection. FastAPI writes a
@@ -252,6 +255,14 @@ mode-0600 temporary, renders from one coherent SQL snapshot, and removes the tem
 after success, error, or client cancellation. The resulting HTML remains a portable
 copy: detailed exports disclose the selected operational metadata, while share-safe
 exports retain the documented aggregate-disclosure boundary.
+
+The completed file embeds its detached layout and theme, so it never reads the
+database or preference again. Its CSP denies connections, objects, base URLs, and form
+submissions; the runtime contains no fetch, socket, beacon, dynamic import, or remote
+asset path. Retired widgets are dropped before strict validation, while an otherwise
+incompatible stored layout resolves to the fixed safe default without reflecting
+rejected values. Owned mode-0600 temporaries are allocated only after the single export
+slot is acquired and are cleaned after success, failure, or cancellation.
 
 Dashboard generation first evaluates only aggregate row counts and scalar byte
 lengths for the selected report. These internal estimates are not exported or logged.

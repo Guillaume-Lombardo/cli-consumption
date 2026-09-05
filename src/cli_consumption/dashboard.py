@@ -14,7 +14,7 @@ from functools import cache
 from html import escape
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO
 
 from sqlalchemy import select
 from sqlalchemy.engine import Connection, Engine
@@ -119,7 +119,10 @@ def generate_dashboard(
     filters: ReportFilters | None = None,
     timeout_seconds: float | None = None,
     layout: DashboardLayoutV1 | None = None,
+    theme: Literal["dark", "light"] | None = None,
 ) -> None:
+    if theme not in (None, "dark", "light"):
+        raise ValueError("invalid_dashboard_theme")
     validated_layout = revalidate_dashboard_layout(
         DEFAULT_DASHBOARD_LAYOUT_V1 if layout is None else layout
     )
@@ -139,6 +142,7 @@ def generate_dashboard(
                 connection,
                 context,
                 validated_layout,
+                theme,
             ),
         )
 
@@ -577,6 +581,7 @@ def _stream_dashboard(
     connection: Connection,
     context: _DashboardContext,
     layout: DashboardLayoutV1,
+    theme: Literal["dark", "light"] | None,
 ) -> None:
     prefix, suffix = _react_document_parts()
     writer = _BudgetedWriter(handle)
@@ -601,6 +606,8 @@ def _stream_dashboard(
     writer.write("}")
     writer.write(";globalThis.__CLI_CONSUMPTION_LAYOUT__=")
     writer.write(_encode_json(layout.model_dump(mode="json")))
+    writer.write(";globalThis.__CLI_CONSUMPTION_THEME__=")
+    writer.write(_encode_json(theme))
     writer.write(suffix)
 
 
@@ -611,6 +618,7 @@ def _react_document_parts() -> tuple[str, str]:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>CLI Consumption</title>
   <script id="inter-font-license" type="text/plain">{_inter_font_license_notice()}</script>
   <style>{_react_dashboard_styles()}</style>

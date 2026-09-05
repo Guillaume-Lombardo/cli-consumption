@@ -8,6 +8,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added reviewed autonomous web exports that freeze the visible dashboard layout,
+  bounded selection, privacy profile, and theme into a CSP-locked standalone file while
+  preserving query-only API and CLI export compatibility.
 - Added the provider-neutral `DashboardLayout v1` contract, a bounded widget registry,
   deterministic defaults and retired-widget recovery, plus SQLite/PostgreSQL
   persistence for the single authenticated dashboard operator.

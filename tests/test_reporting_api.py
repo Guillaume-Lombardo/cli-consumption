@@ -18,9 +18,11 @@ from sqlalchemy.schema import CreateSchema, DropSchema
 import cli_consumption.reporting_api as reporting_api_module
 from cli_consumption.api import create_app
 from cli_consumption.dashboard import _dashboard_payload
+from cli_consumption.dashboard_layouts import DEFAULT_DASHBOARD_LAYOUT_V1
 from cli_consumption.models import Snapshot, empty_tokens
 from cli_consumption.reporting import ReportFilters, parse_export_window
 from cli_consumption.reporting_api import (
+    DashboardExportRequest,
     DashboardQuery,
     PaginationStore,
     PrivateExportResponse,
@@ -126,6 +128,15 @@ def _query(
     }
 
 
+def _export_request(*, theme: str = "dark") -> dict[str, object]:
+    return {
+        "version": 1,
+        "query": _query(),
+        "layout": DEFAULT_DASHBOARD_LAYOUT_V1.model_dump(mode="json"),
+        "theme": theme,
+    }
+
+
 def _engine(tmp_path: Path):
     engine = create_database_engine(tmp_path / "reporting.sqlite")
     ingest_snapshot(
@@ -174,6 +185,7 @@ async def test_reporting_scopes_capabilities_and_cache_policy(tmp_path: Path) ->
         assert capabilities["max_dashboard_layout_bytes"] == 64 * 1024
         assert capabilities["cursor_versions"] == [1]
         assert capabilities["max_reporting_request_bytes"] == 64 * 1024
+        assert capabilities["max_export_request_bytes"] == 128 * 1024
 
         missing = await client.post("/api/v1/reporting/dashboard", json=_query())
         ingestion_only = await client.post(
@@ -286,6 +298,87 @@ def test_empty_or_whitespace_credentials_are_rejected_generically(
     engine.dispose()
 
 
+def test_busy_export_rejects_before_allocating_a_temporary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = _engine(tmp_path)
+    runtime = ReportingRuntime(engine)
+    assert runtime._exports.acquire(blocking=False)
+    allocated = False
+
+    def unexpected_temporary(*_args: object, **_kwargs: object) -> tuple[int, str]:
+        nonlocal allocated
+        allocated = True
+        raise AssertionError("temporary allocated before export slot")
+
+    monkeypatch.setattr(reporting_api_module.tempfile, "mkstemp", unexpected_temporary)
+    try:
+        with pytest.raises(ReportingError, match=r"^reporting_busy$"):
+            runtime.export(DashboardQuery.model_validate(_query()))
+    finally:
+        runtime._exports.release()
+        engine.dispose()
+    assert allocated is False
+
+
+def test_export_envelope_freezes_validated_layout_theme_and_query(
+    tmp_path: Path,
+) -> None:
+    engine = _engine(tmp_path)
+    request_body = _export_request(theme="light")
+    request_body["query"] = _query(projects=["project-a"])
+    layout = DEFAULT_DASHBOARD_LAYOUT_V1.model_copy(deep=True)
+    layout.widgets = [layout.widgets[-1]]
+    request_body["layout"] = layout.model_dump(mode="json")
+    request = DashboardExportRequest.model_validate(request_body)
+
+    path = ReportingRuntime(engine).export(request)
+    try:
+        original = path.read_bytes()
+        request.layout.widgets[0].id = "conversation-explorer-1"
+        assert path.read_bytes() == original
+        html = original.decode("utf-8")
+        assert 'globalThis.__CLI_CONSUMPTION_THEME__="light"' in html
+        assert '"id":"conversation-explorer"' in html
+        assert '"id":"activity"' not in html
+        assert '"project":"project-a"' in html
+        assert '"project":"project-b"' not in html
+        assert CANARY not in html
+        assert "Content-Security-Policy" in html
+        assert "connect-src 'none'" in html
+    finally:
+        path.unlink(missing_ok=True)
+        engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_export_envelope_rejects_unknown_widgets_without_reflection(
+    tmp_path: Path,
+) -> None:
+    engine = _engine(tmp_path)
+    app = create_app(
+        engine,
+        "ingest-token",
+        read_token=READ_VALUE,
+        export_token=EXPORT_VALUE,
+    )
+    body = _export_request()
+    layout = DEFAULT_DASHBOARD_LAYOUT_V1.model_dump(mode="json")
+    layout["widgets"][0]["type"] = CANARY
+    body["layout"] = layout
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://collector.test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/reporting/export", json=body, headers=EXPORT_HEADERS
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "invalid_reporting_request"}
+    assert CANARY not in response.text
+    engine.dispose()
+
+
 def test_duplicate_credentials_are_rejected_generically(tmp_path: Path) -> None:
     engine = create_database_engine(tmp_path / "duplicate-credential.sqlite")
 
@@ -386,7 +479,9 @@ async def test_dashboard_matches_offline_dataset_and_excludes_private_fields(
 @pytest.mark.anyio
 async def test_reporting_validation_and_body_limit_are_generic(tmp_path: Path) -> None:
     engine = _engine(tmp_path)
-    transport = httpx.ASGITransport(app=create_app(engine, read_token=READ_VALUE))
+    transport = httpx.ASGITransport(
+        app=create_app(engine, read_token=READ_VALUE, export_token=EXPORT_VALUE)
+    )
     duplicate_filter = _query()
     duplicate_filter["filters"] = {
         "providers": ["codex", "codex"],
@@ -419,6 +514,16 @@ async def test_reporting_validation_and_body_limit_are_generic(tmp_path: Path) -
             content=b"{}",
             headers={**READ_HEADERS, "Content-Length": str(64 * 1024 + 1)},
         )
+        export_with_reporting_sized_envelope = await client.post(
+            "/api/v1/reporting/export",
+            content=b"{}",
+            headers={**EXPORT_HEADERS, "Content-Length": str(64 * 1024 + 1)},
+        )
+        oversized_export = await client.post(
+            "/api/v1/reporting/export",
+            content=b"{}",
+            headers={**EXPORT_HEADERS, "Content-Length": str(128 * 1024 + 1)},
+        )
 
     assert all(response.status_code == 422 for response in responses)
     assert all(
@@ -429,6 +534,9 @@ async def test_reporting_validation_and_body_limit_are_generic(tmp_path: Path) -
     assert oversized.status_code == 413
     assert oversized.json() == {"detail": "request_too_large"}
     assert oversized.headers["cache-control"] == "no-store"
+    assert export_with_reporting_sized_envelope.status_code == 422
+    assert oversized_export.status_code == 413
+    assert oversized_export.json() == {"detail": "request_too_large"}
     engine.dispose()
 
 

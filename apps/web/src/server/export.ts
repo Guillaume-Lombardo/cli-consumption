@@ -5,7 +5,7 @@ import { dashboardServerConfig, type DashboardServerConfig } from "./config";
 import { safeUpstreamCode } from "./reporting";
 import { sameOrigin, verifySessionToken } from "./session";
 
-const REQUEST_BYTES = 64 * 1024;
+const REQUEST_BYTES = 128 * 1024;
 const RESPONSE_BYTES = 128 * 1024 * 1024;
 const EXPORT_TIMEOUT_MS = 65_000;
 const DOWNLOAD_NAME = "cli-consumption-dashboard.html";

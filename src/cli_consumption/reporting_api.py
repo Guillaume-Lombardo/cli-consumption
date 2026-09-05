@@ -59,6 +59,7 @@ from cli_consumption.reporting import (
 )
 
 REPORTING_REQUEST_BYTES = 64 * 1024
+EXPORT_REQUEST_BYTES = 128 * 1024
 MAX_FILTER_VALUES = 100
 MAX_REPORTING_RECORDS = MAX_DASHBOARD_RECORDS
 MAX_REPORTING_SCALAR_BYTES = MAX_DASHBOARD_ESTIMATED_BYTES
@@ -176,6 +177,15 @@ class DashboardQuery(StrictRequest):
     window: WindowRequest
     filters: FiltersRequest
     profile: Literal["detailed", "share-safe"]
+
+
+class DashboardExportRequest(StrictRequest):
+    """Closed snapshot inputs for an authenticated standalone export."""
+
+    version: Literal[1]
+    query: DashboardQuery
+    layout: DashboardLayoutV1
+    theme: Literal["dark", "light"]
 
 
 class FilterQuery(StrictRequest):
@@ -568,15 +578,24 @@ class ReportingRuntime:
             )
         return _conversation_detail(payload, conversation_key)
 
-    def export(self, query: DashboardQuery) -> Path:
-        descriptor, raw_path = tempfile.mkstemp(
-            prefix="cli-consumption-report-",
-            suffix=".html",
-        )
-        os.close(descriptor)
-        path = Path(raw_path)
-        try:
-            with self.export_slot():
+    def export(self, request: DashboardExportRequest | DashboardQuery) -> Path:
+        """Generate a snapshot envelope, while retaining legacy API/CLI callers."""
+        if isinstance(request, DashboardExportRequest):
+            query = request.query
+            layout = request.layout
+            theme = request.theme
+        else:
+            query = request
+            layout = load_dashboard_layout(self.engine)
+            theme = None
+        with self.export_slot():
+            descriptor, raw_path = tempfile.mkstemp(
+                prefix="cli-consumption-report-",
+                suffix=".html",
+            )
+            os.close(descriptor)
+            path = Path(raw_path)
+            try:
                 generate_dashboard(
                     self.engine,
                     path,
@@ -584,12 +603,13 @@ class ReportingRuntime:
                     window=query.window.window(),
                     filters=query.filters.filters(),
                     timeout_seconds=EXPORT_TIMEOUT_SECONDS,
-                    layout=load_dashboard_layout(self.engine),
+                    layout=layout,
+                    theme=theme,
                 )
-            return path
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
+                return path
+            except BaseException:
+                path.unlink(missing_ok=True)
+                raise
 
 
 def install_reporting_routes(
@@ -696,8 +716,8 @@ def install_reporting_routes(
         "/api/v1/reporting/export",
         dependencies=[Depends(authorize_export)],
     )
-    def export(query: DashboardQuery) -> FileResponse:
-        path = runtime.export(query)
+    def export(request: DashboardExportRequest | DashboardQuery) -> FileResponse:
+        path = runtime.export(request)
         return PrivateExportResponse(path)
 
     return runtime

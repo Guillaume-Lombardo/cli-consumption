@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   fetchDashboardLayout,
+  fetchOfflineExport,
   initialWindow,
   queryForRange,
   saveDashboardLayout,
@@ -96,5 +97,39 @@ describe("dashboard query construction", () => {
     await expect(
       saveDashboardLayout(DEFAULT_DASHBOARD_LAYOUT_V1, ETAG),
     ).rejects.toThrow();
+  });
+
+  it("revalidates the layout before sending an offline snapshot envelope", async () => {
+    const unsafe = structuredClone(DEFAULT_DASHBOARD_LAYOUT_V1);
+    unsafe.widgets[0].id = "headline-metrics-private-label";
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      fetchOfflineExport({
+        layout: unsafe,
+        query: queryForRange(
+          "all",
+          { machines: [], models: [], projects: [], providers: [] },
+          { from: "", to: "" },
+          NOW,
+        ),
+        theme: "dark",
+        version: 1,
+      }),
+    ).rejects.toThrow("invalid_dashboard_layout");
+    await expect(
+      fetchOfflineExport({
+        layout: DEFAULT_DASHBOARD_LAYOUT_V1,
+        query: queryForRange(
+          "all",
+          { machines: [], models: [], projects: [], providers: [] },
+          { from: "", to: "" },
+          NOW,
+        ),
+        theme: "PRIVATE_THEME_CANARY" as "dark",
+        version: 1,
+      }),
+    ).rejects.toThrow("invalid_dashboard_theme");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

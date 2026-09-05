@@ -250,8 +250,11 @@ authorization and response bounds as the dataset.
 
 ### Web export
 
-`POST /api/v1/reporting/export` requires both `read` and `export` and accepts exactly
-`DashboardQuery v1`. Python starts one coherent read transaction, applies the same
+`POST /api/v1/reporting/export` requires both `read` and `export` and accepts the
+strict autonomous snapshot envelope defined in ADR 0007. Its nested `DashboardQuery
+v1`, validated layout, and fixed theme remain independent contracts. The previous
+exact query-only body remains an unambiguous compatibility shape. Python starts one
+coherent read transaction, applies the same
 selection and transformations as the dashboard dataset, and streams the standalone
 HTML through a private temporary file. The response sets an attachment disposition
 and headers preventing intermediary and browser caching.
@@ -269,7 +272,8 @@ only within an equal-or-lower deployment cap:
 
 | Boundary | Ceiling |
 | --- | ---: |
-| Reporting/export request body | 64 KiB |
+| Reporting request body | 64 KiB |
+| Export snapshot envelope | 128 KiB |
 | Values per filter dimension | 100 |
 | Selected normalized rows | 250,000 |
 | Selected scalar values before transformation | 128 MiB |

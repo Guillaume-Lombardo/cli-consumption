@@ -25,6 +25,7 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   useState,
 } from "react";
 
@@ -33,6 +34,7 @@ import {
   type ConversationPage,
   type ConversationSummary,
   type DashboardDatasetResponse,
+  type DashboardExportRequestV1,
   type DashboardQueryV1,
   fetchDashboardLayout,
   fetchOfflineExport,
@@ -693,6 +695,10 @@ export function DashboardClient() {
   );
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [exportSnapshot, setExportSnapshot] = useState<DashboardExportRequestV1 | null>(
+    null,
+  );
+  const [renderedQuery, setRenderedQuery] = useState<DashboardQueryV1 | null>(null);
   const [layoutError, setLayoutError] = useState("");
   const [layoutLoading, setLayoutLoading] = useState(true);
   const [layoutNotice, setLayoutNotice] = useState("");
@@ -708,6 +714,10 @@ export function DashboardClient() {
   );
   const [editingLayout, setEditingLayout] = useState(false);
   const [savingLayout, setSavingLayout] = useState(false);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
+  const exportAbortRef = useRef<AbortController>(null);
+  const exportConfirmRef = useRef<HTMLButtonElement>(null);
+  const exportDialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
@@ -876,7 +886,10 @@ export function DashboardClient() {
     setLoading(true);
     setError("");
     void postReporting<DashboardDatasetResponse>("dashboard", query, controller.signal)
-      .then(setData)
+      .then((payload) => {
+        setData(payload);
+        setRenderedQuery(structuredClone(query));
+      })
       .catch((caught) => {
         if (controller.signal.aborted) return;
         if (caught instanceof Error && caught.message === "session_expired") {
@@ -920,24 +933,58 @@ export function DashboardClient() {
     setError("Sign-out failed. Check the connection and try again.");
   }
 
+  function prepareOfflineExport() {
+    if (!renderedQuery || !layoutEtag || loading) return;
+    setExportSnapshot({
+      layout: structuredClone(editingLayout ? layoutHistory.present : layoutBaseline),
+      query: { ...structuredClone(renderedQuery), profile: exportProfile },
+      theme,
+      version: 1,
+    });
+  }
+
+  function cancelOfflineExport() {
+    exportAbortRef.current?.abort();
+    const dialog = exportDialogRef.current;
+    if (dialog && typeof dialog.close === "function") dialog.close();
+    setExportSnapshot(null);
+    queueMicrotask(() => exportButtonRef.current?.focus());
+  }
+
+  useEffect(() => {
+    if (!exportSnapshot) return;
+    const dialog = exportDialogRef.current;
+    if (dialog && !dialog.open) {
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    }
+    exportConfirmRef.current?.focus();
+  }, [exportSnapshot]);
+
   async function exportOffline() {
+    if (!exportSnapshot) return;
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
     setExporting(true);
     setExportError("");
     try {
-      const blob = await fetchOfflineExport({ ...query, profile: exportProfile });
+      const blob = await fetchOfflineExport(exportSnapshot, controller.signal);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = "cli-consumption-dashboard.html";
       anchor.click();
       URL.revokeObjectURL(url);
+      cancelOfflineExport();
     } catch (caught) {
+      if (controller.signal.aborted) return;
       if (caught instanceof Error && caught.message === "session_expired") {
         window.location.assign("/login?reason=session");
         return;
       }
       setExportError(messageFor(caught));
     } finally {
+      if (exportAbortRef.current === controller) exportAbortRef.current = null;
       setExporting(false);
     }
   }
@@ -985,10 +1032,11 @@ export function DashboardClient() {
             </select>
           </label>
           <button
+            ref={exportButtonRef}
             className="secondary"
-            disabled={exporting}
+            disabled={exporting || layoutLoading || loading || !layoutEtag}
             type="button"
-            onClick={() => void exportOffline()}
+            onClick={prepareOfflineExport}
           >
             {exporting ? "Exporting…" : "Export offline"}
           </button>
@@ -1004,6 +1052,79 @@ export function DashboardClient() {
           </button>
         </div>
       </header>
+      {exportSnapshot ? (
+        <dialog
+          aria-labelledby="export-summary-title"
+          className="export-dialog"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              cancelOfflineExport();
+            }
+          }}
+          onCancel={(event) => {
+            event.preventDefault();
+            cancelOfflineExport();
+          }}
+          ref={exportDialogRef}
+        >
+          <h2 id="export-summary-title">Review offline snapshot</h2>
+          <dl className="export-summary">
+            <div>
+              <dt>Profile</dt>
+              <dd>
+                {exportSnapshot.query.profile === "share-safe"
+                  ? "Share-safe"
+                  : "Detailed"}
+              </dd>
+            </div>
+            <div>
+              <dt>Theme</dt>
+              <dd>{exportSnapshot.theme}</dd>
+            </div>
+            <div>
+              <dt>Window</dt>
+              <dd>
+                {exportSnapshot.query.window.since ?? "first observation"} to{" "}
+                {exportSnapshot.query.window.until ?? "latest observation"}
+              </dd>
+            </div>
+            <div>
+              <dt>Composition</dt>
+              <dd>{exportSnapshot.layout.widgets.length} visible widgets</dd>
+            </div>
+            <div>
+              <dt>Selection</dt>
+              <dd>
+                {Object.values(exportSnapshot.query.filters).reduce(
+                  (count, values) => count + values.length,
+                  0,
+                )}{" "}
+                active filters
+              </dd>
+            </div>
+          </dl>
+          <p>
+            The bounded selection, visible widget order and geometry are copied into one
+            autonomous file. Offline filters only refine that copied subset. Unsupported
+            saved widgets are omitted deterministically; an incompatible layout resolves
+            to the safe default before this review.
+          </p>
+          <div className="dialog-actions">
+            <button className="secondary" type="button" onClick={cancelOfflineExport}>
+              Cancel
+            </button>
+            <button
+              disabled={exporting}
+              ref={exportConfirmRef}
+              type="button"
+              onClick={() => void exportOffline()}
+            >
+              {exporting ? "Exporting…" : "Download snapshot"}
+            </button>
+          </div>
+        </dialog>
+      ) : null}
       {exportError ? (
         <section className="callout error" role="alert">
           <strong>Offline export failed.</strong>

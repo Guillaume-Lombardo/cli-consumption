@@ -81,7 +81,7 @@ describe("offline export BFF", () => {
     expect((await proxyOfflineExport(request(), "invalid")).status).toBe(401);
     expect((await proxyOfflineExport(request("not-json"), token)).status).toBe(400);
     expect(
-      (await proxyOfflineExport(request(`{"value":"${"x".repeat(65_536)}"}`), token))
+      (await proxyOfflineExport(request(`{"value":"${"x".repeat(131_072)}"}`), token))
         .status,
     ).toBe(413);
     configure(null);

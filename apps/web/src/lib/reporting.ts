@@ -19,6 +19,13 @@ export interface DashboardQueryV1 {
   window: { since: string | null; until: string | null };
 }
 
+export interface DashboardExportRequestV1 {
+  layout: DashboardLayoutV1;
+  query: DashboardQueryV1;
+  theme: "dark" | "light";
+  version: 1;
+}
+
 export interface DashboardDatasetResponse extends DashboardDatasetV1 {
   filters: {
     machines: string[];
@@ -181,12 +188,20 @@ export async function resetDashboardLayout(
 }
 
 /** Request a self-contained export for the exact query currently shown. */
-export async function fetchOfflineExport(query: DashboardQueryV1): Promise<Blob> {
+export async function fetchOfflineExport(
+  request: DashboardExportRequestV1,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  assertDashboardLayoutV1(request.layout);
+  if (request.theme !== "dark" && request.theme !== "light") {
+    throw new TypeError("invalid_dashboard_theme");
+  }
   const response = await fetch("/api/reporting/export", {
-    body: JSON.stringify(query),
+    body: JSON.stringify(request),
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
     method: "POST",
+    signal,
   });
   if (response.status === 401) throw new Error("session_expired");
   if (!response.ok) {

@@ -168,17 +168,23 @@ describe("DashboardLayout v1", () => {
   });
 
   it("drops a retired widget without breaking the remaining composition", () => {
-    const stored = structuredClone(DEFAULT_DASHBOARD_LAYOUT_V1) as unknown as {
-      widgets: Array<Record<string, unknown>>;
-    };
-    stored.widgets.splice(1, 0, {
+    const activity = structuredClone(DEFAULT_DASHBOARD_LAYOUT_V1.widgets[1]);
+    const retired = {
       config: {},
-      id: "retired",
-      position: { x: 0, y: 1 },
+      id: "PRIVATE_RETIRED_CANARY",
+      position: { x: 6, y: 1 },
       size: { height: 1, width: 6 },
       type: "retired-widget",
+    };
+    const resolved = resolveDashboardLayoutV1({
+      columns: 12,
+      version: 1,
+      widgets: [activity, retired],
     });
-    const resolved = resolveDashboardLayoutV1(stored);
-    expect(resolved).toEqual(DEFAULT_DASHBOARD_LAYOUT_V1);
+    expect(resolved.widgets).toEqual([activity]);
+    expect(JSON.stringify(resolved)).not.toContain("PRIVATE_RETIRED_CANARY");
+    expect(
+      resolveDashboardLayoutV1({ columns: 12, version: 1, widgets: [retired] }),
+    ).toEqual(DEFAULT_DASHBOARD_LAYOUT_V1);
   });
 });

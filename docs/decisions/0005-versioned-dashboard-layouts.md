@@ -33,6 +33,12 @@ and offline-HTML sinks reconstruct a detached strict model from its serialized f
 immediately before encoding. Post-validation mutation therefore produces the same fixed
 rejection as malformed input and cannot alter persistence or an export in progress.
 
+Authenticated web export copies the currently visible resolved layout into the strict
+ADR 0007 snapshot envelope. It does not send the revision or read persistence during
+generation, so later saves cannot change a reviewed or generated file. The legacy
+query-only API compatibility shape loads the current resolved layout, while the CLI
+keeps the safe default when no layout is supplied.
+
 The layout is separate from `DashboardQuery v1` (time window and operational filters)
 and `DashboardDataset v1` (minimized reporting rows). The shared contracts package is
 the canonical TypeScript type, registry, validator, default, and resolver used by both

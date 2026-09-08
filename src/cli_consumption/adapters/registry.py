@@ -346,10 +346,12 @@ ADAPTER_SPECS = (
         token_semantics="conversation-aggregate",
         qualification=_qualification(
             "mistral-vibe",
-            "CLI 2.24.5",
+            "CLI 2.25.0",
             "session meta JSON and messages JSONL",
-            "https://github.com/mistralai/mistral-vibe/tree/v2.24.5",
-            "Session aggregates only; no timing or historical model attribution.",
+            "https://github.com/mistralai/mistral-vibe/tree/v2.25.0",
+            "Assistant-message call counts with session-aggregate tokens; no timing "
+            "or historical model attribution.",
+            qualified_on="2026-09-08",
         ),
     ),
     AdapterSpec(

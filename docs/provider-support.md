@@ -86,7 +86,7 @@ changed between releases.
 | `cline` | SDK session schema (unversioned) | `2026-08-30` | SQLite session index and message JSON | [fixture](../tests/test_cline_adapter.py) | [Cline](https://github.com/cline/cline/tree/48d63852745460ff0fa3dfcc0457bbe2493841de) | No costs or arbitrary task metadata; artifacts must remain present. |
 | `kilo` | CLI 7.5.5 | `2026-08-30` | SQLite session, message, and part tables | [fixture](../tests/test_kilo_adapter.py) | [Kilo Code](https://github.com/Kilo-Org/kilocode/tree/v7.5.5) | CLI store only; no legacy IDE tasks, cloud sessions, or subagents. |
 | `kimi` | Wire v1 | `2026-08-30` | wire event JSONL | [fixture](../tests/test_kimi_adapter.py) | [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli/tree/cbc15c076d17f70fec9f89c90c0502e68657f505) | Selected model unavailable; hashed work directories are not reversed. |
-| `mistral-vibe` | CLI 2.24.5 | `2026-08-30` | session meta JSON and messages JSONL | [fixture](../tests/test_mistral_vibe_adapter.py) | [Mistral Vibe](https://github.com/mistralai/mistral-vibe/tree/v2.24.5) | Session aggregates only; no timing or historical model attribution. |
+| `mistral-vibe` | CLI 2.25.0 | `2026-09-08` | session meta JSON and messages JSONL | [fixture](../tests/test_mistral_vibe_adapter.py) | [Mistral Vibe](https://github.com/mistralai/mistral-vibe/tree/v2.25.0) | Assistant-message call counts with session-aggregate tokens; no timing or historical model attribution. |
 | `opencode` | CLI 1.18.23 / SQLite v2 | `2026-08-31` | SQLite session plus current message/part or projection records | [fixture](../tests/test_opencode_adapter.py) | [OpenCode](https://github.com/anomalyco/opencode/tree/v1.18.23) | No pre-v2 JSON, child sessions, context windows, or costs. |
 | `openhands` | CLI 1.16.0 | `2026-08-30` | SDK base state and event JSON | [fixture](../tests/test_openhands_adapter.py) | [OpenHands](https://github.com/OpenHands/OpenHands/tree/v1.16.0) | Local SDK persistence only; no cloud conversations or delegates. |
 | `pi` | session schema v3 | `2026-08-30` | branched session JSONL | [fixture](../tests/test_pi_adapter.py) | [Pi](https://github.com/earendil-works/pi/tree/853a80d26c90a14c1886f0ebb8ffaae133ca2185) | All branches counted; no branch graph, context windows, or durations. |
@@ -121,8 +121,8 @@ refresh it atomically.
 
 Mistral Vibe CLI reads top-level session directories under
 `~/.vibe/logs/session/`, when interaction logging is enabled. The adapter was
-qualified against Mistral Vibe 2.24.5 and its current `meta.json` plus
-`messages.jsonl` format in August 2026. It extracts stable session and user-message
+qualified against Mistral Vibe 2.25.0 and its current `meta.json` plus
+`messages.jsonl` format in September 2026. It extracts stable session and user-message
 identifiers, session timestamps, the latest active model alias, cumulative token
 usage, function names from assistant tool calls, and compaction markers. Working
 directories are inspected only for explicit project mappings. Titles, prompts,
@@ -131,14 +131,17 @@ metadata, environment values other than the mapped working directory, prices,
 arbitrary configuration, and raw messages are discarded.
 
 Vibe persists prompt, cached-prompt, and completion counters only as cumulative
-session statistics. The adapter therefore emits one unattributed aggregate model
-call, subtracts cached prompt tokens from uncached input, and does not assign token
-usage to individual turns. The persisted active model is the latest selection and is
-not attributed historically to turns. Message records have no timestamps, so turns,
-tools, and compactions do not expose event times or durations. Child-agent sessions,
-model changes, cache writes, reasoning tokens, context-window samples, costs, tool
-outcomes, and provider-reported latency are not collected. Vibe's internal session
-format can change without notice, and local token events are not billing data.
+session statistics. The adapter counts each persisted assistant message as a model
+call and associates it with the active user turn when available. To preserve exact
+totals without inventing a per-call split, it attaches the complete session aggregate
+to the final structural call while leaving earlier calls at zero, subtracts cached
+prompt tokens from uncached input, and leaves turn token totals at zero. The persisted
+active model is the latest selection and is not attributed historically to turns.
+Message records have no timestamps, so turns, tools, and compactions do not expose
+event times or durations. Child-agent sessions, model changes, cache writes, reasoning
+tokens, context-window samples, costs, tool outcomes, and provider-reported latency are
+not collected. Vibe's internal session format can change without notice, and local
+token events are not billing data.
 
 ## Codex
 

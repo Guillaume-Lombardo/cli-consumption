@@ -84,6 +84,7 @@ class MistralVibeAdapter:
         started_at = timestamp(source.metadata.get("start_time"))
         ended_at = timestamp(source.metadata.get("end_time"))
         active_turn: dict[str, Any] | None = None
+        assistant_turn_ids: list[str | None] = []
         turn_number = 0
         tool_number = 0
         compaction_number = 0
@@ -125,6 +126,8 @@ class MistralVibeAdapter:
                 continue
             if active_turn is not None:
                 active_turn["status"] = "completed"
+                active_turn["model_calls"] += 1
+            assistant_turn_ids.append(active_turn["id"] if active_turn else None)
             raw_tool_calls = message.get("tool_calls")
             if not isinstance(raw_tool_calls, list):
                 continue
@@ -160,20 +163,25 @@ class MistralVibeAdapter:
         )
         config = mapping(source.metadata.get("config"))
         model = label(config.get("active_model"), 255) or "unknown"
-        model_calls = 0
         totals = empty_tokens()
-        if usage["total_tokens"] > 0 or counter(stats.get("steps")) > 0:
-            model_calls = 1
+        if usage["total_tokens"] > 0:
             add_tokens(totals, usage)
+
+        for sequence, turn_id in enumerate(assistant_turn_ids, 1):
+            call_usage = (
+                usage if sequence == len(assistant_turn_ids) else empty_tokens()
+            )
             snapshot.model_calls.append(
                 {
-                    "id": f"{conversation_id}:model:aggregate",
+                    "id": f"{conversation_id}:model:{sequence}",
                     "conversation_id": conversation_id,
-                    "turn_id": None,
-                    "sequence": 1,
-                    "timestamp": iso(ended_at),
+                    "turn_id": turn_id,
+                    "sequence": sequence,
+                    "timestamp": iso(ended_at)
+                    if sequence == len(assistant_turn_ids)
+                    else None,
                     "model": model,
-                    **usage,
+                    **call_usage,
                 }
             )
 
@@ -193,9 +201,9 @@ class MistralVibeAdapter:
                 "ended_at": iso(ended_at),
                 "duration_seconds": _duration(started_at, ended_at),
                 "source": "local-session-json",
-                "models": [model] if model_calls else [],
+                "models": [model] if assistant_turn_ids else [],
                 "iterations": turn_number,
-                "model_calls": model_calls,
+                "model_calls": len(assistant_turn_ids),
                 "tool_calls": tool_number,
                 "compactions": compaction_number,
                 "event_count": source.event_count,

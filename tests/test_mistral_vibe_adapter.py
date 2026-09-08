@@ -34,7 +34,7 @@ def session(home: Path, *, extra: bool = False) -> Path:
         },
         "title": CANARY,
         "stats": {
-            "steps": 3,
+            "steps": 6 if extra else 5,
             "session_prompt_tokens": 100,
             "session_completion_tokens": 20,
             "session_cached_tokens": 40,
@@ -118,7 +118,7 @@ def test_collects_session_aggregate_usage_turns_tools_and_compactions(
     assert conversation["project_source"] == "mapping"
     assert conversation["models"] == ["devstral-medium-latest"]
     assert conversation["iterations"] == 2
-    assert conversation["model_calls"] == 1
+    assert conversation["model_calls"] == 3
     assert conversation["tool_calls"] == 1
     assert conversation["compactions"] == 1
     assert conversation["duration_seconds"] == 300
@@ -132,8 +132,20 @@ def test_collects_session_aggregate_usage_turns_tools_and_compactions(
         "completed",
         "completed",
     ]
-    assert all(turn["model_calls"] == 0 for turn in snapshot.turns)
-    assert snapshot.model_calls[0]["turn_id"] is None
+    assert [turn["model_calls"] for turn in snapshot.turns] == [2, 1]
+    assert [call["turn_id"] for call in snapshot.model_calls] == [
+        snapshot.turns[0]["id"],
+        snapshot.turns[0]["id"],
+        snapshot.turns[1]["id"],
+    ]
+    assert [call["id"] for call in snapshot.model_calls] == [
+        "mistral-vibe:vibe-session-1:model:1",
+        "mistral-vibe:vibe-session-1:model:2",
+        "mistral-vibe:vibe-session-1:model:3",
+    ]
+    assert all(call["total_tokens"] == 0 for call in snapshot.model_calls[:-1])
+    assert snapshot.model_calls[-1]["total_tokens"] == 120
+    assert sum(call["total_tokens"] for call in snapshot.model_calls) == 120
     assert snapshot.tool_calls[0]["tool_name"] == "bash"
     assert snapshot.compaction_events[0]["turn_id"] == snapshot.turns[0]["id"]
     assert all(setting["model"] is None for setting in snapshot.turn_settings)
@@ -155,6 +167,8 @@ def test_deduplicates_and_tolerates_malformed_or_partial_sessions(
     assert snapshot.duplicate_conversations == 1
     assert snapshot.malformed_records == 3
     assert snapshot.conversations[0]["source_machine"] == "laptop"
+    assert snapshot.conversations[0]["model_calls"] == 4
+    assert len(snapshot.model_calls) == 4
     assert CANARY not in json.dumps(snapshot.to_dict())
     assert (
         snapshot.to_dict()

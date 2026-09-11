@@ -26,6 +26,7 @@ EXTRA_RUNTIME_LICENSES = {
     / "LICENSE"
 }
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+EPHEMERAL_VALUE = "<generated-at-build-time>"
 
 
 def main() -> None:
@@ -152,7 +153,8 @@ def _check_zip_contents(staging: Path) -> None:
             changed = [
                 name
                 for name, path in expected.items()
-                if archive.read(name) != path.read_bytes()
+                if _normalized_runtime_content(name, archive.read(name))
+                != _normalized_runtime_content(name, path.read_bytes())
             ][:10]
             if changed:
                 raise SystemExit(
@@ -161,6 +163,31 @@ def _check_zip_contents(staging: Path) -> None:
                 )
     except (FileNotFoundError, zipfile.BadZipFile) as error:
         raise SystemExit("The bundled dashboard runtime is invalid.") from error
+
+
+def _normalized_runtime_content(name: str, contents: bytes) -> bytes:
+    if name.endswith("/prerender-manifest.json"):
+        manifest = json.loads(contents)
+        preview = manifest["preview"]
+        for key in (
+            "previewModeId",
+            "previewModeSigningKey",
+            "previewModeEncryptionKey",
+        ):
+            preview[key] = EPHEMERAL_VALUE
+        return json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    if name.endswith("/server-reference-manifest.json"):
+        manifest = json.loads(contents)
+        manifest["encryptionKey"] = EPHEMERAL_VALUE
+        return json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    if name.endswith("/server-reference-manifest.js"):
+        prefix = b"self.__RSC_SERVER_MANIFEST="
+        if not contents.startswith(prefix):
+            return contents
+        manifest = json.loads(json.loads(contents[len(prefix) :]))
+        manifest["encryptionKey"] = EPHEMERAL_VALUE
+        return json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    return contents
 
 
 if __name__ == "__main__":

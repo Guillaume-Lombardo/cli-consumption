@@ -50,3 +50,36 @@ def test_runtime_check_rejects_stale_contents(monkeypatch, tmp_path: Path) -> No
 
     with pytest.raises(SystemExit, match="out of date"):
         build_web_runtime._check_zip_contents(staging)
+
+
+@pytest.mark.parametrize(
+    ("name", "first", "second"),
+    [
+        (
+            "runtime/apps/web/.next/prerender-manifest.json",
+            b'{"version":4,"preview":{"previewModeId":"first",'
+            b'"previewModeSigningKey":"first","previewModeEncryptionKey":"first"}}',
+            b'{"version":4,"preview":{"previewModeId":"second",'
+            b'"previewModeSigningKey":"second",'
+            b'"previewModeEncryptionKey":"second"}}',
+        ),
+        (
+            "runtime/apps/web/.next/server/server-reference-manifest.json",
+            b'{"node":{},"edge":{},"encryptionKey":"first"}',
+            b'{"node":{},"edge":{},"encryptionKey":"second"}',
+        ),
+        (
+            "runtime/apps/web/.next/server/server-reference-manifest.js",
+            b'self.__RSC_SERVER_MANIFEST="{\\"node\\":{},'
+            b'\\"edge\\":{},\\"encryptionKey\\":\\"first\\"}"',
+            b'self.__RSC_SERVER_MANIFEST="{\\"node\\":{},'
+            b'\\"edge\\":{},\\"encryptionKey\\":\\"second\\"}"',
+        ),
+    ],
+)
+def test_runtime_check_ignores_only_next_generated_secrets(
+    name: str, first: bytes, second: bytes
+) -> None:
+    assert build_web_runtime._normalized_runtime_content(
+        name, first
+    ) == build_web_runtime._normalized_runtime_content(name, second)

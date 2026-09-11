@@ -218,6 +218,16 @@ arbitrary metadata remain excluded. The exact fields, scopes, limits, cursors, g
 errors, compatibility rules, and residual disclosures are recorded in
 [ADR 0004](decisions/0004-persistent-dashboard-contracts.md).
 
+Local `serve --front` extracts the bundled production Next.js runtime into a private
+temporary directory and removes it at shutdown. It binds the dashboard only to
+loopback, generates transient scoped API and session credentials when they were not
+configured, and never prints those values. The child process receives only required
+dashboard configuration plus a small allowlist of process-runtime variables; unrelated
+environment values and the database URL are not forwarded. The visible startup output
+discloses only the configured local dashboard origin. The dashboard password is read
+from its dedicated environment variable or a hidden terminal prompt and remains an
+independent credential.
+
 The persistent dashboard renders project, machine, provider, model, tool, role, status,
 timestamp, token, and workflow aggregates only after authentication; those values
 remain private operational metadata. Its URL may contain the selected period and UTC

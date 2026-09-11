@@ -191,6 +191,21 @@ uv run cli-consumption serve \
   --host 0.0.0.0
 ```
 
+For a local, single-command dashboard, install Node.js 20.9 or newer and run:
+
+```bash
+uv tool run cli-consumption serve --front
+```
+
+The wheel contains the production Next.js application, so this path needs neither a
+repository checkout nor npm. The command binds both services to loopback, prompts for
+an independent dashboard password of at least 12 characters, and creates transient
+scoped API and session credentials when their normal environment variables are not
+set. Set `CLI_CONSUMPTION_DASHBOARD_PASSWORD` for non-interactive startup. Use
+`--front-port` to change the dashboard port; `--front-host` deliberately accepts only
+a loopback address. Production deployments should continue to run the two services
+separately as described in the deployment guide.
+
 Send locally detected snapshots from another machine:
 
 ```bash

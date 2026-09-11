@@ -6,7 +6,7 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
-    "start": "next start"
+    "start": "node .next/standalone/apps/web/server.js"
   },
   "dependencies": {
     "@cli-consumption/analytics": "0.0.0",

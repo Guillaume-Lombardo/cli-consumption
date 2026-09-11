@@ -104,7 +104,16 @@ not merely edit `.env`, because that would strand the application.
 
 The persistent dashboard is an optional Node service in `apps/web/`. It must reach the
 collector over a private or TLS-protected route, but it must never receive the database
-URL or ingestion/export credentials. Install and build it from the locked workspace:
+URL or ingestion credentials. It receives the export token only for its server-side
+offline-download route.
+
+For local use, `uv tool run cli-consumption serve --front` starts the API and the
+bundled production dashboard without a checkout or npm installation. It still requires
+Node.js 20.9 or newer, keeps the dashboard listener on loopback, and prompts for a
+password unless `CLI_CONSUMPTION_DASHBOARD_PASSWORD` is set. This convenience mode is
+not a replacement for the independently supervised production topology below.
+
+For production, install and build it from the locked workspace:
 
 ```bash
 npm ci
@@ -128,8 +137,8 @@ Inject these server-only values through the deployment platform's secret manager
 Start the built service without placing secrets on the command line:
 
 ```bash
-NEXT_TELEMETRY_DISABLED=1 npm run start --workspace @cli-consumption/web -- \
-  --hostname 127.0.0.1 --port 3000
+HOSTNAME=127.0.0.1 PORT=3000 NEXT_TELEMETRY_DISABLED=1 \
+  npm run start --workspace @cli-consumption/web
 ```
 
 Terminate TLS at a reverse proxy and forward the original `Host` and scheme. Keep the

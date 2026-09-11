@@ -33,16 +33,14 @@ CLI Consumption requires Python 3.11 or newer. Run it directly from PyPI with `u
 uv tool run cli-consumption providers
 ```
 
-The default package covers local collection, SQLite storage, and exports. Install only
-the optional runtime capabilities you use:
+The default package covers local collection, SQLite storage, exports, and the local
+HTTP server. Install only the optional runtime capabilities you use:
 
 - `cli-consumption[sync]` for the sync client;
-- `cli-consumption[server]` for the collector service;
 - `cli-consumption[postgres]` for PostgreSQL;
 - `cli-consumption[snapshots]` for signed, compressed offline snapshot files.
 
-Extras can be combined, for example `cli-consumption[server,postgres]` on a central
-collector.
+Extras can be combined, for example `cli-consumption[postgres]` on a central collector.
 
 ## Quick start
 
@@ -61,7 +59,7 @@ tables are generated only when `--csv` is passed.
 Dashboard development lives in the locked npm workspace under `packages/`. It builds
 provider-neutral ESM analytics, shared React presentation primitives, and deterministic
 React/Tailwind browser assets that Python embeds in the wheel. The React runtime is the
-only offline renderer; installing or using the Python CLI does not require Node.js.
+only offline renderer; collection and offline reporting do not require Node.js.
 
 The authenticated persistent dashboard lives in `apps/web/`. It reads the same
 minimized reporting contract through a server-side Next.js BFF: the browser never
@@ -146,6 +144,11 @@ for ingestion, idempotency, migrations, report limits, and collector behavior.
 Run `uv run cli-consumption COMMAND --help` for every option. The
 [usage guide](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/usage.md)
 contains copy-ready examples.
+
+To run the API and bundled persistent dashboard together, install Node.js 20.9 or
+newer and use `uv tool run cli-consumption serve --front`. The command asks for a
+dashboard password when `CLI_CONSUMPTION_DASHBOARD_PASSWORD` is not set; it does not
+require a repository checkout or npm install.
 
 ## Documentation
 

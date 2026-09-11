@@ -339,22 +339,20 @@ wheels = [
 
 [[package]]
 name = "cli-consumption"
-version = "0.4.4"
+version = "0.4.5"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "fastapi" },
     { name = "pydantic" },
     { name = "sqlalchemy" },
     { name = "typer" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 postgres = [
     { name = "psycopg", extra = ["binary"] },
-]
-server = [
-    { name = "fastapi" },
-    { name = "uvicorn" },
 ]
 snapshots = [
     { name = "cryptography" },
@@ -384,13 +382,13 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.14" },
     { name = "cryptography", marker = "extra == 'snapshots'", specifier = ">=45" },
-    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'sync'", specifier = ">=0.27" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "typer", specifier = ">=0.15" },
-    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34" },
+    { name = "uvicorn", specifier = ">=0.34" },
 ]
 provides-extras = ["postgres", "server", "sync", "snapshots"]
 

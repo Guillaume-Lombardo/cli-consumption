@@ -18,7 +18,7 @@ def run_cli(*args: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
     return result
 
 
-for package in ("cryptography", "fastapi", "httpx", "psycopg", "uvicorn"):
+for package in ("cryptography", "httpx", "psycopg"):
     if find_spec(package) is not None:
         raise AssertionError(f"optional dependency unexpectedly installed: {package}")
 
@@ -26,6 +26,8 @@ run_cli("providers")
 run_cli("collect", "--help")
 run_cli("export", "--help")
 run_cli("snapshot", "--help")
+if find_spec("fastapi") is None or find_spec("uvicorn") is None:
+    raise AssertionError("server dependencies are missing from the default install")
 
 with tempfile.TemporaryDirectory() as temporary_directory:
     root = Path(temporary_directory)
@@ -51,7 +53,6 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     optional_commands = (
         ("sync", ("--endpoint", "https://collector.test"), "sync"),
-        ("serve", (), "server"),
         (
             "export",
             (

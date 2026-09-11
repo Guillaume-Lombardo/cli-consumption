@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import tempfile
@@ -28,6 +29,13 @@ ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify that the bundled runtime has the same uncompressed contents",
+    )
+    arguments = parser.parse_args()
     server = STANDALONE / "apps" / "web" / "server.js"
     if not server.is_file() or not STATIC.is_dir():
         raise SystemExit("Build the Next.js dashboard before packaging its runtime.")
@@ -40,7 +48,10 @@ def main() -> None:
         _remove_platform_specific_image_runtime(staging)
         _normalize_build_root(staging)
         _copy_runtime_licenses(staging)
-        _write_deterministic_zip(staging)
+        if arguments.check:
+            _check_zip_contents(staging)
+        else:
+            _write_deterministic_zip(staging)
 
 
 def _remove_platform_specific_image_runtime(staging: Path) -> None:
@@ -120,6 +131,23 @@ def _write_deterministic_zip(staging: Path) -> None:
             information.external_attr = 0o100644 << 16
             archive.writestr(information, path.read_bytes(), compresslevel=9)
     temporary.replace(OUTPUT)
+
+
+def _check_zip_contents(staging: Path) -> None:
+    expected = {
+        (Path("runtime") / path.relative_to(staging)).as_posix(): path
+        for path in sorted(staging.rglob("*"))
+        if path.is_file() and path.suffix != ".map"
+    }
+    try:
+        with zipfile.ZipFile(OUTPUT) as archive:
+            if sorted(archive.namelist()) != sorted(expected):
+                raise SystemExit("The bundled dashboard runtime is out of date.")
+            for name, path in expected.items():
+                if archive.read(name) != path.read_bytes():
+                    raise SystemExit("The bundled dashboard runtime is out of date.")
+    except (FileNotFoundError, zipfile.BadZipFile) as error:
+        raise SystemExit("The bundled dashboard runtime is invalid.") from error
 
 
 if __name__ == "__main__":

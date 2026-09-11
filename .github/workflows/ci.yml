@@ -45,9 +45,9 @@ jobs:
       - name: Install the pinned Chromium browser
         run: npx playwright install --with-deps chromium
       - name: Build the authenticated dashboard
-        run: npm run build:web
+        run: npm run build:web:source
       - name: Verify the bundled dashboard runtime is current
-        run: git diff --exit-code -- src/cli_consumption/web_runtime.zip
+        run: python3 tools/build_web_runtime.py --check
       - name: Test the authenticated dashboard
         run: npx playwright test -c apps/web/playwright.config.ts
 

@@ -142,10 +142,23 @@ def _check_zip_contents(staging: Path) -> None:
     try:
         with zipfile.ZipFile(OUTPUT) as archive:
             if sorted(archive.namelist()) != sorted(expected):
-                raise SystemExit("The bundled dashboard runtime is out of date.")
-            for name, path in expected.items():
-                if archive.read(name) != path.read_bytes():
-                    raise SystemExit("The bundled dashboard runtime is out of date.")
+                archive_names = set(archive.namelist())
+                missing = sorted(set(expected) - archive_names)[:10]
+                unexpected = sorted(archive_names - set(expected))[:10]
+                raise SystemExit(
+                    "The bundled dashboard runtime file list is out of date: "
+                    f"missing={missing!r}, unexpected={unexpected!r}."
+                )
+            changed = [
+                name
+                for name, path in expected.items()
+                if archive.read(name) != path.read_bytes()
+            ][:10]
+            if changed:
+                raise SystemExit(
+                    "The bundled dashboard runtime contents are out of date: "
+                    f"changed={changed!r}."
+                )
     except (FileNotFoundError, zipfile.BadZipFile) as error:
         raise SystemExit("The bundled dashboard runtime is invalid.") from error
 

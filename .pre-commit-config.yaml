@@ -8,6 +8,7 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-added-large-files
+        exclude: ^src/cli_consumption/web_runtime\.zip$
       - id: check-merge-conflict
       - id: check-toml
       - id: check-yaml

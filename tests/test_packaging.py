@@ -19,13 +19,15 @@ def test_python_support_and_optional_dependencies_are_declared() -> None:
     assert "Programming Language :: Python :: 3.11" in project["classifiers"]
     assert project["dependencies"] == [
         "alembic>=1.14",
+        "fastapi>=0.115",
         "pydantic>=2.10",
         "sqlalchemy>=2.0",
         "typer>=0.15",
+        "uvicorn>=0.34",
     ]
     assert project["optional-dependencies"] == {
         "postgres": ["psycopg[binary]>=3.2"],
-        "server": ["fastapi>=0.115", "uvicorn>=0.34"],
+        "server": [],
         "snapshots": ["cryptography>=45"],
         "sync": ["httpx>=0.27"],
     }

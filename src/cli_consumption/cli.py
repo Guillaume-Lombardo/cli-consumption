@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 import os
 import platform
+import secrets
+import subprocess
 import tempfile
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Never, TextIO, TypedDict
+from types import ModuleType
+from typing import Annotated, Never, Protocol, TextIO, TypedDict, cast
 
 import typer
 from sqlalchemy.engine import Engine
@@ -77,6 +81,12 @@ class IncrementalIngestion(TypedDict):
     skipped: int
     malformed: int
     batch_duplicates: int
+
+
+class _ServerProcess(Protocol):
+    should_exit: bool
+
+    def run(self) -> None: ...
 
 
 class _BoundedStagingWriter:
@@ -1038,16 +1048,41 @@ def serve(
             help="Environment variable containing the dashboard layout mutation token."
         ),
     ] = "CLI_CONSUMPTION_LAYOUT_TOKEN",
+    front: Annotated[
+        bool,
+        typer.Option(help="Also run the bundled persistent Next.js dashboard."),
+    ] = False,
+    front_host: Annotated[
+        str,
+        typer.Option(help="Loopback address for the bundled dashboard."),
+    ] = "127.0.0.1",
+    front_port: Annotated[
+        int,
+        typer.Option(help="Port for the bundled dashboard."),
+    ] = 3000,
+    front_password_env: Annotated[
+        str,
+        typer.Option(
+            help="Environment variable containing the dashboard login password."
+        ),
+    ] = "CLI_CONSUMPTION_DASHBOARD_PASSWORD",
 ) -> None:
-    """Run the optional central HTTP collector."""
+    """Run the central HTTP collector and optionally its dashboard."""
     try:
         import uvicorn
 
         from cli_consumption.api import create_app
     except ModuleNotFoundError:
         raise typer.BadParameter(
-            "serve requires optional dependencies; install cli-consumption[server]"
+            "serve requires FastAPI and Uvicorn; reinstall cli-consumption"
         ) from None
+
+    if front and front_host not in {"127.0.0.1", "localhost", "::1"}:
+        raise typer.BadParameter("--front-host must be a loopback address.")
+    if front and port == front_port:
+        raise typer.BadParameter("--port and --front-port must be different.")
+    if not 1 <= port <= 65535 or not 1 <= front_port <= 65535:
+        raise typer.BadParameter("Server ports must be between 1 and 65535.")
 
     token = os.environ.get(token_env)
     read_token = os.environ.get(read_token_env)
@@ -1057,6 +1092,10 @@ def serve(
         raise typer.BadParameter(
             "Configured token environment variables must be non-empty."
         )
+    if front:
+        read_token = read_token or secrets.token_urlsafe(32)
+        export_token = export_token or secrets.token_urlsafe(32)
+        layout_token = layout_token or secrets.token_urlsafe(32)
     if (
         token is None
         and read_token is None
@@ -1090,9 +1129,151 @@ def serve(
                 layout_token=layout_token,
             )
         )
-        uvicorn.run(application, host=host, port=port, access_log=False)
+        if not front:
+            uvicorn.run(application, host=host, port=port, access_log=False)
+            return
+        _serve_with_frontend(
+            uvicorn,
+            application,
+            host=host,
+            port=port,
+            front_host=front_host,
+            front_port=front_port,
+            front_password_env=front_password_env,
+            read_token=cast(str, read_token),
+            export_token=cast(str, export_token),
+            layout_token=cast(str, layout_token),
+        )
     finally:
         engine.dispose()
+
+
+def _serve_with_frontend(
+    uvicorn: ModuleType,
+    application: object,
+    *,
+    host: str,
+    port: int,
+    front_host: str,
+    front_port: int,
+    front_password_env: str,
+    read_token: str,
+    export_token: str,
+    layout_token: str,
+) -> None:
+    from cli_consumption.frontend import (
+        FrontendRuntimeError,
+        find_node_runtime,
+        frontend_environment,
+        materialize_frontend_runtime,
+        start_frontend,
+        stop_frontend,
+    )
+
+    password = os.environ.get(front_password_env)
+    if password is None:
+        password = typer.prompt("Dashboard password", hide_input=True)
+    if len(password) < 12:
+        raise typer.BadParameter(
+            f"{front_password_env} must contain at least 12 characters."
+        )
+    session_secret = os.environ.get("CLI_CONSUMPTION_SESSION_SECRET")
+    if session_secret is not None and len(session_secret.encode("utf-8")) < 32:
+        raise typer.BadParameter(
+            "CLI_CONSUMPTION_SESSION_SECRET must contain at least 32 bytes."
+        )
+    session_secret = session_secret or secrets.token_urlsafe(32)
+    api_host = {
+        "0.0.0.0": "127.0.0.1",  # noqa: S104 - converts an explicit bind address
+        "::": "::1",
+    }.get(host, host)
+    api_origin = _http_origin(api_host, port)
+    front_origin = _http_origin(front_host, front_port)
+
+    try:
+        node = find_node_runtime()
+        environment = frontend_environment(
+            api_url=api_origin,
+            origin=front_origin,
+            host=front_host,
+            port=front_port,
+            password=password,
+            read_token=read_token,
+            export_token=export_token,
+            layout_token=layout_token,
+            session_secret=session_secret,
+        )
+        with materialize_frontend_runtime() as runtime:
+            frontend = start_frontend(node, runtime, environment)
+            typer.echo(f"Dashboard: {front_origin}")
+            _supervise_servers(
+                uvicorn,
+                application,
+                frontend,
+                host=host,
+                port=port,
+                stop_frontend=stop_frontend,
+            )
+    except FrontendRuntimeError as error:
+        messages = {
+            "frontend_node_missing": "serve --front requires Node.js 20.9 or newer.",
+            "frontend_node_invalid": "The Node.js runtime could not be validated.",
+            "frontend_node_unsupported": (
+                "serve --front requires Node.js 20.9 or newer."
+            ),
+            "frontend_runtime_missing": "The bundled dashboard runtime is missing.",
+            "frontend_runtime_invalid": "The bundled dashboard runtime is invalid.",
+            "frontend_start_failed": "The bundled dashboard could not be started.",
+            "frontend_stop_failed": "The bundled dashboard could not be stopped.",
+        }
+        typer.echo(f"Error: {messages[str(error)]}", err=True)
+        raise typer.Exit(1) from None
+
+
+def _supervise_servers(
+    uvicorn: ModuleType,
+    application: object,
+    frontend: subprocess.Popen[bytes],
+    *,
+    host: str,
+    port: int,
+    stop_frontend: Callable[[subprocess.Popen[bytes]], None],
+) -> None:
+    server = uvicorn.Server(
+        uvicorn.Config(application, host=host, port=port, access_log=False)
+    )
+    failures: list[BaseException] = []
+
+    def run_backend() -> None:
+        try:
+            server.run()
+        except BaseException as error:
+            failures.append(error)
+
+    backend = threading.Thread(target=run_backend, name="cli-consumption-api")
+    backend.start()
+    frontend_failed = False
+    try:
+        while backend.is_alive() and frontend.poll() is None:
+            backend.join(timeout=0.1)
+        frontend_failed = frontend.poll() is not None and backend.is_alive()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.should_exit = True
+        stop_frontend(frontend)
+        backend.join(timeout=10)
+    if backend.is_alive() or failures:
+        typer.echo("Error: The API server stopped unexpectedly.", err=True)
+        raise typer.Exit(1)
+    if frontend_failed:
+        typer.echo("Error: The dashboard server stopped unexpectedly.", err=True)
+        raise typer.Exit(1)
+
+
+def _http_origin(host: str, port: int) -> str:
+    rendered_host = f"[{host}]" if ":" in host else host
+    return f"http://{rendered_host}:{port}"
 
 
 def _collect_incrementally(

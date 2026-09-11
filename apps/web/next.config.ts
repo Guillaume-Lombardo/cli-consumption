@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  generateBuildId: async () => "cli-consumption-dashboard",
+  images: { unoptimized: true },
+  output: "standalone",
+  outputFileTracingExcludes: {
+    "/*": ["node_modules/sharp/**/*", "node_modules/@img/**/*"],
+  },
   async headers() {
     return [
       {

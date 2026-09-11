@@ -32,7 +32,7 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: "npm run start -- --hostname 127.0.0.1 --port 4310",
+      command: "npm run start",
       env: {
         CLI_CONSUMPTION_API_URL: "http://127.0.0.1:4311",
         CLI_CONSUMPTION_DASHBOARD_ORIGIN: dashboardOrigin,
@@ -42,6 +42,8 @@ export default defineConfig({
         CLI_CONSUMPTION_LAYOUT_TOKEN: "e2e-layout-token",
         CLI_CONSUMPTION_SESSION_SECRET:
           "e2e-session-secret-with-at-least-thirty-two-bytes",
+        HOSTNAME: "127.0.0.1",
+        PORT: "4310",
       },
       port: 4310,
       reuseExistingServer: !process.env.CI,

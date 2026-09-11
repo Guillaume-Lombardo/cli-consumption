@@ -6,6 +6,12 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `serve --front` now launches the FastAPI service and a bundled production Next.js
+  dashboard from the Python distribution, without requiring a repository checkout or
+  npm installation at runtime.
+
 ## [0.4.4] - 2026-09-08
 
 ### Fixed

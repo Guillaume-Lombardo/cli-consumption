@@ -3,11 +3,15 @@ from __future__ import annotations
 import builtins
 import json
 import sqlite3
-from contextlib import closing
+import subprocess
+import time
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+import typer
+import uvicorn
 from click.utils import strip_ansi
 from storage_helpers import read_table
 from typer.testing import CliRunner
@@ -572,7 +576,7 @@ def test_sync_strict_refuses_the_complete_batch_before_transport(monkeypatch) ->
     }
 
 
-def test_serve_reports_missing_optional_dependencies_without_a_traceback(
+def test_serve_reports_incomplete_installation_without_a_traceback(
     monkeypatch,
 ) -> None:
     real_import = builtins.__import__
@@ -586,7 +590,7 @@ def test_serve_reports_missing_optional_dependencies_without_a_traceback(
     result = runner.invoke(app, ["serve"])
 
     assert result.exit_code == 2
-    assert "cli-consumption[server]" in normalized_cli_output(result.output)
+    assert "reinstall cli-consumption" in normalized_cli_output(result.output)
     assert "Traceback" not in result.output
 
 
@@ -660,6 +664,127 @@ def test_serve_passes_separate_reporting_credentials(monkeypatch) -> None:
         "export_token": "export-value",
         "layout_token": "layout-value",
     }
+
+
+def test_serve_front_launches_bundled_dashboard_with_transient_credentials(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class FakeEngine:
+        disposed = False
+
+        def dispose(self) -> None:
+            self.disposed = True
+
+    class FakeProcess:
+        pass
+
+    engine = FakeEngine()
+    process = FakeProcess()
+    observed: dict[str, object] = {}
+
+    def create(_engine, ingestion, **kwargs):
+        observed["application_tokens"] = {"ingestion": ingestion, **kwargs}
+        return "application"
+
+    @contextmanager
+    def materialize():
+        yield tmp_path
+
+    def start(node, runtime, environment):
+        observed.update(node=node, runtime=runtime, environment=environment)
+        return process
+
+    def supervise(uvicorn, application, child, **kwargs):
+        observed.update(
+            uvicorn=uvicorn,
+            application=application,
+            child=child,
+            supervision=kwargs,
+        )
+
+    dashboard_canary = "CANARY_DASHBOARD_VALUE_09c1"
+    monkeypatch.delenv("CLI_CONSUMPTION_DASHBOARD_PASSWORD", raising=False)
+    monkeypatch.setenv("CANARY_UNRELATED_SECRET", "must-not-be-forwarded")
+    monkeypatch.setattr(cli_module, "_open_database", lambda _database: engine)
+    monkeypatch.setattr("cli_consumption.api.create_app", create)
+    monkeypatch.setattr("cli_consumption.frontend.find_node_runtime", lambda: "/node")
+    monkeypatch.setattr(
+        "cli_consumption.frontend.materialize_frontend_runtime", materialize
+    )
+    monkeypatch.setattr("cli_consumption.frontend.start_frontend", start)
+    monkeypatch.setattr(cli_module, "_supervise_servers", supervise)
+
+    result = runner.invoke(app, ["serve", "--front"], input=f"{dashboard_canary}\n")
+
+    assert result.exit_code == 0
+    assert engine.disposed is True
+    assert dashboard_canary not in result.output
+    assert observed["node"] == "/node"
+    assert observed["runtime"] == tmp_path
+    assert observed["application"] == "application"
+    assert observed["child"] is process
+    environment = observed["environment"]
+    assert isinstance(environment, dict)
+    assert "CANARY_UNRELATED_SECRET" not in environment
+    assert environment["CLI_CONSUMPTION_DASHBOARD_PASSWORD"] == dashboard_canary
+    assert environment["CLI_CONSUMPTION_API_URL"] == "http://127.0.0.1:8765"
+    assert environment["CLI_CONSUMPTION_DASHBOARD_ORIGIN"] == ("http://127.0.0.1:3000")
+    tokens = observed["application_tokens"]
+    assert isinstance(tokens, dict)
+    assert tokens["read_token"] == environment["CLI_CONSUMPTION_READ_TOKEN"]
+    assert tokens["export_token"] == environment["CLI_CONSUMPTION_EXPORT_TOKEN"]
+    assert tokens["layout_token"] == environment["CLI_CONSUMPTION_LAYOUT_TOKEN"]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["serve", "--front", "--front-host", ".".join(["0", "0", "0", "0"])],
+        ["serve", "--front", "--port", "3000"],
+        ["serve", "--front", "--front-port", "70000"],
+    ],
+)
+def test_serve_front_rejects_unsafe_or_conflicting_listeners(
+    arguments: list[str],
+) -> None:
+    result = runner.invoke(app, arguments)
+
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+
+
+def test_serve_front_stops_api_when_dashboard_exits(monkeypatch, capsys) -> None:
+    class FakeServer:
+        should_exit = False
+
+        def run(self) -> None:
+            while not self.should_exit:
+                time.sleep(0.001)
+
+    class ExitedProcess:
+        def poll(self) -> int:
+            return 1
+
+    server = FakeServer()
+    process = cast(subprocess.Popen[bytes], ExitedProcess())
+    stopped: list[subprocess.Popen[bytes]] = []
+    monkeypatch.setattr(uvicorn, "Config", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(uvicorn, "Server", lambda _config: server)
+
+    with pytest.raises(typer.Exit) as caught:
+        cli_module._supervise_servers(
+            uvicorn,
+            "application",
+            process,
+            host="127.0.0.1",
+            port=8765,
+            stop_frontend=stopped.append,
+        )
+
+    assert caught.value.exit_code == 1
+    assert server.should_exit is True
+    assert stopped == [process]
+    assert "dashboard server stopped unexpectedly" in capsys.readouterr().err
 
 
 def test_serve_treats_an_empty_optional_layout_token_as_unconfigured(

@@ -73,6 +73,7 @@ def test_ci_builds_and_tests_the_persistent_dashboard_in_a_browser() -> None:
     assert "npm ci" in job
     assert "npx playwright install --with-deps chromium" in job
     assert "npm run build:web" in job
+    assert "git diff --exit-code -- src/cli_consumption/web_runtime.zip" in job
     assert "npx playwright test -c apps/web/playwright.config.ts" in job
 
 

@@ -104,7 +104,8 @@ not merely edit `.env`, because that would strand the application.
 
 The persistent dashboard is an optional Node service in `apps/web/`. It must reach the
 collector over a private or TLS-protected route, but it must never receive the database
-URL or ingestion/export credentials.
+URL or ingestion credentials. It receives the export token only for its server-side
+offline-download route.
 
 For local use, `uv tool run cli-consumption serve --front` starts the API and the
 bundled production dashboard without a checkout or npm installation. It still requires

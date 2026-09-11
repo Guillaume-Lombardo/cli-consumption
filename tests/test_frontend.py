@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import http.client
 import io
+import socket
 import subprocess
+import time
 import zipfile
 from pathlib import Path
 from typing import cast
@@ -22,6 +25,61 @@ def test_bundled_frontend_runtime_is_portable_and_complete() -> None:
         for path in runtime.parents[1].rglob("*"):
             if path.is_file():
                 assert b"/home/" not in path.read_bytes()
+
+
+def test_bundled_frontend_runtime_serves_the_login_page() -> None:
+    try:
+        node = frontend.find_node_runtime()
+    except FrontendRuntimeError as error:
+        pytest.skip(str(error))
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    origin = f"http://127.0.0.1:{port}"
+    credentials = (
+        "test-dashboard-password",
+        "test-read-token",
+        "test-export-token",
+        "test-layout-token",
+        "test-session-secret-with-at-least-thirty-two-bytes",
+    )
+    environment = frontend.frontend_environment(
+        api_url="http://127.0.0.1:9",
+        origin=origin,
+        host="127.0.0.1",
+        port=port,
+        password=credentials[0],
+        read_token=credentials[1],
+        export_token=credentials[2],
+        layout_token=credentials[3],
+        session_secret=credentials[4],
+    )
+
+    with frontend.materialize_frontend_runtime() as runtime:
+        process = frontend.start_frontend(node, runtime, environment)
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    pytest.fail("The bundled frontend exited before becoming ready.")
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                try:
+                    connection.request("GET", "/login")
+                    response = connection.getresponse()
+                    body = response.read()
+                except (OSError, http.client.HTTPException):
+                    time.sleep(0.05)
+                    continue
+                finally:
+                    connection.close()
+                assert response.status == 200
+                assert b"CLI Consumption" in body
+                break
+            else:
+                pytest.fail("The bundled frontend did not become ready in time.")
+        finally:
+            frontend.stop_frontend(process)
 
 
 def test_frontend_runtime_rejects_archive_traversal(monkeypatch) -> None:

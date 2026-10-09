@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption import models
 from cli_consumption.adapters._shared import (
     MAX_BIGINT as MAX_BIGINT,
 )
@@ -36,86 +37,80 @@ class ClaudeAdapter:
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
         budget = ProviderInputBudget()
-        selected, duplicates, malformed = self._discover(sources, budget)
+        selected, duplicates, malformed = self._discover(
+            sources, project_mappings or [], budget
+        )
         snapshot = Snapshot(
             provider=self.name,
             duplicate_conversations=duplicates,
             malformed_records=malformed,
         )
-        for machine, path, count, digest, session_id in selected:
-            self._read(
-                snapshot,
-                machine,
-                path,
-                count,
-                digest,
-                session_id,
-                project_mappings or [],
-                budget,
-            )
+        for _, records in selected.values():
+            for name in _RECORD_COLLECTIONS:
+                getattr(snapshot, name).extend(getattr(records, name))
         return snapshot
 
     def _discover(
-        self, sources: list[tuple[str, Path]], budget: ProviderInputBudget
-    ) -> tuple[list[tuple[str, Path, int, str, str]], int, int]:
-        selected: dict[str, tuple[str, Path, int, str, str]] = {}
+        self,
+        sources: list[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
+        budget: ProviderInputBudget,
+    ) -> tuple[dict[str, tuple[tuple[int, str], Snapshot]], int, int]:
+        # Each file is read once. Only the normalized, content-free records of the
+        # most complete copy of each session are retained between files.
+        selected: dict[str, tuple[tuple[int, str], Snapshot]] = {}
+        retained_records = 0
         duplicates = malformed = 0
         for machine, home in sources:
             projects = home / "projects"
             if not projects.is_dir():
                 raise ValueError(f"Missing Claude Code projects directory: {projects}")
             for path in budget.sorted_paths(projects.glob("*/*.jsonl")):
-                digest = hashlib.sha256()
-                count = 0
-                session_id: str | None = None
-                for line in iter_bounded_jsonl_bytes(path, budget):
-                    digest.update(line)
-                    try:
-                        event = json.loads(line)
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        malformed += 1
-                        continue
-                    if not isinstance(event, dict):
-                        malformed += 1
-                        continue
-                    count += 1
-                    session_id = session_id or _label(event.get("sessionId"), 512)
-                content_hash = digest.hexdigest()
-                session_id = (
-                    session_id
-                    or _label(path.stem, 512)
-                    or f"session-{content_hash[:24]}"
-                )
-                candidate = (machine, path, count, content_hash, session_id)
+                events, content_hash, session_id, invalid = _load_events(path, budget)
+                malformed += invalid
+                rank = (len(events), content_hash)
                 previous = selected.get(session_id)
-                if previous is None:
-                    selected[session_id] = candidate
-                else:
+                if previous is not None:
                     duplicates += 1
-                    if candidate[2:4] > previous[2:4]:
-                        selected[session_id] = candidate
-        return list(selected.values()), duplicates, malformed
+                    if rank <= previous[0]:
+                        del events
+                        continue
+                if previous is not None:
+                    retained_records -= sum(
+                        len(getattr(previous[1], name)) for name in _RECORD_COLLECTIONS
+                    )
+                    for name in _RECORD_COLLECTIONS:
+                        getattr(previous[1], name).clear()
+                    previous = None
+                records = Snapshot(
+                    provider=self.name,
+                    _record_limit=models.MAX_SNAPSHOT_RECORDS - retained_records,
+                )
+                self._read(
+                    records,
+                    machine,
+                    events,
+                    rank,
+                    session_id,
+                    mappings,
+                )
+                del events
+                retained_records += sum(
+                    len(getattr(records, name)) for name in _RECORD_COLLECTIONS
+                )
+                selected[session_id] = (rank, records)
+        return selected, duplicates, malformed
 
     def _read(
         self,
         snapshot: Snapshot,
         machine: str,
-        path: Path,
-        event_count: int,
-        digest: str,
+        events: list[dict[str, Any]],
+        selection: tuple[int, str],
         session_id: str,
         mappings: list[tuple[str, str]],
-        budget: ProviderInputBudget,
     ) -> None:
-        events: list[dict[str, Any]] = []
-        for line in iter_bounded_jsonl_bytes(path, budget):
-            try:
-                event = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if isinstance(event, dict):
-                events.append(event)
-
+        event_count, digest = selection
         conversation_id = f"claude:{session_id}"
         timestamps = [
             value
@@ -311,6 +306,40 @@ class ClaudeAdapter:
                 **totals,
             }
         )
+
+
+_RECORD_COLLECTIONS = (
+    "conversations",
+    "turns",
+    "model_calls",
+    "tool_calls",
+    "turn_settings",
+    "compaction_events",
+)
+
+
+def _load_events(
+    path: Path, budget: ProviderInputBudget
+) -> tuple[list[dict[str, Any]], str, str, int]:
+    digest = hashlib.sha256()
+    events: list[dict[str, Any]] = []
+    malformed = 0
+    session_id: str | None = None
+    for line in iter_bounded_jsonl_bytes(path, budget):
+        digest.update(line)
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            malformed += 1
+            continue
+        if not isinstance(event, dict):
+            malformed += 1
+            continue
+        events.append(event)
+        session_id = session_id or _label(event.get("sessionId"), 512)
+    content_hash = digest.hexdigest()
+    session_id = session_id or _label(path.stem, 512) or f"session-{content_hash[:24]}"
+    return events, content_hash, session_id, malformed
 
 
 def _starts_turn(event: dict[str, Any]) -> bool:

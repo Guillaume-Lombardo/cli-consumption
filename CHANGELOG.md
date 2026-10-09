@@ -14,6 +14,13 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Refresh vulnerable urllib3 and virtualenv development dependencies in the Python
   lockfile.
 
+### Fixed
+
+- Claude Code and Codex collection now reads each provider file once instead of twice,
+  so the aggregate 512 MiB read limit applies to the actual store size and the
+  selected copy is no longer parsed a second time. Only the normalized records of the
+  most complete copy of each conversation are retained between files.
+
 ## [0.4.5] - 2026-09-11
 
 ### Added

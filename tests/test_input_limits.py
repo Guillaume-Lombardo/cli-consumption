@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import nullcontext
 from pathlib import Path
@@ -353,3 +354,57 @@ def test_snapshot_record_limit_is_enforced_while_adapters_build_it(
     snapshot.turns.append({"id": "two"})
     with pytest.raises(SnapshotValidationError, match="snapshot_too_large"):
         snapshot.model_calls.append({"id": "three"})
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_single_pass_selection_enforces_retained_record_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, duplicate: bool
+) -> None:
+    from cli_consumption.adapters import claude, codex
+
+    module = claude if provider == "claude" else codex
+    adapter = claude.ClaudeAdapter() if provider == "claude" else codex.CodexAdapter()
+    sources = []
+    for index in range(3):
+        home = tmp_path / str(index)
+        session = "same" if duplicate else str(index)
+        if provider == "claude":
+            path = home / "projects" / "project" / "session.jsonl"
+            events = [
+                {"sessionId": session},
+                {"type": "system", "subtype": "compact"},
+            ]
+        else:
+            path = home / "sessions" / "session.jsonl"
+            events = [
+                {"type": "session_meta", "payload": {"id": session}},
+                {"type": "compacted", "payload": {}},
+            ]
+        # A richer duplicate must replace its predecessor without double charging.
+        events.extend({"ignored": "synthetic privacy canary"} for _ in range(index))
+        path.parent.mkdir(parents=True)
+        path.write_text("\n".join(json.dumps(event) for event in events))
+        sources.append((str(index), home))
+
+    monkeypatch.setattr("cli_consumption.models.MAX_SNAPSHOT_RECORDS", 3)
+    original = module.iter_bounded_jsonl_bytes
+    read_count = 0
+
+    def counted(path, budget):
+        nonlocal read_count
+        read_count += 1
+        yield from original(path, budget)
+
+    monkeypatch.setattr(module, "iter_bounded_jsonl_bytes", counted)
+    if duplicate:
+        snapshot = adapter.collect(sources)
+        assert snapshot.duplicate_conversations == 2
+        assert snapshot.conversations[0]["source_machine"] == "2"
+        assert "synthetic privacy canary" not in str(snapshot.to_dict())
+        assert read_count == 3
+    else:
+        with pytest.raises(SnapshotValidationError, match="snapshot_too_large"):
+            adapter.collect(sources)
+        # Fail during construction, before reading another candidate or merging.
+        assert read_count == 2

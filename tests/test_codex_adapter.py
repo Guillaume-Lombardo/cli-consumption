@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import cli_consumption.adapters.codex as codex_module
+from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.codex import (
     MAX_BIGINT,
     CodexAdapter,
@@ -89,16 +90,38 @@ def test_incremental_collection_streams_deterministic_bounded_batches(
     assert "secret value" not in str([snapshot.to_dict() for snapshot in snapshots])
 
 
+def test_each_rollout_is_charged_to_the_read_budget_once(
+    tmp_path: Path, rollout_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    on_disk = rollout_factory(first).stat().st_size
+    on_disk += rollout_factory(second, extra_event=True).stat().st_size
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES", on_disk
+    )
+
+    snapshot = CodexAdapter().collect([("desktop", first), ("laptop", second)])
+
+    assert snapshot.duplicate_conversations == 1
+    assert snapshot.conversations[0]["source_machine"] == "laptop"
+
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES", on_disk - 1
+    )
+    with pytest.raises(ProviderDataLimitError, match="provider_read_limit_exceeded"):
+        CodexAdapter().collect([("desktop", first), ("laptop", second)])
+
+
 def test_incremental_collection_subdivides_only_aggregate_read_limits(
     tmp_path: Path, rollout_factory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "codex"
     first = rollout_factory(home, "conversation-a")
     second = rollout_factory(home, "conversation-b")
-    single_rollout_reads = max(first.stat().st_size, second.stat().st_size) * 2
+    single_rollout_read = max(first.stat().st_size, second.stat().st_size)
     monkeypatch.setattr(
         "cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES",
-        single_rollout_reads + 1,
+        single_rollout_read + 1,
     )
 
     batches = list(CodexAdapter().collect_incrementally([("desktop", home)]))

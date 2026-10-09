@@ -6,6 +6,14 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Update the persistent dashboard to Next.js 16.3.8 and refresh vulnerable web
+  dependencies; use Parcel watcher 2.6.0 to remove the unpatched braces dependency
+  from the Tailwind build toolchain. Rebuild the bundled dashboard runtime.
+- Refresh vulnerable urllib3 and virtualenv development dependencies in the Python
+  lockfile.
+
 ## [0.4.5] - 2026-09-11
 
 ### Added

@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption import models
 from cli_consumption.adapters._shared import (
     MAX_BIGINT as MAX_BIGINT,
 )
@@ -165,6 +166,62 @@ def extract_tools(payload: dict[str, Any]) -> list[tuple[str, str]]:
     return [(outer_name, name) for name in nested] or [(outer_name, outer_name)]
 
 
+_ROLLOUT_COLLECTIONS = (
+    "conversations",
+    "turns",
+    "model_calls",
+    "tool_calls",
+    "work_items",
+    "context_samples",
+    "turn_settings",
+    "compaction_events",
+)
+
+
+def _load_rollout(
+    path: Path, budget: ProviderInputBudget
+) -> tuple[list[dict[str, Any]], str, str, int]:
+    digest = hashlib.sha256()
+    events: list[dict[str, Any]] = []
+    malformed = 0
+    conversation_id = ""
+    for raw_line in iter_bounded_jsonl_bytes(path, budget):
+        digest.update(raw_line)
+        try:
+            event = json.loads(raw_line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            malformed += 1
+            continue
+        if not isinstance(event, dict):
+            malformed += 1
+            continue
+        events.append(event)
+        if event.get("type") == "session_meta":
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                malformed += 1
+                continue
+            candidate_id = _safe_dimension(payload.get("id"), 512)
+            if candidate_id and not conversation_id:
+                conversation_id = candidate_id
+    content_hash = digest.hexdigest()
+    return events, content_hash, conversation_id or f"content-{content_hash}", malformed
+
+
+def _merge_rollouts(
+    provider: str, selected: list[Snapshot], duplicates: int, malformed: int
+) -> Snapshot:
+    snapshot = Snapshot(
+        provider=provider,
+        duplicate_conversations=duplicates,
+        malformed_records=malformed,
+    )
+    for records in selected:
+        for name in _ROLLOUT_COLLECTIONS:
+            getattr(snapshot, name).extend(getattr(records, name))
+    return snapshot
+
+
 class CodexAdapter:
     """Read local Codex rollout metadata while excluding message content."""
 
@@ -176,17 +233,10 @@ class CodexAdapter:
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
         budget = ProviderInputBudget()
-        selected, duplicates, discovery_malformed = self._discover(sources, budget)
-        snapshot = Snapshot(
-            provider=self.name,
-            duplicate_conversations=duplicates,
-            malformed_records=discovery_malformed,
+        selected, duplicates, discovery_malformed = self._discover(
+            sources, project_mappings or [], budget
         )
-        mappings = project_mappings or []
-        for machine, path, event_count, digest in selected:
-            self._read_rollout(
-                snapshot, machine, path, event_count, digest, mappings, budget
-            )
+        snapshot = _merge_rollouts(self.name, selected, duplicates, discovery_malformed)
         for machine, codex_home in sources:
             snapshot.subagents.extend(
                 self._read_subagents(codex_home / "state_5.sqlite", machine, budget)
@@ -248,17 +298,10 @@ class CodexAdapter:
         mappings: list[tuple[str, str]],
     ) -> Snapshot:
         budget = ProviderInputBudget()
-        selected, duplicates, malformed = self._discover_candidates(candidates, budget)
-        snapshot = Snapshot(
-            provider=self.name,
-            duplicate_conversations=duplicates,
-            malformed_records=malformed,
+        selected, duplicates, malformed = self._discover_candidates(
+            candidates, mappings, budget
         )
-        for machine, path, event_count, digest in selected:
-            self._read_rollout(
-                snapshot, machine, path, event_count, digest, mappings, budget
-            )
-        return snapshot
+        return _merge_rollouts(self.name, selected, duplicates, malformed)
 
     def _read_subagents(
         self,
@@ -307,8 +350,11 @@ class CodexAdapter:
         ]
 
     def _discover(
-        self, sources: list[tuple[str, Path]], budget: ProviderInputBudget
-    ) -> tuple[list[tuple[str, Path, int, str]], int, int]:
+        self,
+        sources: list[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
+        budget: ProviderInputBudget,
+    ) -> tuple[list[Snapshot], int, int]:
         candidates: list[tuple[str, Path]] = []
         for machine, codex_home in sources:
             sessions = codex_home / "sessions"
@@ -318,73 +364,64 @@ class CodexAdapter:
                 (machine, path)
                 for path in budget.sorted_paths(sessions.rglob("*.jsonl"))
             )
-        return self._discover_candidates(candidates, budget, charge_candidates=False)
+        return self._discover_candidates(
+            candidates, mappings, budget, charge_candidates=False
+        )
 
     def _discover_candidates(
         self,
         candidates: list[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
         budget: ProviderInputBudget,
         *,
         charge_candidates: bool = True,
-    ) -> tuple[list[tuple[str, Path, int, str]], int, int]:
-        selected: dict[str, tuple[str, Path, int, str]] = {}
+    ) -> tuple[list[Snapshot], int, int]:
+        # Each rollout is read once. Only the normalized, content-free records of
+        # the most complete copy of each conversation are retained between files.
+        selected: dict[str, tuple[tuple[int, str], Snapshot]] = {}
+        retained_records = 0
         duplicates = 0
         malformed = 0
         for machine, path in candidates:
             if charge_candidates:
                 budget.item()
-            event_count = 0
-            conversation_id = ""
-            digest = hashlib.sha256()
-            for raw_line in iter_bounded_jsonl_bytes(path, budget):
-                digest.update(raw_line)
-                try:
-                    event = json.loads(raw_line)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    malformed += 1
-                    continue
-                if not isinstance(event, dict):
-                    malformed += 1
-                    continue
-                event_count += 1
-                if event.get("type") == "session_meta":
-                    payload = event.get("payload")
-                    if not isinstance(payload, dict):
-                        malformed += 1
-                        continue
-                    candidate_id = _safe_dimension(payload.get("id"), 512)
-                    if candidate_id and not conversation_id:
-                        conversation_id = candidate_id
-            content_hash = digest.hexdigest()
-            conversation_id = conversation_id or f"content-{content_hash}"
-            candidate = (machine, path, event_count, content_hash)
+            events, content_hash, conversation_id, invalid = _load_rollout(path, budget)
+            malformed += invalid
+            rank = (len(events), content_hash)
             previous = selected.get(conversation_id)
-            if previous is None:
-                selected[conversation_id] = candidate
-            else:
+            if previous is not None:
                 duplicates += 1
-                if candidate[2:] > previous[2:]:
-                    selected[conversation_id] = candidate
-        return list(selected.values()), duplicates, malformed
+                if rank <= previous[0]:
+                    del events
+                    continue
+            if previous is not None:
+                retained_records -= sum(
+                    len(getattr(previous[1], name)) for name in _ROLLOUT_COLLECTIONS
+                )
+                for name in _ROLLOUT_COLLECTIONS:
+                    getattr(previous[1], name).clear()
+                previous = None
+            records = Snapshot(
+                provider=self.name,
+                _record_limit=models.MAX_SNAPSHOT_RECORDS - retained_records,
+            )
+            self._read_rollout(records, machine, events, rank, mappings)
+            del events
+            retained_records += sum(
+                len(getattr(records, name)) for name in _ROLLOUT_COLLECTIONS
+            )
+            selected[conversation_id] = (rank, records)
+        return [records for _, records in selected.values()], duplicates, malformed
 
     def _read_rollout(
         self,
         snapshot: Snapshot,
         machine: str,
-        path: Path,
-        event_count: int,
-        digest: str,
+        events: list[dict[str, Any]],
+        selection: tuple[int, str],
         mappings: list[tuple[str, str]],
-        budget: ProviderInputBudget,
     ) -> None:
-        events: list[dict[str, Any]] = []
-        for line in iter_bounded_jsonl_bytes(path, budget):
-            try:
-                event = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if isinstance(event, dict):
-                events.append(event)
+        event_count, digest = selection
 
         metadata: dict[str, Any] = next(
             (

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from storage_helpers import read_table
 
+from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.claude import ClaudeAdapter
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
@@ -176,6 +177,29 @@ def test_deduplicates_streaming_fragments_and_copied_sessions(tmp_path: Path) ->
         snapshot.to_dict()
         == ClaudeAdapter().collect([("desktop", first), ("laptop", second)]).to_dict()
     )
+
+
+def test_each_transcript_is_charged_to_the_read_budget_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    on_disk = transcript(first).stat().st_size
+    on_disk += transcript(second, extra=True).stat().st_size
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES", on_disk
+    )
+
+    snapshot = ClaudeAdapter().collect([("desktop", first), ("laptop", second)])
+
+    assert snapshot.duplicate_conversations == 1
+    assert snapshot.conversations[0]["source_machine"] == "laptop"
+    assert snapshot.conversations[0]["compactions"] == 1
+
+    monkeypatch.setattr(
+        "cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES", on_disk - 1
+    )
+    with pytest.raises(ProviderDataLimitError, match="provider_read_limit_exceeded"):
+        ClaudeAdapter().collect([("desktop", first), ("laptop", second)])
 
 
 def test_malformed_records_and_missing_directory_are_handled(tmp_path: Path) -> None:

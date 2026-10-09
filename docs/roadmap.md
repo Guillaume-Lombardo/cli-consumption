@@ -39,8 +39,16 @@ its acceptance criteria and validation are complete.
 3. Deepen provider-format diagnostics without exposing provider contents or paths.
 4. Expand cross-provider comparisons without treating unavailable dimensions as zero.
 
+## Next product increments
+
+- Estimated cost at public API list prices from versioned, bundled pricing, limited to
+  additive token semantics ([ADR 0008](decisions/0008-estimated-cost.md))
+- Terminal reports, quota windows, a Claude Code status line, and a read-only MCP
+  server built on one shared aggregation layer
+- Optional, off-by-default user identity for team sources such as OpenTelemetry
+  metrics, vendor admin APIs, and aggregate git activity
+  ([ADR 0009](decisions/0009-optional-identity-and-integrations.md))
+
 ## Later operational work
 
 - High-availability reporting sessions and managed-secret deployment integrations
-- Cost estimates driven by explicit, versioned pricing inputs, deferred until token
-  semantics are sufficiently comparable across providers

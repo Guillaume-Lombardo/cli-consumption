@@ -145,6 +145,12 @@ token events are not billing data.
 
 ## Codex
 
+Codex and Claude Code hash and parse each JSONL file in one bounded read. Duplicate
+copies are ranked by valid object count, then content hash; only the normalized
+winning records remain between files. Candidate construction shares the remaining
+snapshot record capacity, and replacing a duplicate releases its previous records.
+Individual file, line, and aggregate actual-read limits still apply.
+
 Codex additionally exposes provider-reported turn duration and TTFT, model context
 window samples, bounded reasoning/collaboration/service-tier labels, timestamped
 compactions, technical work-item categories and durations, and local thread-spawn

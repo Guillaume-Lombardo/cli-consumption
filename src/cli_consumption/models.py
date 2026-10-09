@@ -321,6 +321,8 @@ class Snapshot:
     malformed_records: int = 0
     duplicate_conversations: int = 0
     schema_version: int = CURRENT_SNAPSHOT_SCHEMA
+    # Internal candidate capacity; never part of the normalized snapshot payload.
+    _record_limit: int | None = field(default=None, repr=False, kw_only=True)
 
     def __post_init__(self) -> None:
         for name in _SNAPSHOT_COLLECTIONS:
@@ -376,7 +378,10 @@ class _SnapshotRecordList(list[dict[str, Any]]):
 
     def _require_capacity(self, added: int) -> None:
         total = sum(len(getattr(self._owner, name)) for name in _SNAPSHOT_COLLECTIONS)
-        if total + added > MAX_SNAPSHOT_RECORDS:
+        limit = MAX_SNAPSHOT_RECORDS
+        if self._owner._record_limit is not None:
+            limit = min(limit, self._owner._record_limit)
+        if total + added > limit:
             raise SnapshotValidationError("snapshot_too_large")
 
     def append(self, value: dict[str, Any]) -> None:

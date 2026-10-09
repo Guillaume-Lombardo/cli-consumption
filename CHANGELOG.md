@@ -16,6 +16,11 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Claude Code collection now includes subagent transcripts under
+  `<session>/subagents/` and legacy `agent-*.jsonl` files as separate conversations
+  linked to their parent session. Their tokens were previously ignored, and a legacy
+  agent file could replace its parent session during duplicate selection. Sidechain
+  replays of parent responses are not counted twice.
 - Claude Code and Codex collection now reads each provider file once instead of twice,
   so the aggregate 512 MiB read limit applies to the actual store size and the
   selected copy is no longer parsed a second time. Only the normalized records of the

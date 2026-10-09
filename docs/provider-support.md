@@ -82,7 +82,7 @@ changed between releases.
 | `gemini` | session history (unversioned) | `2026-08-30` | active history JSON and JSONL | [fixture](../tests/test_gemini_adapter.py) | [Gemini CLI](https://github.com/google-gemini/gemini-cli/tree/0bd1d439751478771c45d3d0895a6a9760554bf4) | Nested agents excluded; hashed projects are not reversed. |
 | `goose` | CLI 1.47.0 / schema v16 | `2026-08-30` | SQLite sessions and usage ledger | [fixture](../tests/test_goose_adapter.py) | [Goose](https://github.com/aaif-goose/goose/tree/v1.47.0) | Schema v16 only; no legacy JSONL, subagents, reasoning, or latency. |
 | `grok` | session schema (unversioned) | `2026-08-30` | summary, updates, and events JSONL | [fixture](../tests/test_grok_adapter.py) | [Grok Build](https://github.com/xai-org/grok-build/tree/bc7f02eddd3d84085849dc19ed216f11c23b0571) | No costs, subagent relationships, rewinds, or manual compactions. |
-| `claude` | transcript schema (unversioned) | `2026-08-30` | project session JSONL | [fixture](../tests/test_claude_adapter.py) | [Claude Code](https://github.com/anthropics/claude-code/tree/f1af9b1f4b1fd4c776135381606edada82ef638e) | Main sessions only; no subagents, context windows, effort, or latency. |
+| `claude` | transcript schema (unversioned), synthetic subagent fixtures | `2026-10-09` | project session and subagent JSONL | [fixture](../tests/test_claude_adapter.py) | [Claude Code](https://github.com/anthropics/claude-code/tree/f1af9b1f4b1fd4c776135381606edada82ef638e) | Sessions and subagents; no context windows, effort, or latency. |
 | `cline` | SDK session schema (unversioned) | `2026-08-30` | SQLite session index and message JSON | [fixture](../tests/test_cline_adapter.py) | [Cline](https://github.com/cline/cline/tree/48d63852745460ff0fa3dfcc0457bbe2493841de) | No costs or arbitrary task metadata; artifacts must remain present. |
 | `kilo` | CLI 7.5.5 | `2026-08-30` | SQLite session, message, and part tables | [fixture](../tests/test_kilo_adapter.py) | [Kilo Code](https://github.com/Kilo-Org/kilocode/tree/v7.5.5) | CLI store only; no legacy IDE tasks, cloud sessions, or subagents. |
 | `kimi` | Wire v1 | `2026-08-30` | wire event JSONL | [fixture](../tests/test_kimi_adapter.py) | [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli/tree/cbc15c076d17f70fec9f89c90c0502e68657f505) | Selected model unavailable; hashed work directories are not reversed. |
@@ -227,19 +227,37 @@ The SQLite schema is internal and can change without notice.
 
 ## Claude Code
 
-Claude Code reads top-level sessions from
-`~/.claude/projects/<project>/<session-id>.jsonl`. A custom `CLAUDE_CONFIG_DIR` must
-be passed with `--source`. It extracts
-main-session turns, models, token usage, tool names, and compaction timestamps while
-discarding prompts, responses, tool inputs/results, paths, branches, and arbitrary
-metadata. Streaming fragments are deduplicated by request or message identifier.
+Claude Code reads sessions from `~/.claude/projects/<project>/<session-id>.jsonl` and
+subagent transcripts from `<session-id>/subagents/**/agent-<id>.jsonl` or legacy
+`<project>/agent-<id>.jsonl` files. A custom `CLAUDE_CONFIG_DIR` must be passed with
+`--source`. It extracts turns, models, token usage, tool names, and compaction
+timestamps while discarding prompts, responses, tool inputs/results, paths, branches,
+and arbitrary metadata. Streaming fragments are deduplicated by request or message
+identifier.
+
+Each subagent becomes its own conversation, `<session-id>:agent:<agent-id>`, linked to
+its parent session by a subagent relationship. The adjacent `agent-<id>.meta.json` is
+read only for `agentType`, reduced to `research` (Explore), `planning` (Plan), `worker`
+(general-purpose), `other`, or `unspecified`; descriptions and every other field are
+discarded. Sidechain responses that replay a parent response identifier, such as
+`/btw` side questions, are not counted again. The relationship graph is authoritative
+per machine, so relationships whose transcripts Claude Code has already deleted under
+`cleanupPeriodDays` are removed when a richer collection replaces the graph; their
+conversations and tokens remain stored.
 
 Claude Code emits uncached, cache-read, and cache-creation input separately. Normalized
 `input_tokens` is their sum, with each component retained in its corresponding field.
-The internal transcript schema can change between Claude Code releases and local usage
-is not billing data. This first increment does not collect subagent transcripts,
-context-window sizes, effort/service-tier settings, TTFT, provider-reported duration,
-or technical work-item intervals.
+Transcript layout and cleanup behavior were checked against the official
+[Claude Code subagent documentation](https://code.claude.com/docs/en/sub-agents) on
+2026-10-10; nested workflow and legacy flat layouts are qualified with synthetic
+fixtures, rather than a claimed release-specific schema. All transcripts share the
+discovery, byte, and normalized-record budgets; retained parent-response identifiers
+also have a separate bounded cache and come only from the selected parent copy.
+Nested descendants are linked to the owning session because the transcripts do not
+provide a qualified immediate-parent agent identifier. The internal transcript schema
+can change between Claude Code releases and local usage is not billing data. The adapter does not collect context-window sizes,
+effort/service-tier settings, TTFT, provider-reported duration, or technical work-item
+intervals.
 
 ## Gemini CLI
 

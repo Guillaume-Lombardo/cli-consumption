@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -11,8 +12,10 @@ from cli_consumption.adapters._shared import (
     MAX_BIGINT as MAX_BIGINT,
 )
 from cli_consumption.adapters._shared import (
+    ProviderDataLimitError,
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
+    read_bounded_bytes,
 )
 from cli_consumption.adapters._shared import (
     add_tokens as _add_tokens,
@@ -45,9 +48,11 @@ class ClaudeAdapter:
             duplicate_conversations=duplicates,
             malformed_records=malformed,
         )
-        for _, records in selected.values():
+        for _, records, edge in selected.values():
             for name in _RECORD_COLLECTIONS:
                 getattr(snapshot, name).extend(getattr(records, name))
+            if edge is not None:
+                snapshot.subagents.append(edge)
         return snapshot
 
     def _discover(
@@ -55,50 +60,128 @@ class ClaudeAdapter:
         sources: list[tuple[str, Path]],
         mappings: list[tuple[str, str]],
         budget: ProviderInputBudget,
-    ) -> tuple[dict[str, tuple[tuple[int, str], Snapshot]], int, int]:
+    ) -> tuple[dict[str, _Selection], int, int]:
         # Each file is read once. Only the normalized, content-free records of the
-        # most complete copy of each session are retained between files.
-        selected: dict[str, tuple[tuple[int, str], Snapshot]] = {}
+        # most complete copy of each session or subagent are retained between files.
+        selected: dict[str, _Selection] = {}
         retained_records = 0
+        retained_message_ids = 0
         duplicates = malformed = 0
+        sessions: list[tuple[str, Path]] = []
+        agents: list[tuple[str, Path, str | None]] = []
         for machine, home in sources:
             projects = home / "projects"
             if not projects.is_dir():
                 raise ValueError(f"Missing Claude Code projects directory: {projects}")
-            for path in budget.sorted_paths(projects.glob("*/*.jsonl")):
-                events, content_hash, session_id, invalid = _load_events(path, budget)
-                malformed += invalid
-                rank = (len(events), content_hash)
-                previous = selected.get(session_id)
-                if previous is not None:
-                    duplicates += 1
-                    if rank <= previous[0]:
-                        del events
-                        continue
-                if previous is not None:
-                    retained_records -= sum(
-                        len(getattr(previous[1], name)) for name in _RECORD_COLLECTIONS
-                    )
-                    for name in _RECORD_COLLECTIONS:
-                        getattr(previous[1], name).clear()
-                    previous = None
-                records = Snapshot(
-                    provider=self.name,
-                    _record_limit=models.MAX_SNAPSHOT_RECORDS - retained_records,
-                )
-                self._read(
-                    records,
-                    machine,
-                    events,
-                    rank,
-                    session_id,
-                    mappings,
-                )
+            paths = chain(
+                projects.glob("*/*.jsonl"),
+                projects.glob("*/*/subagents/**/agent-*.jsonl"),
+            )
+            for path in budget.sorted_paths(paths):
+                parts = path.relative_to(projects).parts
+                if (
+                    len(parts) >= 4 and parts[2] == "subagents"
+                ) or path.name.startswith("agent-"):
+                    agents.append((machine, path, _nested_agent_session(parts)))
+                else:
+                    sessions.append((machine, path))
+
+        # Sidechain transcripts can replay parent responses. Only the response
+        # identifiers of possible parent sessions are kept, and
+        # only until agent transcripts have been read.
+        parents = {parent for _, _, parent in agents if parent is not None}
+        has_legacy_agents = any(parent is None for _, _, parent in agents)
+        parent_messages: dict[str, set[str]] = {}
+
+        def choose(key: str, rank: tuple[int, str]) -> bool:
+            nonlocal duplicates, retained_records
+            previous = selected.get(key)
+            if previous is None:
+                return True
+            duplicates += 1
+            if rank <= previous[0]:
+                return False
+            retained_records -= sum(
+                len(getattr(previous[1], name)) for name in _RECORD_COLLECTIONS
+            ) + int(previous[2] is not None)
+            for name in _RECORD_COLLECTIONS:
+                getattr(previous[1], name).clear()
+            del selected[key]
+            return True
+
+        for machine, path in sessions:
+            events, content_hash, session_id, invalid = _load_events(path, budget)
+            malformed += invalid
+            rank = (len(events), content_hash)
+            if not choose(session_id, rank):
                 del events
-                retained_records += sum(
-                    len(getattr(records, name)) for name in _RECORD_COLLECTIONS
+                continue
+            if session_id in parents or has_legacy_agents:
+                retained_message_ids -= len(parent_messages.pop(session_id, set()))
+                identifiers = _message_ids(
+                    events, models.MAX_SNAPSHOT_RECORDS - retained_message_ids
                 )
-                selected[session_id] = (rank, records)
+                parent_messages[session_id] = identifiers
+                retained_message_ids += len(identifiers)
+                del identifiers
+            records = Snapshot(
+                provider=self.name,
+                _record_limit=models.MAX_SNAPSHOT_RECORDS - retained_records,
+            )
+            self._read(records, machine, events, rank, session_id, mappings)
+            del events
+            retained_records += sum(
+                len(getattr(records, name)) for name in _RECORD_COLLECTIONS
+            )
+            selected[session_id] = (rank, records, None)
+
+        for machine, path, parent in agents:
+            events, content_hash, session_id, invalid = _load_events(path, budget)
+            malformed += invalid
+            if parent is None and not any(
+                _label(event.get("sessionId"), 512) for event in events
+            ):
+                malformed += 1
+                del events
+                continue
+            session_id = parent or session_id
+            agent_id = _agent_id(events, path)
+            external_id = _label(f"{session_id}:agent:{agent_id}", 512)
+            if agent_id is None or external_id is None:
+                malformed += 1
+                del events
+                continue
+            rank = (len(events), content_hash)
+            if not choose(external_id, rank):
+                del events
+                continue
+            replayed = parent_messages.get(session_id, set())
+            records = Snapshot(
+                provider=self.name,
+                _record_limit=models.MAX_SNAPSHOT_RECORDS - retained_records - 1,
+            )
+            self._read(
+                records,
+                machine,
+                [event for event in events if not _replays(event, replayed)],
+                rank,
+                external_id,
+                mappings,
+                sidechain=True,
+            )
+            del events
+            edge = _subagent_edge(
+                self.name,
+                machine,
+                session_id,
+                external_id,
+                records,
+                _agent_role(path, budget),
+            )
+            retained_records += 1 + sum(
+                len(getattr(records, name)) for name in _RECORD_COLLECTIONS
+            )
+            selected[external_id] = (rank, records, edge)
         return selected, duplicates, malformed
 
     def _read(
@@ -109,6 +192,8 @@ class ClaudeAdapter:
         selection: tuple[int, str],
         session_id: str,
         mappings: list[tuple[str, str]],
+        *,
+        sidechain: bool = False,
     ) -> None:
         event_count, digest = selection
         conversation_id = f"claude:{session_id}"
@@ -141,7 +226,7 @@ class ClaudeAdapter:
 
         for index, event in enumerate(events, 1):
             timestamp = _timestamp(event.get("timestamp"))
-            if _starts_turn(event):
+            if _starts_turn(event, sidechain=sidechain):
                 if active is not None:
                     _finish_turn(turns[active], timestamp)
                 external_id = _label(event.get("uuid"), 512) or f"turn-{len(turns) + 1}"
@@ -318,6 +403,116 @@ _RECORD_COLLECTIONS = (
 )
 
 
+_Selection = tuple[tuple[int, str], Snapshot, dict[str, Any] | None]
+MAX_AGENT_METADATA_BYTES = 64 * 1024
+_AGENT_ROLE_ALIASES = {
+    "explore": "research",
+    "general-purpose": "worker",
+    "plan": "planning",
+}
+_TURN_STATUS_TO_SUBAGENT_STATUS = {
+    "aborted": "aborted",
+    "completed": "completed",
+    "in-progress": "in-progress",
+}
+
+
+def _nested_agent_session(parts: tuple[str, ...]) -> str | None:
+    # parts is relative to projects/: <project>/<session>/subagents/.../agent-*.jsonl
+    if len(parts) < 4 or parts[2] != "subagents":
+        return None
+    return _label(parts[1], 512)
+
+
+def _agent_id(events: list[dict[str, Any]], path: Path) -> str | None:
+    for event in events:
+        if (agent_id := _label(event.get("agentId"), 255)) is not None:
+            return agent_id
+    stem = path.stem
+    return (
+        _label(stem.removeprefix("agent-"), 255) if stem.startswith("agent-") else None
+    )
+
+
+def _message_ids(events: list[dict[str, Any]], capacity: int) -> set[str]:
+    identifiers: set[str] = set()
+    for event in events:
+        if event.get("type") != "assistant" or not isinstance(
+            (message := event.get("message")), dict
+        ):
+            continue
+        identifier = _label(message.get("id"), 512)
+        if identifier is None or identifier in identifiers:
+            continue
+        if len(identifiers) >= capacity:
+            raise ProviderDataLimitError("provider_record_limit_exceeded")
+        identifiers.add(identifier)
+    return identifiers
+
+
+def _replays(event: dict[str, Any], parent_messages: set[str]) -> bool:
+    message = event.get("message")
+    return (
+        event.get("type") == "assistant"
+        and isinstance(message, dict)
+        and _label(message.get("id"), 512) in parent_messages
+    )
+
+
+def _agent_role(path: Path, budget: ProviderInputBudget) -> str:
+    metadata = path.with_name(f"{path.stem}.meta.json")
+    if not budget.candidate(metadata).is_file():
+        return "unspecified"
+    try:
+        value = json.loads(
+            read_bounded_bytes(metadata, budget, MAX_AGENT_METADATA_BYTES)
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return "unspecified"
+    except ProviderDataLimitError as error:
+        # Optional metadata never blocks collection; aggregate limits still apply.
+        if str(error) != "provider_file_too_large":
+            raise
+        return "unspecified"
+    agent_type = value.get("agentType") if isinstance(value, dict) else None
+    if not isinstance(agent_type, str) or not agent_type.strip():
+        return "unspecified"
+    return _AGENT_ROLE_ALIASES.get(agent_type.strip().casefold(), "other")
+
+
+def _subagent_edge(
+    provider: str,
+    machine: str,
+    parent_id: str,
+    child_id: str,
+    records: Snapshot,
+    role: str,
+) -> dict[str, Any]:
+    conversation = records.conversations[0]
+    status = (
+        _TURN_STATUS_TO_SUBAGENT_STATUS.get(records.turns[-1]["status"], "unknown")
+        if records.turns
+        else "unknown"
+    )
+    return {
+        "id": f"claude:{machine}:{child_id}",
+        "provider": provider,
+        "source_machine": machine,
+        "parent_thread_id": parent_id,
+        "child_thread_id": child_id,
+        "status": status,
+        "created_at_ms": _epoch_ms(conversation["started_at"]),
+        "updated_at_ms": _epoch_ms(conversation["ended_at"]),
+        "agent_role": role,
+        "tokens_used": conversation["total_tokens"],
+    }
+
+
+def _epoch_ms(value: object) -> int | None:
+    timestamp = _timestamp(value)
+    return int(timestamp.timestamp() * 1000) if timestamp is not None else None
+
+
 def _load_events(
     path: Path, budget: ProviderInputBudget
 ) -> tuple[list[dict[str, Any]], str, str, int]:
@@ -342,11 +537,11 @@ def _load_events(
     return events, content_hash, session_id, malformed
 
 
-def _starts_turn(event: dict[str, Any]) -> bool:
+def _starts_turn(event: dict[str, Any], *, sidechain: bool = False) -> bool:
     if (
         event.get("type") != "user"
         or event.get("isMeta") is True
-        or event.get("isSidechain") is True
+        or (event.get("isSidechain") is True and not sidechain)
         or event.get("toolUseResult") is not None
         or not isinstance((message := event.get("message")), dict)
     ):

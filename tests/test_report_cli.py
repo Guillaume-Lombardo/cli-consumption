@@ -312,3 +312,38 @@ def test_quick_without_detected_providers_still_reports(
     assert "No usage recorded for this selection." in result.stdout
     assert invalid.exit_code == 2
     assert json.loads(invalid.stdout) == {"error": {"code": "invalid_timezone"}}
+
+
+def test_quick_reports_invalid_snapshots_with_a_fixed_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from report_fixtures import report_snapshots
+
+    from cli_consumption.models import SnapshotValidationError
+
+    snapshot = next(item for item in report_snapshots() if item.provider == "claude")
+    spec = resolve_adapter_spec("claude")
+    monkeypatch.setattr(
+        cli_module,
+        "_collection_inputs",
+        lambda *_args: ([(spec, [("m", tmp_path)])], []),
+    )
+    monkeypatch.setattr(cli_module, "_collect_adapter", lambda *_args: snapshot)
+
+    def reject(*_args: object) -> None:
+        raise SnapshotValidationError()
+
+    monkeypatch.setattr(cli_module, "ingest_snapshot", reject)
+
+    result = runner.invoke(
+        app, ["quick", "--database", str(tmp_path / "usage.sqlite"), "--json"]
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["collection"] == {
+        "failures": [{"code": "invalid_snapshot", "provider": "claude"}],
+        "ingestions": [],
+    }
+    assert payload["report"]["rows"] == []
+    _assert_private(result.output, tmp_path)

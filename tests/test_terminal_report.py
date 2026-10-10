@@ -191,6 +191,18 @@ def test_window_title_uses_the_report_timezone(engine: Engine) -> None:
     )
 
 
+def test_open_ended_window_titles(engine: Engine) -> None:
+    until_only = render_report(
+        _report(engine, window=parse_report_window(None, "2026-08-05")), width=200
+    )
+    since_only = render_report(
+        _report(engine, window=parse_report_window("2026-08-05", None)), width=200
+    )
+
+    assert "the beginning to 2026-08-06 00:00 (end exclusive)" in until_only
+    assert "2026-08-05 00:00 to now (end exclusive)" in since_only
+
+
 def test_empty_report_is_explicit(tmp_path: Path) -> None:
     engine = create_database_engine(tmp_path / "empty.sqlite")
     try:

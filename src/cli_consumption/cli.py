@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -48,6 +49,17 @@ from cli_consumption.storage import (
     ingest_snapshot,
     initialize_database,
     validate_snapshot,
+)
+from cli_consumption.usage_report import (
+    Breakdown,
+    ReportView,
+    UsageQuery,
+    UsageQueryError,
+    UsageReport,
+    aggregate_usage,
+    parse_report_window,
+    report_filters,
+    resolve_timezone,
 )
 
 MAX_INCREMENTAL_BATCHES = 10_000
@@ -1056,6 +1068,279 @@ def retention_command(
         )
 
 
+# Terminal usage reports -----------------------------------------------------
+
+_REPORT_ERROR_MESSAGES = {
+    "database_not_found": (
+        "No usage database found. Run `cli-consumption quick` or "
+        "`cli-consumption collect` first, or pass --database."
+    ),
+    "database_driver_missing": (
+        "PostgreSQL support requires optional dependencies; "
+        "install cli-consumption[postgres]."
+    ),
+    "database_unavailable": "The usage database is unavailable.",
+    "invalid_timezone": "Unknown timezone; use an IANA name such as Europe/Paris.",
+    "invalid_window": (
+        "Invalid report window; use dates or timezone-aware timestamps with "
+        "--since earlier than --until."
+    ),
+    "report_limit_exceeded": (
+        "Share-safe labels exceed safe limits; narrow the report with --since "
+        "and/or --until."
+    ),
+    "unknown_provider": "Unknown provider. Run `cli-consumption providers`.",
+}
+
+
+@app.command("report")
+def report_command(
+    view: Annotated[
+        ReportView,
+        typer.Argument(
+            help="Group by day, ISO week (Monday start), month, or session.",
+        ),
+    ] = ReportView.DAILY,
+    database: Annotated[
+        str,
+        typer.Option(
+            "--database",
+            "-d",
+            envvar="CLI_CONSUMPTION_DATABASE",
+            help="SQLite path or SQLAlchemy PostgreSQL URL.",
+        ),
+    ] = "cli-consumption.sqlite",
+    since: Annotated[
+        str | None,
+        typer.Option(
+            help="Window start: a date in --timezone or a zoned timestamp.",
+        ),
+    ] = None,
+    until: Annotated[
+        str | None,
+        typer.Option(
+            help="Exclusive window end: a date (included) or a zoned timestamp.",
+        ),
+    ] = None,
+    provider: Annotated[
+        list[str] | None,
+        typer.Option("--provider", help="Only this provider or alias. Repeatable."),
+    ] = None,
+    project: Annotated[
+        list[str] | None,
+        typer.Option("--project", help="Only this project label. Repeatable."),
+    ] = None,
+    machine: Annotated[
+        list[str] | None,
+        typer.Option("--machine", help="Only this machine label. Repeatable."),
+    ] = None,
+    model: Annotated[
+        list[str] | None,
+        typer.Option("--model", help="Only calls of this model. Repeatable."),
+    ] = None,
+    timezone: Annotated[
+        str,
+        typer.Option(help="IANA timezone for periods and plain dates."),
+    ] = "UTC",
+    by: Annotated[
+        Breakdown | None,
+        typer.Option("--by", help="Break every row down by this dimension."),
+    ] = None,
+    share_safe: Annotated[
+        bool,
+        typer.Option(
+            "--share-safe",
+            help="Pseudonymize project, machine, and model labels.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit the versioned JSON report.")
+    ] = False,
+) -> None:
+    """Show token usage tables from the database without collecting."""
+    try:
+        query = UsageQuery(
+            view=view,
+            window=parse_report_window(since, until, timezone),
+            filters=report_filters(
+                providers=provider or (),
+                machines=machine or (),
+                projects=project or (),
+                models=model or (),
+            ),
+            timezone=timezone,
+            breakdown=by,
+            share_safe=share_safe,
+        )
+    except UsageQueryError as error:
+        _abort_report(error.code, json_output=json_output)
+    if "://" not in database and not Path(database).expanduser().is_file():
+        _abort_report("database_not_found", json_output=json_output)
+    with _usage_database(database, json_output=json_output) as engine:
+        report = aggregate_usage(engine, query)
+    _emit_usage_report(report, json_output=json_output)
+
+
+@app.command("quick")
+def quick_command(
+    database: Annotated[
+        str,
+        typer.Option(
+            "--database",
+            "-d",
+            envvar="CLI_CONSUMPTION_DATABASE",
+            help="SQLite path or SQLAlchemy PostgreSQL URL.",
+        ),
+    ] = "cli-consumption.sqlite",
+    timezone: Annotated[
+        str,
+        typer.Option(help="IANA timezone for daily periods."),
+    ] = "UTC",
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit collection results and the JSON report."),
+    ] = False,
+) -> None:
+    """Collect every detected provider, then show the daily usage report."""
+    try:
+        resolve_timezone(timezone)
+    except UsageQueryError as error:
+        _abort_report(error.code, json_output=json_output)
+    try:
+        inputs, mappings = _collection_inputs("all", None, None)
+    except typer.BadParameter:
+        inputs, mappings = [], []
+    summaries: dict[str, IncrementalIngestion] = {}
+    batched: set[str] = set()
+    failures: list[CollectionFailure] = []
+    with _usage_database(database, json_output=json_output) as engine:
+        batches = 0
+        for spec, sources in inputs:
+            # Each provider is planned and ingested like `collect --provider all`,
+            # switching to bounded batches on an aggregate overrun, but one
+            # provider's failure never stops the others.
+            try:
+                plan = _plan_provider(spec, sources, mappings, mode="automatic")
+                if plan.batched:
+                    batched.add(spec.name)
+                for batch in _iter_planned_batches([plan], mappings):
+                    batches += 1
+                    if batches > MAX_INCREMENTAL_BATCHES:
+                        raise CollectionFailure(
+                            spec.name,
+                            "provider_limit_exceeded",
+                            f"Provider {spec.name!r} data exceeds collection "
+                            "safety limits.",
+                        )
+                    _ingest_batch(engine, batch, summaries, batched)
+            except CollectionFailure as error:
+                failures.append(error)
+        report = aggregate_usage(engine, UsageQuery(timezone=timezone))
+    ingestions = list(summaries.values())
+    if json_output:
+        payload = {
+            "collection": {
+                "incremental": bool(batched),
+                "ingestions": ingestions,
+                "failures": [
+                    {"provider": failure.provider, "code": failure.code}
+                    for failure in failures
+                ],
+            },
+            "report": report.to_dict(),
+        }
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    else:
+        if not inputs:
+            typer.echo("No supported provider data detected.", err=True)
+        if batched:
+            typer.echo(
+                "Aggregate collection limits exceeded; collected in bounded batches: "
+                + ", ".join(sorted(batched))
+                + ".",
+                err=True,
+            )
+        for item in ingestions:
+            batches_note = (
+                f" in {item['batches']} bounded batches" if item["batched"] else ""
+            )
+            typer.echo(
+                f"Collected {item['provider']}{batches_note}: {item['written']} "
+                f"written, {item['skipped']} unchanged, {item['malformed']} "
+                "malformed skipped.",
+                err=True,
+            )
+        for failure in failures:
+            committed = summaries.get(failure.provider)
+            suffix = (
+                f" {committed['batches']} earlier batch(es) were committed; "
+                "rerun is safe."
+                if committed is not None and committed["batched"]
+                else ""
+            )
+            typer.echo(failure.message + suffix, err=True)
+        _emit_usage_report(report, json_output=False)
+    if failures:
+        raise typer.Exit(code=2)
+
+
+@contextmanager
+def _usage_database(database: str, *, json_output: bool) -> Iterator[Engine]:
+    """Open, use, and dispose a database behind a fixed-code error boundary.
+
+    Engine construction, migrations, ingestion, and aggregation failures can carry
+    URLs, paths, SQL statements, and bound parameters in their text, so they are
+    reduced to fixed codes and never printed.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from cli_consumption.schema import SchemaCompatibilityError
+
+    database_errors = (SQLAlchemyError, SchemaCompatibilityError, OSError, ValueError)
+    try:
+        engine = create_database_engine(database)
+    except MissingOptionalDependencyError:
+        _abort_report("database_driver_missing", json_output=json_output)
+    except database_errors:
+        _abort_report("database_unavailable", json_output=json_output)
+    try:
+        yield engine
+    except DashboardLimitError:
+        _abort_report("report_limit_exceeded", json_output=json_output)
+    except database_errors:
+        _abort_report("database_unavailable", json_output=json_output)
+    finally:
+        engine.dispose()
+
+
+def _emit_usage_report(report: UsageReport, *, json_output: bool) -> None:
+    import sys
+
+    from cli_consumption.terminal_report import (
+        color_enabled,
+        render_report,
+        terminal_width,
+    )
+
+    if json_output:
+        typer.echo(json.dumps(report.to_dict(), sort_keys=True, separators=(",", ":")))
+        return
+    typer.echo(
+        render_report(report, width=terminal_width(), color=color_enabled(sys.stdout)),
+        nl=False,
+    )
+
+
+def _abort_report(code: str, *, json_output: bool) -> Never:
+    if json_output:
+        typer.echo(
+            json.dumps({"error": {"code": code}}, sort_keys=True, separators=(",", ":"))
+        )
+    else:
+        typer.echo(_REPORT_ERROR_MESSAGES[code], err=True)
+    raise typer.Exit(code=2)
+
+
 @app.command()
 def serve(
     database: Annotated[
@@ -1330,35 +1615,7 @@ def _collect_incrementally(
     provider = plans[0].spec.name if plans else "all"
 
     def ingest(engine: Engine, batch: CollectionBatch) -> None:
-        snapshot = batch.snapshot
-        try:
-            result = ingest_snapshot(
-                engine,
-                snapshot,
-                authoritative_subagent_scopes=batch.authoritative_subagent_scopes,
-                subagent_merge=batch.subagent_merge,
-            )
-        except SnapshotValidationError as error:
-            raise _snapshot_failure(snapshot.provider, error) from None
-        summary = summaries.setdefault(
-            snapshot.provider,
-            {
-                "provider": snapshot.provider,
-                "batched": snapshot.provider in batched,
-                "batches": 0,
-                "received": 0,
-                "written": 0,
-                "skipped": 0,
-                "malformed": 0,
-                "batch_duplicates": 0,
-            },
-        )
-        summary["batches"] += 1
-        summary["received"] += result.received
-        summary["written"] += result.written
-        summary["skipped"] += result.skipped
-        summary["malformed"] += snapshot.malformed_records
-        summary["batch_duplicates"] += snapshot.duplicate_conversations
+        _ingest_batch(engine, batch, summaries, batched)
 
     failure: CollectionFailure | None = None
     if strict:
@@ -1500,6 +1757,44 @@ def _collect_incrementally(
         )
 
 
+def _ingest_batch(
+    engine: Engine,
+    batch: CollectionBatch,
+    summaries: dict[str, IncrementalIngestion],
+    batched: set[str],
+) -> None:
+    """Ingest one collection batch and add its counters to the provider summary."""
+    snapshot = batch.snapshot
+    try:
+        result = ingest_snapshot(
+            engine,
+            snapshot,
+            authoritative_subagent_scopes=batch.authoritative_subagent_scopes,
+            subagent_merge=batch.subagent_merge,
+        )
+    except SnapshotValidationError as error:
+        raise _snapshot_failure(snapshot.provider, error) from None
+    summary = summaries.setdefault(
+        snapshot.provider,
+        {
+            "provider": snapshot.provider,
+            "batched": snapshot.provider in batched,
+            "batches": 0,
+            "received": 0,
+            "written": 0,
+            "skipped": 0,
+            "malformed": 0,
+            "batch_duplicates": 0,
+        },
+    )
+    summary["batches"] += 1
+    summary["received"] += result.received
+    summary["written"] += result.written
+    summary["skipped"] += result.skipped
+    summary["malformed"] += snapshot.malformed_records
+    summary["batch_duplicates"] += snapshot.duplicate_conversations
+
+
 def _collection_inputs(
     provider: str,
     source_values: list[str] | None,
@@ -1566,21 +1861,30 @@ def _plan_collection(
     normalized-record limit. ``never`` keeps the all-or-nothing behavior.
     """
     inputs, mappings = _collection_inputs(provider, source_values, project_values)
-    plans: list[_PlannedCollection] = []
-    for spec, sources in inputs:
-        capable = isinstance(spec.adapter_type(), IncrementalAdapter)
-        if mode == "forced":
-            plans.append(_PlannedCollection(spec, sources, None, capable))
-            continue
-        try:
-            snapshot = _collect_adapter(
-                spec, sources, mappings, switchable=capable and mode == "automatic"
-            )
-        except _AggregateLimitExceeded:
-            plans.append(_PlannedCollection(spec, sources, None, True))
-            continue
-        plans.append(_PlannedCollection(spec, sources, snapshot, False))
+    plans = [
+        _plan_provider(spec, sources, mappings, mode=mode) for spec, sources in inputs
+    ]
     return plans, mappings
+
+
+def _plan_provider(
+    spec: AdapterSpec,
+    sources: list[tuple[str, Path]],
+    mappings: list[tuple[str, str]],
+    *,
+    mode: Literal["forced", "automatic", "never"],
+) -> _PlannedCollection:
+    """Plan one provider; see ``_plan_collection`` for the modes."""
+    capable = isinstance(spec.adapter_type(), IncrementalAdapter)
+    if mode == "forced":
+        return _PlannedCollection(spec, sources, None, capable)
+    try:
+        snapshot = _collect_adapter(
+            spec, sources, mappings, switchable=capable and mode == "automatic"
+        )
+    except _AggregateLimitExceeded:
+        return _PlannedCollection(spec, sources, None, True)
+    return _PlannedCollection(spec, sources, snapshot, False)
 
 
 def _iter_planned_batches(

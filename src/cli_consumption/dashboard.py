@@ -459,6 +459,54 @@ def _dashboard_context(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ShareSafeLabels:
+    """Share-safe pseudonyms for one report selection."""
+
+    projects: dict[str, str]
+    machines: dict[str, str]
+    models: dict[str, str]
+
+
+def share_safe_labels(
+    connection: Connection,
+    *,
+    window: ExportWindow,
+    filters: ReportFilters,
+) -> ShareSafeLabels:
+    """Return the project, machine, and model aliases of a share-safe dashboard.
+
+    The aliases are derived from the same selection, ordering, and memory budget as
+    ``_dashboard_context``, so other share-safe outputs pseudonymize every label
+    exactly like the dashboard generated for the same window and filters.
+    """
+    budget = _IndexBudget()
+    model_names: set[str] = set()
+    for row in iter_report_rows(connection, "conversations", window, filters=filters):
+        for model in json.loads(row["models_json"]):
+            _add_bounded_model(model_names, str(model), budget)
+    for table_name in ("model_calls", "turn_settings"):
+        for model in _distinct_report_values(
+            connection, table_name, "model", window, filters
+        ):
+            _add_bounded_model(model_names, model, budget)
+    return ShareSafeLabels(
+        projects=_distinct_aliases(
+            connection, "conversations", "project", "project", window, filters, budget
+        ),
+        machines=_distinct_aliases(
+            connection,
+            "conversations",
+            "source_machine",
+            "machine",
+            window,
+            filters,
+            budget,
+        ),
+        models=_model_aliases(model_names, budget),
+    )
+
+
 def _add_bounded_model(values: set[str], value: str, budget: _IndexBudget) -> None:
     if value not in values:
         budget.charge_model_candidate(value)

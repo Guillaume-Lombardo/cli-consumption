@@ -36,6 +36,12 @@ provider files -> adapter -> metadata-only snapshot -> SQL storage -> dashboard/
 - `dashboard`, `reporting`, and `exporting`: select complete conversation graphs,
   provide an offline HTML view by default, and stream deterministic portable CSV tables
   when explicitly requested.
+- `usage_report` is the shared, rendering-free aggregation layer for period, session,
+  and breakdown usage. It selects conversations through `reporting` and mirrors the
+  dashboard's token-selection contract; a generated cross-check fixture keeps it
+  equal to the TypeScript analytics. `terminal_report` renders its results for the
+  `report` and `quick` commands, and later consumers such as a status line, an MCP
+  server, or budgets can reuse the same versioned JSON contract.
 - `apps/web` provides the persistent Next.js dashboard as a server-side BFF and UI;
   FastAPI remains the sole reporting/export boundary and the only service allowed to
   open PostgreSQL.

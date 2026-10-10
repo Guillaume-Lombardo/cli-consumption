@@ -82,7 +82,7 @@ changed between releases.
 | `gemini` | session history (unversioned) | `2026-08-30` | active history JSON and JSONL | [fixture](../tests/test_gemini_adapter.py) | [Gemini CLI](https://github.com/google-gemini/gemini-cli/tree/0bd1d439751478771c45d3d0895a6a9760554bf4) | Nested agents excluded; hashed projects are not reversed. |
 | `goose` | CLI 1.47.0 / schema v16 | `2026-08-30` | SQLite sessions and usage ledger | [fixture](../tests/test_goose_adapter.py) | [Goose](https://github.com/aaif-goose/goose/tree/v1.47.0) | Schema v16 only; no legacy JSONL, subagents, reasoning, or latency. |
 | `grok` | session schema (unversioned) | `2026-08-30` | summary, updates, and events JSONL | [fixture](../tests/test_grok_adapter.py) | [Grok Build](https://github.com/xai-org/grok-build/tree/bc7f02eddd3d84085849dc19ed216f11c23b0571) | No costs, subagent relationships, rewinds, or manual compactions. |
-| `claude` | transcript schema (unversioned), synthetic subagent fixtures | `2026-10-09` | project session and subagent JSONL | [fixture](../tests/test_claude_adapter.py) | [Claude Code](https://github.com/anthropics/claude-code/tree/f1af9b1f4b1fd4c776135381606edada82ef638e) | Sessions and subagents; no context windows, effort, or latency. |
+| `claude` | transcript schema (unversioned), synthetic subagent and usage fixtures | `2026-10-10` | project session and subagent JSONL | [fixture](../tests/test_claude_adapter.py) | [Claude Code](https://github.com/anthropics/claude-code/tree/f1af9b1f4b1fd4c776135381606edada82ef638e) | Sessions, subagents, thinking, advisor iterations, and cache-write durations; no context windows, effort, or latency. |
 | `cline` | SDK session schema (unversioned) | `2026-08-30` | SQLite session index and message JSON | [fixture](../tests/test_cline_adapter.py) | [Cline](https://github.com/cline/cline/tree/48d63852745460ff0fa3dfcc0457bbe2493841de) | No costs or arbitrary task metadata; artifacts must remain present. |
 | `kilo` | CLI 7.5.5 | `2026-08-30` | SQLite session, message, and part tables | [fixture](../tests/test_kilo_adapter.py) | [Kilo Code](https://github.com/Kilo-Org/kilocode/tree/v7.5.5) | CLI store only; no legacy IDE tasks, cloud sessions, or subagents. |
 | `kimi` | Wire v1 | `2026-08-30` | wire event JSONL | [fixture](../tests/test_kimi_adapter.py) | [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli/tree/cbc15c076d17f70fec9f89c90c0502e68657f505) | Selected model unavailable; hashed work directories are not reversed. |
@@ -284,6 +284,38 @@ relationships and never remove one (see [Incremental collection](#incremental-co
 
 Claude Code emits uncached, cache-read, and cache-creation input separately. Normalized
 `input_tokens` is their sum, with each component retained in its corresponding field.
+`output_tokens` stays the provider's inclusive output total. When
+`usage.output_tokens_details.thinking_tokens` is present, it becomes
+`reasoning_output_tokens` and the remainder becomes `visible_output_tokens`; a value
+above the output total is bounded by it, and an absent or invalid value counts as no
+reasoning. When `usage.cache_creation.ephemeral_1h_input_tokens` is present, it is stored
+as `cache_write_1h_input_tokens`, bounded by `cache_creation_input_tokens`, which stays
+the authoritative cache-write total; the five-minute share is the remainder. A missing,
+non-numeric, or negative one-hour count is stored as null (not reported), never as a
+measured zero.
+
+Advisor sub-inferences appear only in `usage.iterations` entries of type
+`advisor_message`, which carry their own `model` and flat token counters. The
+top-level usage covers the executing model alone, so each advisor entry becomes its own
+model call under its own model, immediately after the response that reported it and
+with that response's turn and timestamp. An advisor entry without a usable model label
+is kept under `unknown`. Other iteration types are never counted again: executor
+`message` and `fallback_message` entries already make up the top-level usage. The API
+documents server-side `compaction` entries as outside the top-level usage; they are not
+counted either, so such usage, if a transcript ever records it, remains a known gap.
+Advisor calls follow their
+response through streaming-fragment selection and sidechain replay filtering, so a
+replayed response contributes neither its own usage nor its advisors. Their identifiers
+continue the conversation's deterministic model-call sequence, so repeated and batched
+collections produce identical rows. Advisor models appear in the conversation's model
+list but not in turn settings, which describe the executing model. These fields were
+checked on 2026-10-10 against the Anthropic SDK usage types at
+[`b4b7916`](https://github.com/anthropics/anthropic-sdk-python/tree/b4b7916deaf4e5570cd627b1ae7ee4394a4de39f/src/anthropic/types/beta),
+the [advisor tool documentation](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool),
+and ccusage at
+[`c4fd2e8`](https://github.com/ryoppippi/ccusage/tree/c4fd2e8897713749b954d8c5b75c74f1c1afe69d/rust/adapters/claude/src),
+and are qualified with synthetic fixtures. Conversations stored before this change are
+re-normalized only when a more complete copy of their transcript is collected.
 Transcript layout and cleanup behavior were checked against the official
 [Claude Code subagent documentation](https://code.claude.com/docs/en/sub-agents) on
 2026-10-10; nested workflow and legacy flat layouts are qualified with synthetic

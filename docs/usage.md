@@ -301,8 +301,10 @@ available, otherwise a generic `503`, within a two-second application deadline. 
 routes are intentionally unauthenticated for infrastructure probes and every response
 has a bounded `X-Request-ID`.
 
-Snapshots use strict schema version 1 and a 32 MiB request-body limit. Upgrade the
-server before clients whenever supported snapshot schemas change. The
+Clients send strict snapshot schema version 2; collectors accept versions 1 and 2 and
+a 32 MiB request-body limit. A client refuses to upload to a collector that does not
+advertise schema 2, so upgrade the server before clients whenever supported snapshot
+schemas change. The
 [architecture guide](architecture.md) specifies retries, replay receipts, database
 timeouts, readiness locking, and deployment order.
 

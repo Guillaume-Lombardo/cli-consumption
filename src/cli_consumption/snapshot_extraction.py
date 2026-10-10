@@ -177,6 +177,7 @@ def _extract_snapshots(
             connection,
             window,
             table_names=_EXTRACTED_TABLES,
+            include_unreported=True,
         )
     ).mappings()
     estimated_records = 0
@@ -217,7 +218,9 @@ def _extract_snapshots(
         conversation_providers[conversation_id] = provider
 
     for table_name, collection_name in _CHILD_TABLE_COLLECTIONS.items():
-        for record in iter_report_rows(connection, table_name, window):
+        for record in iter_report_rows(
+            connection, table_name, window, include_unreported=True
+        ):
             conversation_id = record.get("conversation_id")
             provider = conversation_providers.get(str(conversation_id))
             if provider is None:

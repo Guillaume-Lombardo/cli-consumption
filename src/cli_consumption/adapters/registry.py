@@ -286,11 +286,12 @@ ADAPTER_SPECS = (
         token_semantics="additive",
         qualification=_qualification(
             "claude",
-            "transcript schema (unversioned), synthetic subagent fixtures",
+            "transcript schema (unversioned), synthetic subagent and usage fixtures",
             "project session and subagent JSONL",
             "https://github.com/anthropics/claude-code/tree/f1af9b1f4b1fd4c776135381606edada82ef638e",
-            "Sessions and subagents; no context windows, effort, or latency.",
-            qualified_on="2026-10-09",
+            "Sessions, subagents, thinking, advisor iterations, and cache-write "
+            "durations; no context windows, effort, or latency.",
+            qualified_on="2026-10-10",
         ),
     ),
     AdapterSpec(

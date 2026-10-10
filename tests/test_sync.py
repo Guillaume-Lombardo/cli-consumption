@@ -39,7 +39,7 @@ class FakeClient:
             return self.get_handler(url)
         payload: dict[str, int | bool] = {
             "snapshot_schema_min": 1,
-            "snapshot_schema_max": 1,
+            "snapshot_schema_max": 2,
         }
         if self.idempotency is not None:
             payload["idempotent_snapshot_uploads"] = self.idempotency
@@ -79,7 +79,7 @@ def test_sync_client_reuses_http_client_and_negotiates_capabilities_once() -> No
     assert first_url == "https://collector.test/api/v1/snapshots"
     assert first_request["headers"]["Authorization"] == "Bearer token"
     assert first_request["json"]["provider"] == "codex"
-    assert first_request["json"]["schema_version"] == 1
+    assert first_request["json"]["schema_version"] == 2
     keys = [request["headers"]["Idempotency-Key"] for _, request in fake.post_calls]
     assert all(str(uuid.UUID(key)) == key for key in keys)
     assert keys[0] != keys[1]
@@ -129,11 +129,22 @@ def test_explicit_idempotency_key_is_reused_across_calls_and_validated() -> None
     assert len(fake.post_calls) == 2
 
 
-def test_sync_client_rejects_incompatible_collector() -> None:
+@pytest.mark.parametrize(
+    "supported",
+    (
+        # A collector released before snapshot schema 2 must be upgraded first.
+        (1, 1),
+        (3, 4),
+    ),
+)
+def test_sync_client_rejects_incompatible_collector(supported: tuple[int, int]) -> None:
     fake = FakeClient()
+    minimum, maximum = supported
 
     def incompatible(_url: str) -> httpx.Response:
-        return response(200, {"snapshot_schema_min": 2, "snapshot_schema_max": 3})
+        return response(
+            200, {"snapshot_schema_min": minimum, "snapshot_schema_max": maximum}
+        )
 
     fake.get_handler = incompatible
 

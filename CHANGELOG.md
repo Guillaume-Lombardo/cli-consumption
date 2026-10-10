@@ -23,6 +23,11 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   replayed parent responses, and subagent relationships converge instead of being
   skipped. Per-file, per-line, symlink, and single-conversation limits are
   unchanged, and one command is still capped at 10,000 batches.
+- Snapshot schema 2 and database revision `0008` add an optional per-model-call
+  `cache_write_1h_input_tokens` counter: the one-hour share of cache-write input, null
+  when a provider reports no duration breakdown. Collectors accept schemas 1 and 2;
+  clients send schema 2, so upgrade the collector before its clients. The counter is
+  stored for cost estimation and is not yet included in dashboards or CSV exports.
 
 ### Security
 
@@ -39,6 +44,12 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   linked to their parent session. Their tokens were previously ignored, and a legacy
   agent file could replace its parent session during duplicate selection. Sidechain
   replays of parent responses are not counted twice.
+- Claude Code collection now counts reasoning tokens from
+  `output_tokens_details.thinking_tokens` as a bounded subset of output, records each
+  advisor sub-inference from `usage.iterations` as its own model call under the
+  advisor model, and keeps the provider-reported one-hour cache-write share. Advisor
+  tokens were previously ignored. Already stored conversations are recounted only when
+  a more complete copy of their transcript is collected.
 - Claude Code and Codex collection now reads each provider file once instead of twice,
   so the aggregate 512 MiB read limit applies to the actual store size and the
   selected copy is no longer parsed a second time. Only the normalized records of the

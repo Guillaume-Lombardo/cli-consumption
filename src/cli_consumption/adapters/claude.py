@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -262,18 +263,8 @@ class ClaudeAdapter:
         turns: dict[str, dict[str, Any]] = {}
         turn_models: dict[str, set[str]] = {}
         active: str | None = None
-        # request/message ID -> (rank, event index, turn, timestamp, model, tokens)
-        calls: dict[
-            str,
-            tuple[
-                tuple[bool, int, int],
-                int,
-                str | None,
-                datetime | None,
-                str,
-                dict[str, int],
-            ],
-        ] = {}
+        # request/message ID -> the most complete fragment of that response
+        calls: dict[str, _Call] = {}
         tools: dict[str, tuple[str | None, datetime | None, str]] = {}
         compactions = 0
 
@@ -334,15 +325,18 @@ class ClaudeAdapter:
                 or f"event-{index}"
             )
             if isinstance((usage := message.get("usage")), dict):
-                tokens = _usage(usage)
+                primary = _UsageCall(model, *_usage(usage))
+                advisors = _advisor_usages(usage)
                 rank = (
                     message.get("stop_reason") is not None,
-                    sum(tokens.values()),
+                    sum(sum(item.tokens.values()) for item in (primary, *advisors)),
                     index,
                 )
                 previous = calls.get(call_key)
-                if previous is None or rank > previous[0]:
-                    calls[call_key] = (rank, index, active, timestamp, model, tokens)
+                if previous is None or rank > previous.rank:
+                    calls[call_key] = _Call(
+                        rank, index, active, timestamp, (primary, *advisors)
+                    )
             if not isinstance((content := message.get("content")), list):
                 continue
             for block_index, block in enumerate(content, 1):
@@ -360,28 +354,33 @@ class ClaudeAdapter:
 
         totals = empty_tokens()
         models: set[str] = set()
-        for sequence, call in enumerate(
-            sorted(calls.values(), key=lambda row: row[1]), 1
-        ):
-            _, _, turn_key, timestamp, model, tokens = call
-            models.add(model)
-            turn = turns.get(turn_key or "")
-            if turn:
-                turn["model_calls"] += 1
-                turn_models[turn_key or ""].add(model)
-                _add_tokens(turn, tokens)
-            _add_tokens(totals, tokens)
-            snapshot.model_calls.append(
-                {
-                    "id": f"{conversation_id}:model:{sequence}",
-                    "conversation_id": conversation_id,
-                    "turn_id": turn["id"] if turn else None,
-                    "sequence": sequence,
-                    "timestamp": _iso(timestamp),
-                    "model": model,
-                    **tokens,
-                }
-            )
+        call_count = 0
+        for call in sorted(calls.values(), key=lambda row: row.index):
+            turn = turns.get(call.turn or "")
+            # The response's own usage comes first, then each advisor sub-inference
+            # in provider order. All share the response's turn and timestamp.
+            for position, usage_call in enumerate(call.usages):
+                call_count += 1
+                models.add(usage_call.model)
+                if turn:
+                    turn["model_calls"] += 1
+                    if position == 0:
+                        # Turn settings describe the executing model, not advisors.
+                        turn_models[call.turn or ""].add(usage_call.model)
+                    _add_tokens(turn, usage_call.tokens)
+                _add_tokens(totals, usage_call.tokens)
+                snapshot.model_calls.append(
+                    {
+                        "id": f"{conversation_id}:model:{call_count}",
+                        "conversation_id": conversation_id,
+                        "turn_id": turn["id"] if turn else None,
+                        "sequence": call_count,
+                        "timestamp": _iso(call.timestamp),
+                        "model": usage_call.model,
+                        **usage_call.tokens,
+                        "cache_write_1h_input_tokens": usage_call.cache_write_1h,
+                    }
+                )
 
         for sequence, (turn_key, timestamp, name) in enumerate(tools.values(), 1):
             turn = turns.get(turn_key or "")
@@ -436,7 +435,7 @@ class ClaudeAdapter:
                 "source": "local-jsonl",
                 "models": sorted(models),
                 "iterations": len(turns),
-                "model_calls": len(calls),
+                "model_calls": call_count,
                 "tool_calls": len(tools),
                 "compactions": compactions,
                 "event_count": event_count,
@@ -457,6 +456,26 @@ _RECORD_COLLECTIONS = (
 
 
 _Selection = tuple[tuple[int, str], Snapshot, dict[str, Any] | None]
+
+
+@dataclass(frozen=True, slots=True)
+class _UsageCall:
+    """Normalized usage billed under one model."""
+
+    model: str
+    tokens: dict[str, int]
+    cache_write_1h: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Call:
+    """The selected fragment of one response and the model calls it reports."""
+
+    rank: tuple[bool, int, int]
+    index: int
+    turn: str | None
+    timestamp: datetime | None
+    usages: tuple[_UsageCall, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -747,23 +766,74 @@ def _starts_turn(event: dict[str, Any], *, sidechain: bool = False) -> bool:
     return bool(types - {"tool_result"})
 
 
-def _usage(value: dict[str, Any]) -> dict[str, int]:
+def _usage(value: dict[str, Any]) -> tuple[dict[str, int], int | None]:
+    """Normalize one Anthropic usage object and its one-hour cache-write share.
+
+    ``output_tokens`` stays the inclusive output total. The optional
+    ``output_tokens_details.thinking_tokens`` is its reasoning subset, bounded by
+    the total when a record is inconsistent; the remainder is visible output.
+    """
     uncached = _counter(value.get("input_tokens"))
     cached = _counter(value.get("cache_read_input_tokens"))
     cache_write = _counter(value.get("cache_creation_input_tokens"))
     output = _counter(value.get("output_tokens"))
+    details = value.get("output_tokens_details")
+    reasoning = min(
+        output,
+        _counter(details.get("thinking_tokens")) if isinstance(details, dict) else 0,
+    )
     input_tokens = min(MAX_BIGINT, uncached + cached + cache_write)
-    return {
+    tokens = {
         "input_tokens": input_tokens,
         "cached_input_tokens": cached,
         "cache_write_input_tokens": cache_write,
         "output_tokens": output,
-        "reasoning_output_tokens": 0,
+        "reasoning_output_tokens": reasoning,
         "total_tokens": min(MAX_BIGINT, input_tokens + output),
         "uncached_input_tokens": uncached,
-        "visible_output_tokens": output,
+        "visible_output_tokens": output - reasoning,
         "unattributed_tokens": 0,
     }
+    return tokens, _cache_write_1h(value.get("cache_creation"), cache_write)
+
+
+def _cache_write_1h(breakdown: object, cache_write: int) -> int | None:
+    """Return the one-hour subset of cache writes, or ``None`` when unreported.
+
+    ``cache_creation_input_tokens`` remains the authoritative cache-write total. A
+    missing, non-numeric, or negative one-hour count is unreported rather than a
+    measured zero; a count above the total is bounded by it.
+    """
+    if not isinstance(breakdown, dict):
+        return None
+    value = breakdown.get("ephemeral_1h_input_tokens")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or (isinstance(value, float) and not math.isfinite(value))
+        or value < 0
+    ):
+        return None
+    return min(int(value), cache_write)
+
+
+def _advisor_usages(usage: dict[str, Any]) -> tuple[_UsageCall, ...]:
+    """Return advisor sub-inferences reported in ``usage.iterations``.
+
+    Advisor iterations are billed under their own model and are excluded from the
+    top-level usage, which covers only the executing model. Executor ``message``
+    and ``fallback_message`` iterations already make up that top-level usage, and
+    server-side ``compaction`` iterations are out of scope, so no other type is
+    counted here.
+    """
+    iterations = usage.get("iterations")
+    if not isinstance(iterations, list):
+        return ()
+    return tuple(
+        _UsageCall(_label(iteration.get("model"), 255) or "unknown", *_usage(iteration))
+        for iteration in iterations
+        if isinstance(iteration, dict) and iteration.get("type") == "advisor_message"
+    )
 
 
 def _project(

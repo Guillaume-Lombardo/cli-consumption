@@ -274,3 +274,96 @@ def test_identity_pass_skips_malformed_lines_and_uses_the_same_fallbacks(
     assert tokens["parent:agent:late"] == 9
     assert "stem-id" in tokens
     assert any(key.startswith("session-") for key in tokens)
+
+
+def _advised(identity: dict[str, Any], message_id: str, second: int) -> dict:
+    event = _assistant(identity, message_id, 5, second)
+    event["message"]["usage"].update(
+        {
+            "cache_creation_input_tokens": 8,
+            "cache_creation": {
+                "ephemeral_5m_input_tokens": 2,
+                "ephemeral_1h_input_tokens": 6,
+            },
+            "output_tokens_details": {"thinking_tokens": 1},
+            "iterations": [
+                {"type": "message", "input_tokens": 5, "output_tokens": 2},
+                {
+                    "type": "advisor_message",
+                    "model": "claude-opus-5",
+                    "input_tokens": 40,
+                    "cache_creation_input_tokens": 4,
+                    "cache_creation": {"ephemeral_1h_input_tokens": 4},
+                    "output_tokens": 30,
+                },
+                {"type": "advisor_message", "input_tokens": 3, "output_tokens": 1},
+            ],
+        }
+    )
+    return event
+
+
+@pytest.mark.parametrize("richer_first", [True, False])
+def test_advisor_calls_store_identical_results_in_batches(
+    tmp_path: Path, richer_first: bool
+) -> None:
+    parent = {"sessionId": "parent"}
+    poorer = tmp_path / "poorer"
+    _write(
+        poorer / "projects" / "-home-a" / "parent.jsonl",
+        [*_parent("parent", []), _advised(parent, "a1", 1)],
+    )
+    child = {"sessionId": "parent", "agentId": "a", "isSidechain": True}
+    _write(
+        poorer / "projects" / "-home-a" / "agent-a.jsonl",
+        [
+            *_child("parent", "a", [], "own")[:1],
+            # A sidechain replay of an advised parent response, then its own.
+            _advised(child, "a2", 5),
+            _advised(child, "own", 6),
+        ],
+    )
+    richer = tmp_path / "richer"
+    _write(
+        richer / "projects" / "-Users-a" / "parent.jsonl",
+        [*_parent("parent", []), _advised(parent, "a1", 1), _advised(parent, "a2", 2)],
+    )
+    _write(
+        richer / "projects" / "-Users-a" / "parent" / "subagents" / "agent-b.jsonl",
+        [
+            *_child("parent", "b", [], "own-b")[:1],
+            _advised(child | {"agentId": "b"}, "b1", 7),
+        ],
+    )
+    sources = [("poorer", poorer), ("richer", richer)]
+    if richer_first:
+        sources.reverse()
+
+    expected = assert_batches_equal_one_collection(sources, tmp_path)
+
+    calls: dict[str, list[tuple[Any, ...]]] = {}
+    for row in expected["model_calls"]:
+        calls.setdefault(row["conversation_id"], []).append(
+            (
+                row["model"],
+                row["total_tokens"],
+                row["reasoning_output_tokens"],
+                row["cache_write_1h_input_tokens"],
+            )
+        )
+    advised = [
+        ("claude-sonnet-4-5", 15, 1, 6),
+        ("claude-opus-5", 74, 0, 4),
+        ("unknown", 4, 0, None),
+    ]
+    assert calls == {
+        "claude:parent": advised * 2,
+        # The replayed parent response a2 and its advisors are not counted again.
+        "claude:parent:agent:a": advised,
+        "claude:parent:agent:b": advised,
+    }
+    assert _tokens(expected) == {
+        "parent": 2 * 93,
+        "parent:agent:a": 93,
+        "parent:agent:b": 93,
+    }

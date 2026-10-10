@@ -48,7 +48,7 @@ async def test_collector_requires_token_and_ingests_snapshot(
         assert (await client.get("/health")).status_code == 200
         health = (await client.get("/health")).json()
         assert health["snapshot_schema_min"] == 1
-        assert health["snapshot_schema_max"] == 1
+        assert health["snapshot_schema_max"] == 2
         readiness = await client.get("/ready")
         assert readiness.status_code == 200
         assert readiness.json() == {"status": "ready"}
@@ -104,8 +104,19 @@ async def test_collector_requires_token_and_ingests_snapshot(
         )
         assert response.status_code == 200
 
+        legacy_with_duration = snapshot.to_dict()
+        legacy_with_duration["schema_version"] = 1
+        legacy_with_duration["model_calls"][0]["cache_write_1h_input_tokens"] = 0
+        response = await client.post(
+            "/api/v1/snapshots",
+            json=legacy_with_duration,
+            headers={"Authorization": "Bearer test-token"},
+        )
+        assert response.status_code == 422
+        assert response.json() == {"detail": "invalid_snapshot"}
+
         unsupported = snapshot.to_dict()
-        unsupported["schema_version"] = 2
+        unsupported["schema_version"] = 3
         response = await client.post(
             "/api/v1/snapshots",
             json=unsupported,

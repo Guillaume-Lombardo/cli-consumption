@@ -22,7 +22,11 @@ class SchemaCompatibilityError(RuntimeError):
 # Stable signed-bigint advisory-lock namespace for ``b"cli-cons"``.
 POSTGRESQL_MIGRATION_LOCK = 7_164_216_750_902_308_467
 SQLITE_MIGRATION_LOCK_TIMEOUT_MS = 15_000
-CURRENT_DATABASE_REVISION = "0007"
+CURRENT_DATABASE_REVISION = "0008"
+# Columns added after revision 0007. Published layouts up to 0007 lack them.
+COLUMNS_ADDED_IN_0008: dict[str, frozenset[str]] = {
+    "model_calls": frozenset({"cache_write_1h_input_tokens"}),
+}
 
 
 BASELINE_COLUMNS: dict[str, frozenset[str]] = {
@@ -96,6 +100,7 @@ BASELINE_COLUMNS: dict[str, frozenset[str]] = {
             "visible_output_tokens",
             "unattributed_tokens",
             "total_tokens",
+            "cache_write_1h_input_tokens",
         }
     ),
     "tool_calls": frozenset(
@@ -207,6 +212,10 @@ def _preflight_unversioned(connection: Connection) -> None:
             accepted.add(BASELINE_COLUMNS[table_name] - {"agent_nickname"})
         if table_name == "dashboard_layouts":
             accepted.add(BASELINE_COLUMNS[table_name] - {"revision"})
+        if table_name in COLUMNS_ADDED_IN_0008:
+            accepted.add(
+                BASELINE_COLUMNS[table_name] - COLUMNS_ADDED_IN_0008[table_name]
+            )
         if actual not in accepted:
             _reject_unpublished_schema()
 
@@ -280,7 +289,9 @@ def _preflight_unversioned(connection: Connection) -> None:
 
 
 def _matches_declared_layout(
-    connection: Connection, table_names: frozenset[str]
+    connection: Connection,
+    table_names: frozenset[str],
+    omitted_columns: Mapping[str, frozenset[str]] | None = None,
 ) -> bool:
     from cli_consumption.storage import SCHEMA_TABLES
 
@@ -288,12 +299,13 @@ def _matches_declared_layout(
     existing = set(inspector.get_table_names())
     if not table_names.issubset(existing):
         return False
+    omitted = omitted_columns or {}
     for table_name in table_names:
         model = SCHEMA_TABLES[table_name]
         declared = cast(Table, model.__table__)
         if {column["name"] for column in inspector.get_columns(table_name)} != {
             column.name for column in declared.columns
-        }:
+        } - omitted.get(table_name, frozenset()):
             return False
         if not _declared_indexes_match(inspector, table_name, declared):
             return False
@@ -456,6 +468,7 @@ def _matches_revision_0004_layout(connection: Connection) -> bool:
     return _matches_declared_layout(
         connection,
         frozenset(SCHEMA_TABLES) - {"sync_receipts", "dashboard_layouts"},
+        COLUMNS_ADDED_IN_0008,
     )
 
 
@@ -468,6 +481,7 @@ def _matches_revision_0005_layout(connection: Connection) -> bool:
     return _matches_declared_layout(
         connection,
         frozenset(SCHEMA_TABLES) - {"dashboard_layouts"},
+        COLUMNS_ADDED_IN_0008,
     )
 
 
@@ -478,6 +492,7 @@ def _matches_revision_0006_layout(connection: Connection) -> bool:
     if not _matches_declared_layout(
         connection,
         frozenset(SCHEMA_TABLES) - {"dashboard_layouts"},
+        COLUMNS_ADDED_IN_0008,
     ):
         return False
     inspector = inspect(connection)
@@ -503,6 +518,25 @@ def _matches_revision_0006_layout(connection: Connection) -> bool:
         and not inspector.get_foreign_keys("dashboard_layouts")
         and not inspector.get_check_constraints("dashboard_layouts")
         and not inspector.get_unique_constraints("dashboard_layouts")
+    )
+
+
+def _has_columns_added_in_0008(connection: Connection) -> bool:
+    inspector = inspect(connection)
+    existing = set(inspector.get_table_names())
+    return any(
+        columns & {column["name"] for column in inspector.get_columns(table_name)}
+        for table_name, columns in COLUMNS_ADDED_IN_0008.items()
+        if table_name in existing
+    )
+
+
+def _matches_revision_0007_layout(connection: Connection) -> bool:
+    """Recognize the published layout before model-call cache-write durations."""
+    from cli_consumption.storage import SCHEMA_TABLES
+
+    return _matches_declared_layout(
+        connection, frozenset(SCHEMA_TABLES), COLUMNS_ADDED_IN_0008
     )
 
 
@@ -576,12 +610,18 @@ def upgrade_database(engine: Engine) -> None:
                 _preflight_unversioned(connection)
                 if _matches_current_head_layout(connection):
                     adopt_revision = expected_heads[0]
+                elif _matches_revision_0007_layout(connection):
+                    adopt_revision = "0007"
                 elif _matches_revision_0006_layout(connection):
                     adopt_revision = "0006"
                 elif _matches_revision_0005_layout(connection):
                     adopt_revision = "0005"
                 elif _matches_revision_0004_layout(connection):
                     adopt_revision = "0004"
+                elif _has_columns_added_in_0008(connection):
+                    # Only the exact head layout may carry 0008 columns; replaying
+                    # older migrations over them could not succeed.
+                    _reject_unpublished_schema()
             elif any(head not in known_revisions for head in current_heads):
                 raise SchemaCompatibilityError(
                     "The database schema is newer than or unknown to this package"

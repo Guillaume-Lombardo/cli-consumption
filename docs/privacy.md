@@ -14,7 +14,8 @@ pseudonymize or coarsen those fields and is the appropriate controlled-sharing m
 
 - Provider, source-machine label, project category, and stable provider IDs
 - Conversation and turn timestamps, status, and durations
-- Model identifiers and token counters emitted by the provider
+- Model identifiers and token counters emitted by the provider, including the
+  provider-reported one-hour subset of a model call's cache-write input tokens
 - Tool names and aggregate call counts
 - Whitelisted work-item categories, normalized technical status, and timing
 - Model input-to-context-window samples and bounded provider configuration labels
@@ -55,8 +56,9 @@ validation rejects unknown fields, unknown work categories, arbitrary roles or
 statuses, malformed timestamps, inconsistent token compositions, out-of-range
 counters, unconstrained analytics labels, broken relationships, snapshots above
 250,000 records, and snapshot API requests above 32 MiB before opening a transaction. Errors
-use generic codes and do not echo rejected values. Snapshot schema v1 is advertised by
-the collector capabilities endpoint so an incompatible client can stop before upload.
+use generic codes and do not echo rejected values. The supported snapshot schema range
+(1 to 2) is advertised by the collector capabilities endpoint so an incompatible client
+can stop before upload. Schema 2 adds only the optional cache-write duration counter.
 
 Signed offline snapshot files contain exactly one or more instances of that existing
 snapshot schema plus a fixed format name and version. Their Ed25519 signature protects
@@ -109,7 +111,7 @@ refuses every upload before creating the HTTP client when any local snapshot rep
 malformed records. Paths, snapshot payloads, tokens, provider record values, and
 collector error details are excluded from both human and JSON output.
 
-Read-only database extraction reconstructs only the existing strict snapshot-schema-v1
+Read-only database extraction reconstructs only the existing strict snapshot-schema
 fields. It keeps the approved detailed operational labels, stable provider-qualified
 IDs, content hashes, relationships, token counters, statuses, and timestamps because
 the receiving ingestion path needs them for deterministic replacement. It excludes

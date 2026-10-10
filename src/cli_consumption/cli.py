@@ -8,15 +8,17 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
-from typing import Annotated, Never, Protocol, TextIO, TypedDict, cast
+from typing import Annotated, Literal, Never, Protocol, TextIO, TypedDict, cast
 
 import typer
 from sqlalchemy.engine import Engine
 
 from cli_consumption import __version__
+from cli_consumption.adapters._incremental import is_aggregate_limit
 from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.base import (
     CollectionBatch,
@@ -75,12 +77,30 @@ class CollectionFailure(RuntimeError):
 
 class IncrementalIngestion(TypedDict):
     provider: str
+    batched: bool
     batches: int
     received: int
     written: int
     skipped: int
     malformed: int
     batch_duplicates: int
+
+
+IncrementalTrigger = Literal["requested", "automatic"]
+
+
+class _AggregateLimitExceeded(Exception):
+    """An incremental-capable provider exceeded only an aggregate collection limit."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PlannedCollection:
+    """One provider's collection plan: a collected snapshot or deferred batches."""
+
+    spec: AdapterSpec
+    sources: list[tuple[str, Path]]
+    snapshot: Snapshot | None
+    batched: bool
 
 
 class _ServerProcess(Protocol):
@@ -191,34 +211,53 @@ def collect(
         ),
     ] = False,
     incremental: Annotated[
-        bool,
+        bool | None,
         typer.Option(
-            "--incremental",
+            "--incremental/--no-incremental",
             help=(
-                "Automatically ingest supported large provider stores in bounded, "
-                "restart-safe batches."
+                "Force bounded, restart-safe batches for supported providers, or "
+                "forbid the automatic switch to batches when a supported provider "
+                "exceeds an aggregate collection limit."
             ),
+            show_default="automatic",
         ),
-    ] = False,
+    ] = None,
     json_output: Annotated[
         bool, typer.Option("--json", help="Emit a deterministic JSON result.")
     ] = False,
 ) -> None:
     """Collect one or more local/copied CLI data directories into SQL storage."""
     if incremental:
+        plans, mappings = _plan_collection(provider, source, project, mode="forced")
         _collect_incrementally(
-            provider,
-            source,
-            project,
+            plans,
+            mappings,
             database,
             strict=strict,
             json_output=json_output,
+            trigger="requested",
         )
         return
     try:
-        snapshots = _collect_snapshots(provider, source, project)
+        plans, mappings = _plan_collection(
+            provider,
+            source,
+            project,
+            mode="never" if incremental is False else "automatic",
+        )
     except CollectionFailure as error:
         _abort_collection(error, json_output=json_output)
+    if any(plan.batched for plan in plans):
+        _collect_incrementally(
+            plans,
+            mappings,
+            database,
+            strict=strict,
+            json_output=json_output,
+            trigger="automatic",
+        )
+        return
+    snapshots = [plan.snapshot for plan in plans if plan.snapshot is not None]
     if strict and any(snapshot.malformed_records for snapshot in snapshots):
         raise typer.BadParameter(
             "--strict refused snapshots containing malformed provider records"
@@ -811,15 +850,16 @@ def _emit_collection_json(
     error: CollectionFailure,
     *,
     ingestions: list[IncrementalIngestion] | None = None,
-    incremental: bool = False,
+    trigger: IncrementalTrigger | None = None,
 ) -> None:
     """Emit one deterministic collection failure without provider error details."""
     payload: dict[str, object] = {
         "error": {"code": error.code, "provider": error.provider},
         "ingestions": ingestions or [],
     }
-    if incremental:
+    if trigger is not None:
         payload["incremental"] = True
+        payload["incremental_trigger"] = trigger
     typer.echo(
         json.dumps(
             payload,
@@ -834,15 +874,15 @@ def _abort_collection(
     *,
     json_output: bool,
     ingestions: list[IncrementalIngestion] | None = None,
-    incremental: bool = False,
+    trigger: IncrementalTrigger | None = None,
 ) -> Never:
     if json_output:
-        _emit_collection_json(error, ingestions=ingestions, incremental=incremental)
+        _emit_collection_json(error, ingestions=ingestions, trigger=trigger)
     else:
         completed = sum(item["batches"] for item in ingestions or [])
         suffix = (
             f" {completed} earlier incremental batch(es) were committed; rerun is safe."
-            if incremental and completed
+            if trigger is not None and completed
             else ""
         )
         typer.echo(error.message + suffix, err=True)
@@ -1277,15 +1317,17 @@ def _http_origin(host: str, port: int) -> str:
 
 
 def _collect_incrementally(
-    provider: str,
-    source_values: list[str] | None,
-    project_values: list[str] | None,
+    plans: list[_PlannedCollection],
+    mappings: list[tuple[str, str]],
     database: str,
     *,
     strict: bool,
     json_output: bool,
+    trigger: IncrementalTrigger,
 ) -> None:
     summaries: dict[str, IncrementalIngestion] = {}
+    batched = {plan.spec.name for plan in plans if plan.batched}
+    provider = plans[0].spec.name if plans else "all"
 
     def ingest(engine: Engine, batch: CollectionBatch) -> None:
         snapshot = batch.snapshot
@@ -1294,6 +1336,7 @@ def _collect_incrementally(
                 engine,
                 snapshot,
                 authoritative_subagent_scopes=batch.authoritative_subagent_scopes,
+                subagent_merge=batch.subagent_merge,
             )
         except SnapshotValidationError as error:
             raise _snapshot_failure(snapshot.provider, error) from None
@@ -1301,6 +1344,7 @@ def _collect_incrementally(
             snapshot.provider,
             {
                 "provider": snapshot.provider,
+                "batched": snapshot.provider in batched,
                 "batches": 0,
                 "received": 0,
                 "written": 0,
@@ -1323,9 +1367,7 @@ def _collect_incrementally(
             staged_bytes = 0
             active_provider = provider
             try:
-                for index, batch in enumerate(
-                    _iter_incremental_batches(provider, source_values, project_values)
-                ):
+                for index, batch in enumerate(_iter_planned_batches(plans, mappings)):
                     snapshot = batch.snapshot
                     active_provider = snapshot.provider
                     if snapshot.malformed_records:
@@ -1352,6 +1394,7 @@ def _collect_incrementally(
                                     if batch.authoritative_subagent_scopes is not None
                                     else None
                                 ),
+                                "subagent_merge": batch.subagent_merge,
                             },
                             writer,
                             sort_keys=True,
@@ -1396,6 +1439,7 @@ def _collect_incrementally(
                                     if raw_scopes is not None
                                     else None
                                 ),
+                                subagent_merge=payload["subagent_merge"] is True,
                             ),
                         )
                 except CollectionFailure as error:
@@ -1406,9 +1450,7 @@ def _collect_incrementally(
         engine = _open_database(database)
         try:
             try:
-                for batch in _iter_incremental_batches(
-                    provider, source_values, project_values
-                ):
+                for batch in _iter_planned_batches(plans, mappings):
                     ingest(engine, batch)
             except CollectionFailure as error:
                 failure = error
@@ -1421,18 +1463,35 @@ def _collect_incrementally(
             failure,
             json_output=json_output,
             ingestions=outcomes,
-            incremental=True,
+            trigger=trigger,
         )
     if json_output:
         typer.echo(
             json.dumps(
-                {"incremental": True, "ingestions": outcomes},
+                {
+                    "incremental": True,
+                    "incremental_trigger": trigger,
+                    "ingestions": outcomes,
+                },
                 sort_keys=True,
                 separators=(",", ":"),
             )
         )
         return
+    if trigger == "automatic":
+        typer.echo(
+            "Aggregate collection limits exceeded; collected in bounded batches: "
+            + ", ".join(sorted(batched))
+            + "."
+        )
     for summary in outcomes:
+        if trigger == "automatic" and not summary["batched"]:
+            typer.echo(
+                f"Ingestion {summary['provider']}: "
+                f"{summary['written']} written, {summary['skipped']} unchanged, "
+                f"{summary['malformed']} malformed skipped."
+            )
+            continue
         typer.echo(
             f"Incremental ingestion {summary['provider']}: "
             f"{summary['batches']} batches, {summary['written']} written, "
@@ -1492,21 +1551,59 @@ def _collect_snapshots(
     return [_collect_adapter(spec, sources, mappings) for spec, sources in inputs]
 
 
-def _iter_incremental_batches(
+def _plan_collection(
     provider: str,
     source_values: list[str] | None,
     project_values: list[str] | None,
-) -> Iterator[CollectionBatch]:
+    *,
+    mode: Literal["forced", "automatic", "never"],
+) -> tuple[list[_PlannedCollection], list[tuple[str, str]]]:
+    """Collect each provider once, deferring to batches only where allowed.
+
+    ``forced`` defers every provider to batch iteration without collecting it here.
+    ``automatic`` collects normally and switches an incremental-capable provider to
+    bounded batches only when it exceeds an aggregate candidate, read, or
+    normalized-record limit. ``never`` keeps the all-or-nothing behavior.
+    """
     inputs, mappings = _collection_inputs(provider, source_values, project_values)
-    batches = 0
+    plans: list[_PlannedCollection] = []
     for spec, sources in inputs:
-        adapter = spec.adapter_type()
+        capable = isinstance(spec.adapter_type(), IncrementalAdapter)
+        if mode == "forced":
+            plans.append(_PlannedCollection(spec, sources, None, capable))
+            continue
         try:
-            batches_for_adapter = (
-                adapter.collect_incrementally(sources, mappings)
-                if isinstance(adapter, IncrementalAdapter)
-                else iter((CollectionBatch(adapter.collect(sources, mappings)),))
+            snapshot = _collect_adapter(
+                spec, sources, mappings, switchable=capable and mode == "automatic"
             )
+        except _AggregateLimitExceeded:
+            plans.append(_PlannedCollection(spec, sources, None, True))
+            continue
+        plans.append(_PlannedCollection(spec, sources, snapshot, False))
+    return plans, mappings
+
+
+def _iter_planned_batches(
+    plans: list[_PlannedCollection],
+    mappings: list[tuple[str, str]],
+) -> Iterator[CollectionBatch]:
+    batches = 0
+    for plan in plans:
+        spec = plan.spec
+        try:
+            if plan.snapshot is not None:
+                batches_for_adapter: Iterator[CollectionBatch] = iter(
+                    (CollectionBatch(plan.snapshot),)
+                )
+            else:
+                adapter = spec.adapter_type()
+                batches_for_adapter = (
+                    adapter.collect_incrementally(plan.sources, mappings)
+                    if plan.batched and isinstance(adapter, IncrementalAdapter)
+                    else iter(
+                        (CollectionBatch(adapter.collect(plan.sources, mappings)),)
+                    )
+                )
             for batch in batches_for_adapter:
                 batches += 1
                 if batches > MAX_INCREMENTAL_BATCHES:
@@ -1540,10 +1637,16 @@ def _collect_adapter(
     spec: AdapterSpec,
     sources: list[tuple[str, Path]],
     mappings: list[tuple[str, str]],
+    *,
+    switchable: bool = False,
 ) -> Snapshot:
     try:
         return spec.adapter_type().collect(sources, mappings)
-    except ProviderDataLimitError:
+    except (ProviderDataLimitError, SnapshotValidationError) as error:
+        if switchable and is_aggregate_limit(error):
+            raise _AggregateLimitExceeded from None
+        if isinstance(error, SnapshotValidationError):
+            raise _snapshot_failure(spec.name, error) from None
         raise CollectionFailure(
             spec.name,
             "provider_limit_exceeded",
@@ -1555,8 +1658,6 @@ def _collect_adapter(
             "provider_format_incompatible",
             f"Provider {spec.name!r} data format is incompatible.",
         ) from None
-    except SnapshotValidationError as error:
-        raise _snapshot_failure(spec.name, error) from None
     except Exception:
         raise CollectionFailure(
             spec.name,

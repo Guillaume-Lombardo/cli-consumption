@@ -328,6 +328,50 @@ transaction for the entire output directory.
 The temporary text stream disables newline translation, so the encoded-byte counter,
 file position, and bytes written remain identical on Windows as well as POSIX systems.
 
+### Incremental collection
+
+Aggregate input limits bound one snapshot, not one store. An adapter can opt into the
+`IncrementalAdapter` contract by yielding `CollectionBatch` values from
+`collect_incrementally`. The shared helper in `adapters/_incremental.py` packs an
+ordered stream of indivisible candidate groups into batches of at most 1,000
+candidates, collects each batch with a fresh `ProviderInputBudget`, and bisects a
+batch at a group boundary only when it exceeds the candidate, provider-read, or
+normalized-record limit. Any other limit, and a single group that still overflows,
+fails as before. Batches are formed per source; a directory listing is capped at
+1,000,000 entries and one command at 10,000 batches. An adapter opts in only when
+its in-memory duplicate ranking equals the storage rank (event count, then content
+hash), so duplicates split across batches converge on the same stored copy as a
+single collection.
+
+`collect` first attempts the normal all-or-nothing collection. When an
+incremental-capable provider fails only on an aggregate limit, the command discards
+that attempt and ingests the provider through batches, while every other provider
+keeps its already collected snapshot. `--no-incremental` disables the switch and
+`--incremental` forces batches. Non-strict batches commit independently and rerun
+safely; strict mode stages every validated batch before opening the database. Output
+reports the trigger, a per-provider `batched` flag, and aggregate counters only.
+
+Claude Code groups a session transcript with every nested transcript under the
+session directory of the same name, so sidechain replay filtering and the session's
+own relationships never cross a batch boundary. Legacy flat agent transcripts follow
+all sessions of their project directory, one per group; the response identifiers of
+that project's selected parent copies are carried in memory, under the existing
+250,000-identifier bound, until those transcripts are read. In batches, parent
+lookup is scoped to the project directory (legacy) or session group (nested); a
+single collection resolves a parent session globally. The two agree for the
+documented layout, where a transcript lives beside or under its parent session.
+
+A batch never sees a complete provider/source-machine relationship graph, so Claude
+Code batches use merge semantics instead of graph replacement. In the ingestion
+transaction, a relationship is inserted when its child conversation is written, after
+deleting any relationship recorded for another copy of that child; it is inserted for
+an unchanged child only when the stored copy comes from the same source machine and
+no relationship exists yet. Batches never delete a relationship, and the scope row is
+still locked to serialize writers on SQLite and PostgreSQL. Normal collection keeps
+replacing the whole graph under the freshness rules above. Codex batches instead pass
+an empty authoritative scope set and leave its SQLite graph untouched. No schema
+change is involved.
+
 ### Offline dashboard continuity gate
 
 Every pull request in the persistent-dashboard migration must preserve the standalone

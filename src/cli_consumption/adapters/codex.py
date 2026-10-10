@@ -12,11 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from cli_consumption import models
+from cli_consumption.adapters._incremental import (
+    INCREMENTAL_CANDIDATES_PER_BATCH as INCREMENTAL_CANDIDATES_PER_BATCH,
+)
+from cli_consumption.adapters._incremental import iter_source_batches
 from cli_consumption.adapters._shared import (
     MAX_BIGINT as MAX_BIGINT,
 )
 from cli_consumption.adapters._shared import (
-    ProviderDataLimitError,
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
     open_provider_sqlite,
@@ -25,7 +28,6 @@ from cli_consumption.adapters.base import CollectionBatch
 from cli_consumption.models import (
     TOKEN_FIELDS,
     Snapshot,
-    SnapshotValidationError,
     empty_tokens,
 )
 
@@ -95,7 +97,13 @@ AGENT_ROLE_ALIASES = {
     "worker": "worker",
 }
 SAFE_DIMENSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
-INCREMENTAL_CANDIDATES_PER_BATCH = 1_000
+
+
+def _incremental_session_files(codex_home: Path) -> Iterator[Path]:
+    sessions = codex_home / "sessions"
+    if not sessions.is_dir():
+        raise ValueError("Missing Codex sessions directory")
+    return _iter_session_files(sessions)
 
 
 def _iter_session_files(root: Path) -> Iterator[Path]:
@@ -250,47 +258,13 @@ class CodexAdapter:
     ) -> Iterator[CollectionBatch]:
         """Yield deterministic, bounded snapshots from arbitrarily many rollouts."""
         mappings = project_mappings or []
-        for machine, codex_home in sources:
-            sessions = codex_home / "sessions"
-            if not sessions.is_dir():
-                raise ValueError("Missing Codex sessions directory")
-
-            yielded_sessions = False
-            batch: list[tuple[str, Path]] = []
-            for path in _iter_session_files(sessions):
-                batch.append((machine, path))
-                if len(batch) == INCREMENTAL_CANDIDATES_PER_BATCH:
-                    yielded_sessions = True
-                    yield from self._collect_incremental_batch(batch, mappings)
-                    batch = []
-            if batch:
-                yielded_sessions = True
-                yield from self._collect_incremental_batch(batch, mappings)
-
-            if not yielded_sessions:
-                yield CollectionBatch(Snapshot(provider=self.name), frozenset())
-
-    def _collect_incremental_batch(
-        self,
-        candidates: list[tuple[str, Path]],
-        mappings: list[tuple[str, str]],
-    ) -> Iterator[CollectionBatch]:
-        try:
-            yield CollectionBatch(
-                self._collect_candidates(candidates, mappings), frozenset()
-            )
-        except ProviderDataLimitError as error:
-            if str(error) != "provider_read_limit_exceeded" or len(candidates) == 1:
-                raise
-            midpoint = len(candidates) // 2
-            yield from self._collect_incremental_batch(candidates[:midpoint], mappings)
-            yield from self._collect_incremental_batch(candidates[midpoint:], mappings)
-        except SnapshotValidationError as error:
-            if error.code != "snapshot_too_large" or len(candidates) == 1:
-                raise
-            midpoint = len(candidates) // 2
-            yield from self._collect_incremental_batch(candidates[:midpoint], mappings)
-            yield from self._collect_incremental_batch(candidates[midpoint:], mappings)
+        return iter_source_batches(
+            self.name,
+            sources,
+            _incremental_session_files,
+            lambda candidates: self._collect_candidates(candidates, mappings),
+            candidates_per_batch=INCREMENTAL_CANDIDATES_PER_BATCH,
+        )
 
     def _collect_candidates(
         self,

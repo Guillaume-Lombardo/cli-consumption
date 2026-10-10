@@ -3,11 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._incremental import (
+    INCREMENTAL_CANDIDATES_PER_BATCH,
+    bounded_sorted_paths,
+    charge_candidates,
+    iter_source_batches,
+)
 from cli_consumption.adapters._shared import (
     MAX_BIGINT as MAX_BIGINT,
 )
@@ -30,6 +37,7 @@ from cli_consumption.adapters._shared import (
 from cli_consumption.adapters._shared import (
     mapping as _mapping,
 )
+from cli_consumption.adapters.base import CollectionBatch
 from cli_consumption.models import Snapshot, empty_tokens
 
 
@@ -43,6 +51,15 @@ class _Session:
     digest: str
 
 
+def _session_paths(
+    home: Path, sort: Callable[[Iterable[Path]], list[Path]]
+) -> list[Path]:
+    sessions = home / "sessions"
+    if not sessions.is_dir():
+        raise ValueError(f"Missing Continue sessions directory: {sessions}")
+    return sort(sessions.glob("*.json"))
+
+
 class ContinueAdapter:
     """Read Continue CLI session metadata while discarding conversation content."""
 
@@ -54,26 +71,63 @@ class ContinueAdapter:
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
         budget = ProviderInputBudget()
+        return self._collect_candidates(
+            (
+                (machine, path)
+                for machine, home in sources
+                for path in _session_paths(home, budget.sorted_paths)
+            ),
+            project_mappings or [],
+            budget,
+        )
+
+    def collect_incrementally(
+        self,
+        sources: list[tuple[str, Path]],
+        project_mappings: list[tuple[str, str]] | None = None,
+    ) -> Iterator[CollectionBatch]:
+        """Yield bounded batches of independently selected session files."""
+        mappings = project_mappings or []
+        return iter_source_batches(
+            self.name,
+            sources,
+            lambda home: _session_paths(home, bounded_sorted_paths),
+            lambda candidates: self._collect_batch(candidates, mappings),
+            candidates_per_batch=INCREMENTAL_CANDIDATES_PER_BATCH,
+        )
+
+    def _collect_batch(
+        self,
+        candidates: list[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
+    ) -> Snapshot:
+        budget = ProviderInputBudget()
+        return self._collect_candidates(
+            charge_candidates(candidates, budget), mappings, budget
+        )
+
+    def _collect_candidates(
+        self,
+        candidates: Iterable[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
+        budget: ProviderInputBudget,
+    ) -> Snapshot:
         selected: dict[str, _Session] = {}
         duplicates = malformed = 0
-        for machine, home in sources:
-            sessions = home / "sessions"
-            if not sessions.is_dir():
-                raise ValueError(f"Missing Continue sessions directory: {sessions}")
-            for path in budget.sorted_paths(sessions.glob("*.json")):
-                if path.name == "sessions.json":
-                    continue
-                candidate, invalid = _read_session(path, machine, budget)
-                malformed += invalid
-                if candidate is None:
-                    continue
-                previous = selected.get(candidate.external_id)
-                if previous is None:
-                    selected[candidate.external_id] = candidate
-                    continue
-                duplicates += 1
-                if _rank(candidate) > _rank(previous):
-                    selected[candidate.external_id] = candidate
+        for machine, path in candidates:
+            if path.name == "sessions.json":
+                continue
+            candidate, invalid = _read_session(path, machine, budget)
+            malformed += invalid
+            if candidate is None:
+                continue
+            previous = selected.get(candidate.external_id)
+            if previous is None:
+                selected[candidate.external_id] = candidate
+                continue
+            duplicates += 1
+            if _rank(candidate) > _rank(previous):
+                selected[candidate.external_id] = candidate
 
         snapshot = Snapshot(
             provider=self.name,
@@ -81,7 +135,7 @@ class ContinueAdapter:
             malformed_records=malformed,
         )
         for session in sorted(selected.values(), key=lambda value: value.external_id):
-            self._normalize(snapshot, session, project_mappings or [])
+            self._normalize(snapshot, session, mappings)
         return snapshot
 
     def _normalize(

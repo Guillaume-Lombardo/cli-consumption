@@ -6,6 +6,23 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `collect` now switches automatically to bounded, restart-safe batches when an
+  incremental-capable provider exceeds the aggregate candidate, provider-read, or
+  normalized-record limit, instead of failing with `provider_limit_exceeded`. Pass
+  `--no-incremental` to keep the previous all-or-nothing failure. Only the
+  overflowing provider is batched; JSON output reports `"incremental": true`,
+  `"incremental_trigger": "automatic"`, and a per-provider `"batched"` flag.
+  `--incremental` still forces batches and now reports
+  `"incremental_trigger": "requested"`.
+- Bounded incremental collection now covers Claude Code, Amp, Continue CLI, Gemini
+  CLI, Pi, and Qwen Code in addition to Codex. Claude Code batches never separate a
+  session from its nested subagent transcripts, and subagent relationships converge
+  across batches instead of being skipped. Per-file, per-line, symlink, and
+  single-conversation limits are unchanged, and one command is still capped at
+  10,000 batches.
+
 ### Security
 
 - Update the persistent dashboard to Next.js 16.3.8 and refresh vulnerable web

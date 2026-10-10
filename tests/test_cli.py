@@ -154,10 +154,19 @@ def test_collect_classifies_snapshot_rejected_during_ingestion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     canary = "PROMPT_SECRET_CANARY"
+    spec = cli_module.resolve_adapter_spec("codex")
+    assert spec is not None
     monkeypatch.setattr(
         cli_module,
-        "_collect_snapshots",
-        lambda *_: [Snapshot(provider="codex")],
+        "_plan_collection",
+        lambda *_, **__: (
+            [
+                cli_module._PlannedCollection(
+                    spec, [], Snapshot(provider="codex"), False
+                )
+            ],
+            [],
+        ),
     )
 
     def reject_snapshot(*_args: object) -> None:
@@ -1838,6 +1847,7 @@ def test_incremental_collect_batches_large_codex_store_and_is_restart_safe(
     second_ingestion = json.loads(second.stdout)["ingestions"][0]
     assert first_ingestion == {
         "provider": "codex",
+        "batched": True,
         "batches": 2,
         "received": 2,
         "written": 2,
@@ -1847,6 +1857,7 @@ def test_incremental_collect_batches_large_codex_store_and_is_restart_safe(
     }
     assert second_ingestion == first_ingestion | {"written": 0, "skipped": 2}
     assert json.loads(first.stdout)["incremental"] is True
+    assert json.loads(first.stdout)["incremental_trigger"] == "requested"
     engine = create_database_engine(database)
     assert len(read_table(engine, "conversations")) == 2
     engine.dispose()
@@ -1886,6 +1897,7 @@ def test_incremental_strict_preflights_all_batches_before_creating_database(
     assert json.loads(result.stdout) == {
         "error": {"code": "malformed_records", "provider": "codex"},
         "incremental": True,
+        "incremental_trigger": "requested",
         "ingestions": [],
     }
     assert canary not in result.output
@@ -1920,6 +1932,7 @@ def test_incremental_strict_staging_has_a_cumulative_byte_limit(
     assert json.loads(result.stdout) == {
         "error": {"code": "provider_limit_exceeded", "provider": "codex"},
         "incremental": True,
+        "incremental_trigger": "requested",
         "ingestions": [],
     }
     assert not database.exists()
@@ -2085,7 +2098,13 @@ def test_incremental_mode_rolls_over_candidate_budget_without_weakening_default(
 
     refused = runner.invoke(
         app,
-        ["collect", *common, "--database", str(tmp_path / "default.sqlite")],
+        [
+            "collect",
+            "--no-incremental",
+            *common,
+            "--database",
+            str(tmp_path / "default.sqlite"),
+        ],
     )
     accepted = runner.invoke(
         app,

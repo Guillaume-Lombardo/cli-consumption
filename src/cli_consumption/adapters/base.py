@@ -10,10 +10,16 @@ from cli_consumption.models import Snapshot
 
 @dataclass(frozen=True, slots=True)
 class CollectionBatch:
-    """One snapshot plus an optional subagent-scope authority override."""
+    """One snapshot plus how its subagent relationships may change storage.
+
+    ``authoritative_subagent_scopes`` overrides which provider/source-machine graphs
+    the snapshot may replace. ``subagent_merge`` instead lets each relationship follow
+    the stored copy of its child conversation without replacing any whole graph.
+    """
 
     snapshot: Snapshot
     authoritative_subagent_scopes: frozenset[tuple[str, str]] | None = None
+    subagent_merge: bool = False
 
 
 class UnsupportedProviderFormat(ValueError):

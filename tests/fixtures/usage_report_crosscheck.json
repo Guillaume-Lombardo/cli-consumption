@@ -3592,6 +3592,726 @@
         "turns": 2
       },
       "name": "intraday-share-safe"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T12:30:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "gpt-x"
+            ],
+            "output_tokens": 0,
+            "project": "alpha",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T11:59:59.999500+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
+        "meta": {
+          "exportWindow": {
+            "since": "2026-08-10T12:00:00.000000+00:00",
+            "until": null
+          },
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "gpt-x",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:00.000900+00:00",
+            "total_tokens": 100,
+            "turnKey": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 80,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 150,
+            "model": "gpt-x",
+            "output_tokens": 50,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:01.000400+00:00",
+            "total_tokens": 200,
+            "turnKey": 1,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 150,
+            "visible_output_tokens": 50
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.000100+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.000100+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.999600+00:00",
+            "input_tokens": 0,
+            "key": 1,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.999600+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 0.0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 2,
+        "conversations": 1,
+        "inputTokens": 230,
+        "outputTokens": 70,
+        "reasoningTokens": 0,
+        "totalTokens": 300,
+        "turns": 2
+      },
+      "name": "millisecond-since-inclusive"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T12:30:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "gpt-x"
+            ],
+            "output_tokens": 0,
+            "project": "alpha",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T11:59:59.999500+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
+        "meta": {
+          "exportWindow": {
+            "since": "2026-08-10T12:00:00.001000+00:00",
+            "until": null
+          },
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "gpt-x",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:00.000900+00:00",
+            "total_tokens": 100,
+            "turnKey": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 80,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 150,
+            "model": "gpt-x",
+            "output_tokens": 50,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:01.000400+00:00",
+            "total_tokens": 200,
+            "turnKey": 1,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 150,
+            "visible_output_tokens": 50
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.000100+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.000100+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.999600+00:00",
+            "input_tokens": 0,
+            "key": 1,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.999600+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 0.0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 1,
+        "conversations": 1,
+        "inputTokens": 150,
+        "outputTokens": 50,
+        "reasoningTokens": 0,
+        "totalTokens": 200,
+        "turns": 1
+      },
+      "name": "millisecond-since-exclusive"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T12:30:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "gpt-x"
+            ],
+            "output_tokens": 0,
+            "project": "alpha",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T11:59:59.999500+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [],
+        "meta": {
+          "exportWindow": {
+            "since": "2026-08-10T11:00:00.000000+00:00",
+            "until": "2026-08-10T12:00:00.001000+00:00"
+          },
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "gpt-x",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:00.000900+00:00",
+            "total_tokens": 100,
+            "turnKey": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 80,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 150,
+            "model": "gpt-x",
+            "output_tokens": 50,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:01.000400+00:00",
+            "total_tokens": 200,
+            "turnKey": 1,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 150,
+            "visible_output_tokens": 50
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.000100+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.000100+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.999600+00:00",
+            "input_tokens": 0,
+            "key": 1,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.999600+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 0.0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 1,
+        "conversations": 1,
+        "inputTokens": 80,
+        "outputTokens": 20,
+        "reasoningTokens": 0,
+        "totalTokens": 100,
+        "turns": 1
+      },
+      "name": "millisecond-until-inclusive"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T12:30:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "gpt-x"
+            ],
+            "output_tokens": 0,
+            "project": "alpha",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T11:59:59.999500+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [],
+        "meta": {
+          "exportWindow": {
+            "since": "2026-08-10T11:00:00.000000+00:00",
+            "until": "2026-08-10T12:00:00.000000+00:00"
+          },
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "gpt-x",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:00.000900+00:00",
+            "total_tokens": 100,
+            "turnKey": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 80,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 150,
+            "model": "gpt-x",
+            "output_tokens": 50,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:01.000400+00:00",
+            "total_tokens": 200,
+            "turnKey": 1,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 150,
+            "visible_output_tokens": 50
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.000100+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.000100+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.999600+00:00",
+            "input_tokens": 0,
+            "key": 1,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.999600+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": null,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 0,
+        "conversations": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reasoningTokens": 0,
+        "totalTokens": 0,
+        "turns": 0
+      },
+      "name": "millisecond-until-exclusive"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T12:30:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "gpt-x"
+            ],
+            "output_tokens": 0,
+            "project": "alpha",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T11:59:59.999500+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [],
+        "meta": {
+          "exportWindow": {
+            "since": null,
+            "until": "2026-08-10T12:00:01.000000+00:00"
+          },
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "gpt-x",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:00.000900+00:00",
+            "total_tokens": 100,
+            "turnKey": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 80,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 150,
+            "model": "gpt-x",
+            "output_tokens": 50,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:00:01.000400+00:00",
+            "total_tokens": 200,
+            "turnKey": 1,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 150,
+            "visible_output_tokens": 50
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.000100+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.000100+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.999600+00:00",
+            "input_tokens": 0,
+            "key": 1,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.999600+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 0.0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 1,
+        "conversations": 1,
+        "inputTokens": 80,
+        "outputTokens": 20,
+        "reasoningTokens": 0,
+        "totalTokens": 100,
+        "turns": 2
+      },
+      "name": "millisecond-until-near-second"
     }
   ],
   "description": "Generated by tests/report_fixtures.py from synthetic records. The analytics tests check that dashboard calculations over each dataset equal the terminal report totals."

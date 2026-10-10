@@ -345,8 +345,9 @@ rounds the JSON window to UTC days. Provider names, daily activity, counts,
 and token aggregates remain visible, so share-safe output is minimized, not anonymous.
 Detailed output discloses the same operational labels and timestamps as a detailed
 dashboard. `quick` writes the default normalized database in the current directory
-and reports collection outcomes with the existing fixed provider messages, never
-source paths. Token counters are usage metadata, not billing data, and no output
+and reports collection outcomes with the existing fixed provider messages and the
+same aggregate batch counters as `collect`, never source paths. Its automatic switch
+to bounded batches uses the collection path and limits described above. Token counters are usage metadata, not billing data, and no output
 contains a cost estimate.
 
 ## Public synthetic demo

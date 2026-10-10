@@ -234,8 +234,18 @@ def test_quick_collects_detected_providers_then_reports_daily(
     payload = json.loads(second.stdout)
     assert payload["collection"] == {
         "failures": [],
+        "incremental": False,
         "ingestions": [
-            {"malformed": 0, "provider": "codex", "skipped": 1, "written": 0}
+            {
+                "batch_duplicates": 0,
+                "batched": False,
+                "batches": 1,
+                "malformed": 0,
+                "provider": "codex",
+                "received": 1,
+                "skipped": 1,
+                "written": 0,
+            }
         ],
     }
     assert payload["report"]["view"] == "daily"
@@ -264,7 +274,7 @@ def test_quick_reports_partial_failures_with_fixed_codes(
         lambda *_args: ([(spec, [("m", tmp_path)]) for spec in specs], []),
     )
 
-    def collect(spec, _sources, _mappings):
+    def collect(spec, _sources, _mappings, **_kwargs):
         if spec.name == "copilot":
             raise CollectionFailure(
                 "copilot",
@@ -328,9 +338,11 @@ def test_quick_reports_invalid_snapshots_with_a_fixed_code(
         "_collection_inputs",
         lambda *_args: ([(spec, [("m", tmp_path)])], []),
     )
-    monkeypatch.setattr(cli_module, "_collect_adapter", lambda *_args: snapshot)
+    monkeypatch.setattr(
+        cli_module, "_collect_adapter", lambda *_args, **_kwargs: snapshot
+    )
 
-    def reject(*_args: object) -> None:
+    def reject(*_args: object, **_kwargs: object) -> None:
         raise SnapshotValidationError()
 
     monkeypatch.setattr(cli_module, "ingest_snapshot", reject)
@@ -343,6 +355,7 @@ def test_quick_reports_invalid_snapshots_with_a_fixed_code(
     payload = json.loads(result.stdout)
     assert payload["collection"] == {
         "failures": [{"code": "invalid_snapshot", "provider": "claude"}],
+        "incremental": False,
         "ingestions": [],
     }
     assert payload["report"]["rows"] == []
@@ -412,7 +425,9 @@ def test_quick_ingestion_failures_never_print_sql_or_parameters(
         "_collection_inputs",
         lambda *_args: ([(spec, [("m", tmp_path)])], []),
     )
-    monkeypatch.setattr(cli_module, "_collect_adapter", lambda *_args: snapshot)
+    monkeypatch.setattr(
+        cli_module, "_collect_adapter", lambda *_args, **_kwargs: snapshot
+    )
 
     text = runner.invoke(app, ["quick", "--database", str(database)])
     payload = runner.invoke(app, ["quick", "--database", str(database), "--json"])
@@ -467,3 +482,187 @@ def test_missing_postgresql_driver_uses_a_fixed_code(
     assert result.exit_code == 2
     assert json.loads(result.stdout) == {"error": {"code": "database_driver_missing"}}
     _assert_private(result.output)
+
+
+def _quick_providers(monkeypatch: pytest.MonkeyPatch, homes: dict[str, Path]) -> None:
+    specs = tuple(resolve_adapter_spec(name) for name in homes)
+    monkeypatch.setattr(cli_module, "ADAPTER_SPECS", specs)
+    monkeypatch.setattr(
+        cli_module, "default_source_path", lambda spec: homes[spec.name]
+    )
+
+
+def _assert_collection_private(output: str, *paths: Path) -> None:
+    from test_incremental_collection import CANARY as CONTENT_CANARY
+
+    _assert_private(output, *paths)
+    assert CONTENT_CANARY not in output
+    assert "PRIVATE_PATH_CANARY" not in output
+    assert "/srv/work/acme/service" not in output
+
+
+def test_quick_switches_to_bounded_batches_on_aggregate_overrun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rollout_factory
+) -> None:
+    from test_incremental_collection import _claude_sessions
+
+    claude_home = _claude_sessions(tmp_path / "PRIVATE_PATH_CANARY" / "claude", 4)
+    codex_home = tmp_path / "PRIVATE_PATH_CANARY" / "codex"
+    rollout_factory(codex_home)
+    _quick_providers(monkeypatch, {"claude": claude_home, "codex": codex_home})
+    monkeypatch.setattr("cli_consumption.adapters._shared.MAX_PROVIDER_CANDIDATES", 2)
+    database = tmp_path / "usage.sqlite"
+
+    first = runner.invoke(app, ["quick", "--database", str(database), "--json"])
+    rerun = runner.invoke(app, ["quick", "--database", str(database), "--json"])
+    human = runner.invoke(
+        app, ["quick", "--database", str(database)], env={"COLUMNS": "160"}
+    )
+
+    assert first.exit_code == rerun.exit_code == human.exit_code == 0, first.output
+    collection = json.loads(first.stdout)["collection"]
+    assert collection == {
+        "failures": [],
+        "incremental": True,
+        "ingestions": [
+            {
+                "batch_duplicates": 0,
+                "batched": True,
+                "batches": 2,
+                "malformed": 0,
+                "provider": "claude",
+                "received": 4,
+                "skipped": 0,
+                "written": 4,
+            },
+            {
+                "batch_duplicates": 0,
+                "batched": False,
+                "batches": 1,
+                "malformed": 0,
+                "provider": "codex",
+                "received": 1,
+                "skipped": 0,
+                "written": 1,
+            },
+        ],
+    }
+    report = json.loads(first.stdout)["report"]
+    assert report["totals"]["conversations"] == 5
+    rerun_payload = json.loads(rerun.stdout)
+    assert [item["written"] for item in rerun_payload["collection"]["ingestions"]] == [
+        0,
+        0,
+    ]
+    assert rerun_payload["report"] == report
+    assert "collected in bounded batches: claude." in human.stderr
+    assert "Collected claude in 2 bounded batches: 0 written" in human.stderr
+    assert human.stdout.startswith("Daily usage")
+    _assert_collection_private(
+        first.output + rerun.output + human.output, tmp_path, database
+    )
+
+
+def test_quick_keeps_other_providers_after_a_failed_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rollout_factory
+) -> None:
+    from test_claude_adapter import _agent_events, _write_jsonl
+    from test_incremental_collection import _claude_sessions, _session_events
+
+    claude_home = _claude_sessions(tmp_path / "PRIVATE_PATH_CANARY" / "claude", 2)
+    project = claude_home / "projects" / "p"
+    _write_jsonl(project / "z.jsonl", _session_events("z", "m-z"))
+    nested = project / "z" / "subagents"
+    _write_jsonl(nested / "agent-a.jsonl", _agent_events("a", "m-a", session_id="z"))
+    target = tmp_path / "outside.meta.json"
+    target.write_text(json.dumps({"agentType": "Explore"}), encoding="utf-8")
+    (nested / "agent-a.meta.json").symlink_to(target)
+    codex_home = tmp_path / "PRIVATE_PATH_CANARY" / "codex"
+    rollout_factory(codex_home)
+    _quick_providers(monkeypatch, {"claude": claude_home, "codex": codex_home})
+    monkeypatch.setattr("cli_consumption.adapters._shared.MAX_PROVIDER_CANDIDATES", 3)
+    monkeypatch.setattr(
+        "cli_consumption.adapters.claude.INCREMENTAL_CANDIDATES_PER_BATCH", 1
+    )
+    database = tmp_path / "usage.sqlite"
+
+    payload = runner.invoke(app, ["quick", "--database", str(database), "--json"])
+    human = runner.invoke(
+        app, ["quick", "--database", str(database)], env={"COLUMNS": "160"}
+    )
+
+    assert payload.exit_code == human.exit_code == 2, payload.output
+    collection = json.loads(payload.stdout)["collection"]
+    assert collection["failures"] == [
+        {"code": "provider_limit_exceeded", "provider": "claude"}
+    ]
+    claude, codex = collection["ingestions"]
+    assert (claude["provider"], claude["batched"], claude["batches"]) == (
+        "claude",
+        True,
+        2,
+    )
+    assert (codex["provider"], codex["written"]) == ("codex", 1)
+    assert json.loads(payload.stdout)["report"]["totals"]["conversations"] == 3
+    assert "2 earlier batch(es) were committed; rerun is safe." in human.stderr
+    assert human.stdout.startswith("Daily usage")
+    _assert_collection_private(payload.output + human.output, tmp_path, database)
+
+
+def test_quick_enforces_one_batch_ceiling_per_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rollout_factory
+) -> None:
+    from test_incremental_collection import _claude_sessions
+
+    claude_home = _claude_sessions(tmp_path / "claude", 4)
+    codex_home = tmp_path / "codex"
+    rollout_factory(codex_home)
+    _quick_providers(monkeypatch, {"claude": claude_home, "codex": codex_home})
+    monkeypatch.setattr("cli_consumption.adapters._shared.MAX_PROVIDER_CANDIDATES", 2)
+    monkeypatch.setattr(cli_module, "MAX_INCREMENTAL_BATCHES", 2)
+
+    result = runner.invoke(
+        app, ["quick", "--database", str(tmp_path / "usage.sqlite"), "--json"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.stdout)["collection"]["failures"] == [
+        {"code": "provider_limit_exceeded", "provider": "codex"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--since", "2026-08-10T12:00:00.000500Z"],
+        ["--until", "2026-08-10T12:00:00.0005+02:00"],
+        ["--since", "2026-08-10T12:00:00.123456+00:00"],
+    ],
+)
+def test_sub_millisecond_bounds_are_invalid_windows(
+    database: Path, arguments: list[str]
+) -> None:
+    payload = runner.invoke(
+        app, ["report", "--database", str(database), "--json", *arguments]
+    )
+    text = runner.invoke(app, ["report", "--database", str(database), *arguments])
+
+    assert payload.exit_code == text.exit_code == 2, text.output
+    assert json.loads(payload.stdout) == {"error": {"code": "invalid_window"}}
+    assert text.stderr.startswith("Invalid report window")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-08-10T12:00:00.001Z",
+        "2026-08-10T12:00:00.123000+02:00",
+        "2026-08-10T12:00:00Z",
+    ],
+)
+def test_millisecond_bounds_are_accepted(database: Path, value: str) -> None:
+    result = runner.invoke(
+        app, ["report", "--database", str(database), "--json", "--since", value]
+    )
+
+    assert result.exit_code == 0, result.output

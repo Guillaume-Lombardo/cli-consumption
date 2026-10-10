@@ -264,6 +264,11 @@ def parse_report_window(
         for value in (window.since, window.until):
             if value is not None:
                 value.astimezone(zone)
+                # The dashboard compares millisecond instants. Millisecond bounds
+                # make its truncated comparison equal to the half-open microsecond
+                # comparison used here; finer bounds would diverge.
+                if value.microsecond % 1_000:
+                    raise UsageQueryError("invalid_window")
     except UsageQueryError:
         raise
     except (ValueError, OverflowError):

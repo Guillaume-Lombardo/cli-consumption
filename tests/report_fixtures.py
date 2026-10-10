@@ -456,6 +456,46 @@ def intraday_snapshots() -> list[Snapshot]:
     ]
 
 
+def microsecond_snapshots() -> list[Snapshot]:
+    """Stored microsecond timestamps just around millisecond boundaries."""
+    build = _Builder()
+    conversation = build.conversation(
+        "codex",
+        "microsecond",
+        project="alpha",
+        machine="laptop",
+        models=["gpt-x"],
+        started_at="2026-08-10T11:59:59.999500+00:00",
+        ended_at="2026-08-10T12:30:00+00:00",
+    )
+    for name, started, called, usage in (
+        (
+            "turn-a",
+            "2026-08-10T12:00:00.000100+00:00",
+            "2026-08-10T12:00:00.000900+00:00",
+            tokens(80, 0, 0, 20),
+        ),
+        (
+            "turn-b",
+            "2026-08-10T12:00:00.999600+00:00",
+            "2026-08-10T12:00:01.000400+00:00",
+            tokens(150, 0, 0, 50),
+        ),
+    ):
+        turn = build.turn("codex", conversation, name, started_at=started)
+        build.call(
+            "codex",
+            conversation,
+            turn_id=turn,
+            timestamp=called,
+            model="gpt-x",
+            usage=usage,
+        )
+    return [
+        Snapshot.from_dict(snapshot.to_dict()) for snapshot in build.snapshots.values()
+    ]
+
+
 FIXED_INGESTION_TIME = "2026-09-01T00:00:00.000000+00:00"
 
 
@@ -466,6 +506,7 @@ def seed_crosscheck_database(engine: Engine, name: str) -> None:
         "dateless-untimed": dateless_untimed_snapshots,
         "all-dateless": lambda: dateless_untimed_snapshots(with_dated=False),
         "intraday": intraday_snapshots,
+        "microsecond": microsecond_snapshots,
     }[name]()
     for snapshot in snapshots:
         ingest_snapshot(engine, snapshot)
@@ -586,6 +627,51 @@ CROSSCHECK_CASES: tuple[
         ReportFilters(),
         {},
         True,
+    ),
+    (
+        "millisecond-since-inclusive",
+        "microsecond",
+        "2026-08-10T12:00:00.000+00:00",
+        None,
+        ReportFilters(),
+        {},
+        False,
+    ),
+    (
+        "millisecond-since-exclusive",
+        "microsecond",
+        "2026-08-10T12:00:00.001+00:00",
+        None,
+        ReportFilters(),
+        {},
+        False,
+    ),
+    (
+        "millisecond-until-inclusive",
+        "microsecond",
+        "2026-08-10T11:00:00+00:00",
+        "2026-08-10T12:00:00.001+00:00",
+        ReportFilters(),
+        {},
+        False,
+    ),
+    (
+        "millisecond-until-exclusive",
+        "microsecond",
+        "2026-08-10T11:00:00+00:00",
+        "2026-08-10T12:00:00.000+00:00",
+        ReportFilters(),
+        {},
+        False,
+    ),
+    (
+        "millisecond-until-near-second",
+        "microsecond",
+        None,
+        "2026-08-10T12:00:01.000+00:00",
+        ReportFilters(),
+        {},
+        False,
     ),
 )
 

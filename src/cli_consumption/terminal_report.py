@@ -166,7 +166,7 @@ def render_report(report: UsageReport, *, width: int, color: bool = False) -> st
     width = max(MINIMUM_WIDTH, width)
     lines = [_style(line, _BOLD, color) for line in _wrap(_title(report, title), width)]
     if not report.rows:
-        lines.append("No usage recorded for this selection.")
+        lines.extend(_wrap("No usage recorded for this selection.", width))
         lines.extend(_style(line, _DIM, color) for line in _wrap(BILLING_NOTICE, width))
         return "\n".join(lines) + "\n"
 

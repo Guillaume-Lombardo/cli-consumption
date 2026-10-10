@@ -310,3 +310,15 @@ def test_stacked_layout_breaks_values_at_separators(engine: Engine) -> None:
 
     assert "  Notes: agg,snap," in text.splitlines()
     assert "  partial" in text.splitlines()
+
+
+@pytest.mark.parametrize("width", range(20, 37))
+def test_empty_selection_fits_narrow_widths(tmp_path: Path, width: int) -> None:
+    engine = create_database_engine(tmp_path / "empty.sqlite")
+    try:
+        text = render_report(aggregate_usage(engine, UsageQuery()), width=width)
+    finally:
+        engine.dispose()
+
+    assert max(_cells(line) for line in text.splitlines()) <= width
+    assert "No usage recorded for this selection." in " ".join(text.split())

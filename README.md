@@ -53,7 +53,10 @@ uv tool run cli-consumption quick
 ```
 
 Running `cli-consumption` without a command still prints help; `quick` is the explicit
-first-run command. Rerunning it is safe: collection is idempotent and refreshes the
+first-run command. It collects like `collect --provider all`: a large Claude Code,
+Codex, or other supported store that exceeds an aggregate collection limit switches
+automatically to bounded batches. A provider that still fails is reported without
+stopping the others. Rerunning it is safe: collection is idempotent and refreshes the
 same database. Afterwards, `report` reads that database without collecting:
 
 ```bash

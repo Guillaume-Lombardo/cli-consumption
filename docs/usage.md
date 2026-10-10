@@ -184,8 +184,12 @@ paths are never shown). `--provider` accepts canonical names and documented alia
 
 `--timezone` takes an IANA name and defaults to `UTC`. It sets period boundaries and
 the meaning of plain `--since` and `--until` dates: `--since` is inclusive, and a plain
-`--until` date is included in the report. Timestamps must carry an offset. The window
-selects conversations exactly like `export`, then counts only the activity inside it.
+`--until` date is included in the report. Timestamps must carry an offset and at most
+millisecond precision, the precision of dashboard calculations; finer fractional
+digits are rejected as `invalid_window`, since the dashboard would truncate them.
+Stored timestamps keep their microseconds, and with millisecond bounds both
+selections are identical. The window selects conversations exactly like `export`,
+then counts only the activity inside it.
 
 The columns follow the normalized token model. Input includes cache-read and
 cache-write tokens, output includes reasoning tokens, and the cache rate is cache
@@ -291,12 +295,26 @@ uv tool run cli-consumption quick
 
 `quick` detects providers like `collect --provider all` without `--source`, collects
 each of them into the default `cli-consumption.sqlite` in the current directory (or
-`--database`), then prints `report daily` for all recorded activity. It is a dedicated command so that
-running `cli-consumption` without arguments keeps printing help. Collection is
-idempotent, so rerunning `quick` refreshes the same database. A provider that fails
-is reported on standard error with its fixed collection message, the remaining
-providers are still collected and reported, and the command then exits with status 2.
-`--json` prints `{"collection":{"ingestions":[...],"failures":[...]},"report":{...}}`.
+`--database`), then prints `report daily` for all recorded activity. It is a dedicated
+command so that running `cli-consumption` without arguments keeps printing help.
+
+Collection follows the automatic mode of `collect`. An incremental-capable provider
+that exceeds an aggregate candidate, read, or normalized-record limit switches to
+bounded, restart-safe batches; only that provider is batched, and per-file, per-line,
+symlink, and single-conversation limits still apply. One `quick` run is capped at
+10,000 batches in total. Collection is idempotent, so rerunning `quick` refreshes the
+same database and resumes after an interrupted batch run.
+
+Unlike `collect`, a provider that fails does not stop the others. Its fixed collection
+message goes to standard error, with the number of batches already committed when it
+was batched; the remaining providers are still collected, the report is printed, and
+the command exits with status 2. Collection messages go to standard error and the
+report to standard output. `--json` prints
+`{"collection":{"incremental":...,"ingestions":[...],"failures":[...]},"report":{...}}`.
+Each ingestion carries the same counters as `collect --json` in batch mode:
+`provider`, `batched`, `batches`, `received`, `written`, `skipped`, `malformed`, and
+`batch_duplicates`. `incremental` is `true` when any provider was batched, and each
+failure has only `provider` and a fixed `code`.
 
 ## SQLite, PostgreSQL, migrations, and retention
 

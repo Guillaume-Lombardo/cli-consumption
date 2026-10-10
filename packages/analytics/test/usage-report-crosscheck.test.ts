@@ -53,6 +53,11 @@ describe("terminal usage report cross-check", () => {
       "all-dateless-model-filter",
       "intraday-detailed",
       "intraday-share-safe",
+      "millisecond-since-inclusive",
+      "millisecond-since-exclusive",
+      "millisecond-until-inclusive",
+      "millisecond-until-exclusive",
+      "millisecond-until-near-second",
     ]);
   });
 

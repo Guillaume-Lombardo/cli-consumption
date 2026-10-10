@@ -74,7 +74,7 @@ changed between releases.
 | `aider` | analytics schema (unversioned) | `2026-08-30` | analytics JSONL | [fixture](../tests/test_aider_adapter.py) | [Aider](https://github.com/Aider-AI/aider/tree/5dc9490bb35f9729ef2c95d00a19ccd30c26339c) | Opt-in analytics; no projects, tools, cache, reasoning, or durations. |
 | `amazon-q` | conversation state (unversioned) | `2026-08-30` | SQLite conversations and serialized state | [fixture](../tests/test_amazon_q_adapter.py) | [Amazon Q Developer CLI](https://github.com/aws/amazon-q-developer-cli/tree/15cc8f3cd18c4272925ce1c7053268eedff1ea0a) | Persistent conversations only; token counters unavailable. |
 | `amp` | thread mirror (unversioned) | `2026-08-30` | thread JSON | [fixture](../tests/test_amp_adapter.py) | [Amp manual](https://web.archive.org/web/20260825165815id_/https://ampcode.com/manual) | No subthreads, compactions, reasoning split, or latency. |
-| `codex` | rollout schema (unversioned) | `2026-08-30` | session rollout JSONL | [fixture](../tests/test_codex_adapter.py) | [Codex](https://github.com/openai/codex/tree/0a12b855a0b21068108a8a3b311d492712737e0f) | Local rollout metadata only; provider internals may evolve. |
+| `codex` | rollout schema (unversioned) | `2026-10-09` | active and archived session rollout JSONL | [fixture](../tests/test_codex_adapter.py) | [Codex](https://github.com/openai/codex/tree/2f761ae8210082c21cdd471131fa2118680a6059) | Uncompressed rollouts only; `.jsonl.zst` copies are not read. |
 | `copilot` | CLI 1.0.80 / event schema v1 | `2026-08-30` | session event JSONL | [fixture](../tests/test_copilot_adapter.py) | [GitHub Copilot CLI](https://github.com/github/copilot-cli/tree/v1.0.80) | Shutdown aggregates only; no per-turn token attribution. |
 | `continue` | session schema (unversioned) | `2026-08-30` | session JSON | [fixture](../tests/test_continue_adapter.py) | [Continue](https://github.com/continuedev/continue/tree/5522c6f44ca0ac3528b37244818fbfa39b5af470) | No reliable message timing, context windows, compaction timing, or latency. |
 | `crush` | CLI 0.91.2 | `2026-08-30` | project registry and additive SQLite migrations | [fixture](../tests/test_crush_adapter.py) | [Crush](https://github.com/charmbracelet/crush/tree/v0.91.2) | Latest context snapshot only; no additive per-call usage. |
@@ -124,7 +124,7 @@ stored winner could depend on where a batch boundary falls.
 | Provider name | Batched collection | Batch unit or reason |
 | --- | --- | --- |
 | `claude` | yes | Every transcript sharing a session or subagent identity across all sources and project directories, found by a bounded identity pass. |
-| `codex` | yes | One rollout file; the SQLite subagent graph is neither read nor replaced. |
+| `codex` | yes | One rollout file from `sessions/` or `archived_sessions/`; the SQLite subagent graph is neither read nor replaced. |
 | `amp` | yes | One thread file. |
 | `continue` | yes | One session file. |
 | `gemini` | yes | One session file. |
@@ -179,6 +179,26 @@ not collected. Vibe's internal session format can change without notice, and loc
 token events are not billing data.
 
 ## Codex
+
+A Codex source path is the Codex home (`~/.codex/` by default). The adapter reads
+rollout JSONL from `<home>/sessions/`, which must exist, and from
+`<home>/archived_sessions/` when that directory exists, plus the optional
+`<home>/state_5.sqlite` subagent graph. Passing `sessions/` or `archived_sessions/`
+itself as a source is rejected, and `CODEX_HOME` is not consulted. Qualified against Codex commit `2f761ae`, archiving moves the rollout files
+of a thread and of its archived descendant threads from the dated
+`sessions/YYYY/MM/DD/` tree to a flat `archived_sessions/` directory, and unarchiving
+moves them back; Codex's own rollout lookups also walk nested archive directories.
+Both trees are therefore walked identically and recursively: in sorted order, without
+following directory symlinks, refusing symlinked rollout files, and charging every
+listed `*.jsonl` entry to the same candidate, read, per-file, and per-line limits.
+Compressed `*.jsonl.zst` rollouts are not read.
+
+A rollout keeps its conversation ID wherever it lives, so archiving or unarchiving a
+collected thread changes nothing stored. A conversation present in both trees, or on
+several machines, is one conversation whose most complete copy wins whatever its
+location or the collection order. Archiving keeps the thread spawn edges in
+`state_5.sqlite`, so relationships of archived parents and descendants are
+unchanged, whether the whole family or only part of it was archived.
 
 Codex and Claude Code hash and parse each JSONL file in one bounded read. Duplicate
 copies are ranked by valid object count, then content hash; only the normalized

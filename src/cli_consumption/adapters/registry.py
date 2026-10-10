@@ -166,9 +166,10 @@ ADAPTER_SPECS = (
         qualification=_qualification(
             "codex",
             "rollout schema (unversioned)",
-            "session rollout JSONL",
-            "https://github.com/openai/codex/tree/0a12b855a0b21068108a8a3b311d492712737e0f",
-            "Local rollout metadata only; provider internals may evolve.",
+            "active and archived session rollout JSONL",
+            "https://github.com/openai/codex/tree/2f761ae8210082c21cdd471131fa2118680a6059",
+            "Uncompressed rollouts only; `.jsonl.zst` copies are not read.",
+            qualified_on="2026-10-09",
         ),
     ),
     AdapterSpec(

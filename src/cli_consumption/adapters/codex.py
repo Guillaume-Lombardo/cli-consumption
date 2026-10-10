@@ -6,8 +6,10 @@ import math
 import os
 import re
 import sqlite3
+import stat
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -99,11 +101,43 @@ AGENT_ROLE_ALIASES = {
 SAFE_DIMENSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]*")
 
 
-def _incremental_session_files(codex_home: Path) -> Iterator[Path]:
-    sessions = codex_home / "sessions"
+SESSIONS_SUBDIR = "sessions"
+ARCHIVED_SESSIONS_SUBDIR = "archived_sessions"
+
+
+def _rollout_roots(codex_home: Path) -> tuple[Path, ...]:
+    """Return the active and archived rollout trees of one Codex home, in order.
+
+    Codex archiving moves the rollout files of a thread and of its archived
+    descendant threads from the dated ``sessions/YYYY/MM/DD/`` tree to
+    ``archived_sessions/``, and unarchiving moves them back. Archiving writes them
+    flat, while Codex's own rollout lookups walk ``archived_sessions/`` recursively,
+    so both layouts are read with the same walk. ``sessions/`` stays required;
+    ``archived_sessions/`` is optional because Codex creates it on first archive.
+
+    ``sessions/`` keeps its existing semantics, including a symlinked root. Codex
+    itself only ever creates ``archived_sessions/`` as a real directory, so a
+    symlink there is skipped rather than followed outside the selected home.
+    """
+    sessions = codex_home / SESSIONS_SUBDIR
     if not sessions.is_dir():
         raise ValueError("Missing Codex sessions directory")
-    return _iter_session_files(sessions)
+    archived = codex_home / ARCHIVED_SESSIONS_SUBDIR
+    return (sessions, archived) if _is_real_directory(archived) else (sessions,)
+
+
+def _is_real_directory(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _incremental_session_files(codex_home: Path) -> Iterator[Path]:
+    # Resolve the roots eagerly so that a missing sessions directory fails at once.
+    return chain.from_iterable(
+        _iter_session_files(root) for root in _rollout_roots(codex_home)
+    )
 
 
 def _iter_session_files(root: Path) -> Iterator[Path]:
@@ -331,13 +365,12 @@ class CodexAdapter:
     ) -> tuple[list[Snapshot], int, int]:
         candidates: list[tuple[str, Path]] = []
         for machine, codex_home in sources:
-            sessions = codex_home / "sessions"
-            if not sessions.is_dir():
-                raise ValueError(f"Missing Codex sessions directory: {sessions}")
-            candidates.extend(
-                (machine, path)
-                for path in budget.sorted_paths(sessions.rglob("*.jsonl"))
-            )
+            # The single pass lists exactly the files that batches would visit.
+            for root in _rollout_roots(codex_home):
+                candidates.extend(
+                    (machine, path)
+                    for path in budget.sorted_paths(_iter_session_files(root))
+                )
         return self._discover_candidates(
             candidates, mappings, budget, charge_candidates=False
         )

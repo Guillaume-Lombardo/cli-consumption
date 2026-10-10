@@ -39,6 +39,11 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Codex collection now also reads `archived_sessions/` in each Codex home, flat or
+  nested, under the same limits and in batched collection. Archived conversations
+  were previously missed after Codex moved them out of `sessions/`; they keep their
+  conversation IDs and subagent relationships, and a copy present in both locations
+  converges to the most complete one.
 - Claude Code collection now includes subagent transcripts under
   `<session>/subagents/` and legacy `agent-*.jsonl` files as separate conversations
   linked to their parent session. Their tokens were previously ignored, and a legacy

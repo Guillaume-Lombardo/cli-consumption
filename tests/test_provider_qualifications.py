@@ -40,19 +40,19 @@ def test_qualification_age_boundary_is_deterministic() -> None:
     assert {problem.provider for problem in problems} == {
         spec.name
         for spec in ADAPTER_SPECS
-        if spec.name not in {"claude", "mistral-vibe", "opencode"}
+        if spec.name not in {"claude", "codex", "mistral-vibe", "opencode"}
     }
     assert {problem.reason for problem in problems} == {
         "qualification is 91 days old (maximum 90)"
     }
     problems = qualification_problems(as_of=date(2026, 11, 30))
-    assert len(problems) == len(ADAPTER_SPECS) - 2
+    assert len(problems) == len(ADAPTER_SPECS) - 3
     assert (
         next(problem.reason for problem in problems if problem.provider == "opencode")
         == "qualification is 91 days old (maximum 90)"
     )
     assert not any(
-        problem.provider in {"claude", "mistral-vibe"} for problem in problems
+        problem.provider in {"claude", "codex", "mistral-vibe"} for problem in problems
     )
 
 

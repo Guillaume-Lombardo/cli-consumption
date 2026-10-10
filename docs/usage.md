@@ -19,9 +19,12 @@ uv run cli-consumption collect --provider codex \
 ```
 
 Copy only the provider directory named in the [support ledger](provider-support.md),
-never adjacent credentials. Globally identical conversation IDs are deduplicated and
-the most complete copy wins. Subagent graphs are replaced only by a demonstrably more
-complete snapshot for the same provider and source machine.
+never adjacent credentials. A Codex source is the Codex home itself: its required
+`sessions/` tree and, when present, its `archived_sessions/` directory are both
+collected, so copy both to keep archived conversations. Globally identical
+conversation IDs are deduplicated and the most complete copy wins. Subagent graphs
+are replaced only by a demonstrably more complete snapshot for the same provider and
+source machine.
 
 Map original working-directory prefixes to stable project labels. The longest matching
 prefix wins:

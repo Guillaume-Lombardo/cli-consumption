@@ -123,7 +123,7 @@ stored winner could depend on where a batch boundary falls.
 
 | Provider name | Batched collection | Batch unit or reason |
 | --- | --- | --- |
-| `claude` | yes | One session transcript plus its nested subagent transcripts; legacy flat agent transcripts follow every session of their project directory. |
+| `claude` | yes | Every source's copy of one session transcript plus every copy of its nested subagent transcripts; legacy flat agent transcripts follow all session groups. |
 | `codex` | yes | One rollout file; the SQLite subagent graph is neither read nor replaced. |
 | `amp` | yes | One thread file. |
 | `continue` | yes | One session file. |
@@ -137,16 +137,19 @@ stored winner could depend on where a batch boundary falls.
 | `openhands` | no | Duplicate ranking uses the token-usage count before the hash. |
 | `aider`, `amazon-q`, `cline`, `crush`, `cursor`, `goose`, `kilo`, `opencode`, `plandex` | no | Outside the per-session-file scope of this mechanism; they keep one bounded snapshot. |
 
-Claude Code batches carry only the response identifiers of sessions whose project
-contains legacy flat agent transcripts, and only until that project's legacy
-transcripts are read, so sidechain replays are still excluded across a batch boundary.
-In batches, a legacy transcript resolves its parent session within its own project
-directory, and a nested transcript within its own session group. Each batch records
+Claude Code groups copies across sources, so a nested subagent transcript is always
+normalized against the same winning parent copy as a single collection. Legacy flat
+agent transcripts are read after every session group; until then, batches carry only
+the response identifiers of the most complete copy of each session in a project
+directory that contains legacy transcripts, so sidechain replays are still excluded
+across batch and source boundaries. Each batch records
 subagent relationships with merge semantics: a relationship is written when its child
 conversation is written, replaces any relationship recorded for an older copy of that
-child, and is never deleted by a batch. A single Claude Code session group above the
-512 MiB batch read budget, or a project whose carried response identifiers exceed
-250,000, still fails with `provider_limit_exceeded`.
+child, and is never deleted by a batch. A relationship is restored for an unchanged
+child only from an identical copy of the stored child, never from an older one. A
+single Claude Code session group, including all of its copies, above the 512 MiB
+batch read budget, or carried response identifiers above 250,000, still fail with
+`provider_limit_exceeded`.
 
 ## Mistral Vibe CLI
 

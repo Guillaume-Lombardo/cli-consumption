@@ -192,15 +192,16 @@ def test_claude_batches_keep_each_session_with_its_subagents(
 
     batches = list(ClaudeAdapter().collect_incrementally([("desktop", home)]))
 
+    # Session groups come first in name order; legacy transcripts follow them.
     assert [sorted(_external_ids(batch)) for batch in batches] == [
+        ["beta", "beta:agent:helper"],
         ["session-1", "session-1:agent:explorer", "session-1:agent:flow"],
         ["session-1:agent:legacy"],
-        ["beta", "beta:agent:helper"],
         ["beta:agent:old"],
     ]
     assert all(batch.subagent_merge for batch in batches)
     assert all(batch.authoritative_subagent_scopes == frozenset() for batch in batches)
-    legacy = batches[1].snapshot
+    legacy = batches[2].snapshot
     # The parent response was read in an earlier batch and is still filtered.
     assert legacy.conversations[0]["total_tokens"] == 10
     assert legacy.subagents[0]["parent_thread_id"] == "session-1"
@@ -790,3 +791,110 @@ def test_strict_forced_batches_stage_merged_relationships(tmp_path: Path) -> Non
         assert CANARY not in json.dumps(_tables(engine), default=str)
     finally:
         engine.dispose()
+
+
+def _copied_parent_stores(tmp_path: Path, *, legacy: bool) -> list[tuple[str, Path]]:
+    """Two copies: the first parent lacks the response replayed by the child."""
+    sources = []
+    for machine, events in (
+        ("desktop", _session_events("parent", "m-1")),
+        (
+            "laptop",
+            _session_events("parent", "m-1") + _session_events("parent", "m-2")[1:],
+        ),
+    ):
+        home = tmp_path / machine
+        project = home / "projects" / "p"
+        _write_jsonl(project / "parent.jsonl", events)
+        child = (
+            project / "agent-a.jsonl"
+            if legacy
+            else project / "parent" / "subagents" / "agent-a.jsonl"
+        )
+        _write_jsonl(
+            child,
+            _agent_events("a", "m-2", session_id="parent", tokens=100_000)
+            + _agent_events("a", "m-own", session_id="parent")[1:],
+        )
+        sources.append((machine, home))
+    return sources
+
+
+@pytest.mark.parametrize("batch_size", [1, 1_000])
+@pytest.mark.parametrize("legacy", [False, True], ids=["nested", "legacy"])
+def test_copied_sources_filter_replays_against_the_winning_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool, batch_size: int
+) -> None:
+    sources = _copied_parent_stores(tmp_path, legacy=legacy)
+    monkeypatch.setattr(claude_module, "INCREMENTAL_CANDIDATES_PER_BATCH", batch_size)
+    single = create_database_engine(tmp_path / "single.sqlite")
+    batched = create_database_engine(tmp_path / "batched.sqlite")
+    try:
+        ingest_snapshot(single, ClaudeAdapter().collect(sources))
+        expected = _tables(single)
+        for _ in range(2):
+            _ingest_batches(
+                batched, list(ClaudeAdapter().collect_incrementally(sources))
+            )
+            assert _tables(batched) == expected
+    finally:
+        single.dispose()
+        batched.dispose()
+
+    child = next(
+        row
+        for row in expected["conversations"]
+        if row["external_id"] == "parent:agent:a"
+    )
+    assert child["total_tokens"] == 10
+    assert [row["child_thread_id"] for row in expected["subagents"]] == [
+        "parent:agent:a"
+    ]
+
+
+def test_stale_child_copy_cannot_restore_a_removed_relationship(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+    try:
+        ingest_snapshot(
+            engine,
+            _child("desktop", "child", 3),
+            authoritative_subagent_scopes=frozenset(),
+            subagent_merge=True,
+        )
+        # A richer normal collection whose graph no longer contains the child.
+        cleanup = _child("desktop", "other", 4)
+        cleanup.subagents.clear()
+        cleanup.conversations[0]["event_count"] = 4
+        ingest_snapshot(engine, cleanup)
+        richer = Snapshot.from_dict(cleanup.to_dict())
+        richer.conversations[0]["event_count"] = 5
+        ingest_snapshot(engine, richer)
+        assert read_table(engine, "subagents") == []
+
+        ingest_snapshot(
+            engine,
+            _child("desktop", "child", 1),
+            authoritative_subagent_scopes=frozenset(),
+            subagent_merge=True,
+        )
+
+        assert read_table(engine, "subagents") == []
+        stored = {
+            row["external_id"]: row["event_count"]
+            for row in read_table(engine, "conversations")
+        }
+        assert stored == {"child": 3, "other": 5}
+    finally:
+        engine.dispose()
+
+
+def test_claude_incremental_index_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _claude_sessions(tmp_path / "claude", 2)
+    monkeypatch.setattr(claude_module, "MAX_INCREMENTAL_LISTING", 1)
+
+    with pytest.raises(ProviderDataLimitError, match="listing_limit"):
+        list(ClaudeAdapter().collect_incrementally([("desktop", home)]))

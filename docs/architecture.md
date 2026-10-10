@@ -351,22 +351,25 @@ keeps its already collected snapshot. `--no-incremental` disables the switch and
 safely; strict mode stages every validated batch before opening the database. Output
 reports the trigger, a per-provider `batched` flag, and aggregate counters only.
 
-Claude Code groups a session transcript with every nested transcript under the
-session directory of the same name, so sidechain replay filtering and the session's
-own relationships never cross a batch boundary. Legacy flat agent transcripts follow
-all sessions of their project directory, one per group; the response identifiers of
-that project's selected parent copies are carried in memory, under the existing
-250,000-identifier bound, until those transcripts are read. In batches, parent
-lookup is scoped to the project directory (legacy) or session group (nested); a
-single collection resolves a parent session globally. The two agree for the
-documented layout, where a transcript lives beside or under its parent session.
+Claude Code first indexes paths (not contents) across every source, under the listing
+bound, and groups every copy of one session transcript with every copy of the nested
+transcripts under the session directory of the same name. Sidechain replay filtering
+therefore always uses the same winning parent copy as a single collection, and the
+session's own relationships never cross a batch boundary. Legacy flat agent
+transcripts follow all session groups, one per group. Until they are read, the
+response identifiers of the most complete copy of each session in a project
+directory containing legacy transcripts are carried in memory under the existing
+250,000-identifier bound. Copies of a child transcript are therefore normalized
+identically wherever a batch boundary falls, and storage converges on the same
+winner by raw rank.
 
 A batch never sees a complete provider/source-machine relationship graph, so Claude
 Code batches use merge semantics instead of graph replacement. In the ingestion
 transaction, a relationship is inserted when its child conversation is written, after
 deleting any relationship recorded for another copy of that child; it is inserted for
-an unchanged child only when the stored copy comes from the same source machine and
-no relationship exists yet. Batches never delete a relationship, and the scope row is
+an unchanged child only when the incoming copy has exactly the stored rank, comes from
+the same source machine, and no relationship exists yet. A strictly older copy can
+therefore never restore a relationship that graph replacement removed. Batches never delete a relationship, and the scope row is
 still locked to serialize writers on SQLite and PostgreSQL. Normal collection keeps
 replacing the whole graph under the freshness rules above. Codex batches instead pass
 an empty authoritative scope set and leave its SQLite graph untouched. No schema

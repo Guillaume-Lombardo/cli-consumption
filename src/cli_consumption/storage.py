@@ -415,8 +415,8 @@ def ingest_snapshot(
             (snapshot.provider, str(record["source_machine"]))
             for record in snapshot.subagents
         }
-    # (source machine, external ID) -> whether this snapshot's copy was written or is
-    # already the stored copy. Only populated for relationship merging.
+    # (source machine, external ID) -> whether this snapshot's copy was written (True)
+    # or is identical to the stored copy (False). Only populated for merging.
     child_copies: dict[tuple[str, str], bool] = {}
     stale_subagent_scopes: set[tuple[str, str]] = set()
     richer_subagent_scopes: set[tuple[str, str]] = set()
@@ -446,9 +446,13 @@ def ingest_snapshot(
                     richer_subagent_scopes.add(scope)
                 if existing_rank is not None and existing_rank >= incoming_rank:
                     skipped += 1
+                    # Only an identical copy may repair a missing relationship; a
+                    # strictly older copy must not restore one that a richer graph
+                    # replacement removed.
                     if (
                         subagent_merge
                         and existing is not None
+                        and existing_rank == incoming_rank
                         and existing.source_machine == scope[1]
                     ):
                         child_copies[(scope[1], str(record["external_id"]))] = False

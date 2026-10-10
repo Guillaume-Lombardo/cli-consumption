@@ -18,8 +18,9 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `"incremental_trigger": "requested"`.
 - Bounded incremental collection now covers Claude Code, Amp, Continue CLI, Gemini
   CLI, Pi, and Qwen Code in addition to Codex. Claude Code batches never separate a
-  session from its nested subagent transcripts, and subagent relationships converge
-  across batches instead of being skipped. Per-file, per-line, symlink, and
+  session from its nested subagent transcripts or from its copies in other sources,
+  so replayed parent responses are excluded exactly as in one collection, and
+  subagent relationships converge across batches instead of being skipped. Per-file, per-line, symlink, and
   single-conversation limits are unchanged, and one command is still capped at
   10,000 batches.
 

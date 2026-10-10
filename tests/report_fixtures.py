@@ -9,12 +9,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import delete, update
 from sqlalchemy.engine import Engine
 
 from cli_consumption.dashboard import build_dashboard_dataset
 from cli_consumption.models import Snapshot
 from cli_consumption.reporting import ExportWindow, ReportFilters
-from cli_consumption.storage import create_database_engine, ingest_snapshot
+from cli_consumption.storage import (
+    IngestionRun,
+    create_database_engine,
+    ingest_snapshot,
+)
 from cli_consumption.usage_report import UsageQuery, aggregate_usage
 
 CANARY = "report-canary-7f3a"
@@ -346,14 +351,143 @@ def seed_report_database(engine: Engine, *, hostile_project: bool = False) -> No
         ingest_snapshot(engine, snapshot)
 
 
+def dateless_untimed_snapshots(*, with_dated: bool = True) -> list[Snapshot]:
+    """Untimed counters in conversations without any timestamp."""
+    build = _Builder()
+    if with_dated:
+        dated = build.conversation(
+            "codex",
+            "dated",
+            project="alpha",
+            machine="laptop",
+            models=["gpt-x"],
+            started_at="2026-08-10T09:00:00+00:00",
+            ended_at="2026-08-10T10:00:00+00:00",
+        )
+        build.turn("codex", dated, "turn-1", started_at="2026-08-10T09:00:00+00:00")
+    else:
+        undated = build.conversation(
+            "codex",
+            "undated",
+            project="alpha",
+            machine="laptop",
+            models=["gpt-x"],
+            started_at=None,
+            ended_at=None,
+        )
+        build.turn("codex", undated, "turn-1", started_at=None)
+        build.call(
+            "codex",
+            undated,
+            turn_id=None,
+            timestamp=None,
+            model="gpt-x",
+            usage=tokens(50),
+        )
+    copilot = build.conversation(
+        "copilot",
+        "dateless",
+        project="beta",
+        machine="laptop",
+        models=["copilot-m"],
+        started_at=None,
+        ended_at=None,
+    )
+    build.call(
+        "copilot",
+        copilot,
+        turn_id=None,
+        timestamp=None,
+        model="copilot-m",
+        usage=tokens(60, 20, 0, 20),
+    )
+    crush = build.conversation(
+        "crush",
+        "dateless",
+        project="gamma",
+        machine="desktop",
+        models=["crush-m"],
+        started_at=None,
+        ended_at=None,
+    )
+    build.call(
+        "crush",
+        crush,
+        turn_id=None,
+        # A snapshot call timestamp never replaces the conversation interval.
+        timestamp="2026-08-11T08:00:00+00:00" if with_dated else None,
+        model="crush-m",
+        usage=tokens(300),
+    )
+    return [
+        Snapshot.from_dict(snapshot.to_dict()) for snapshot in build.snapshots.values()
+    ]
+
+
+def intraday_snapshots() -> list[Snapshot]:
+    """Two completed calls on either side of an intraday window start."""
+    build = _Builder()
+    conversation = build.conversation(
+        "codex",
+        "intraday",
+        project="alpha",
+        machine="laptop",
+        models=["gpt-x"],
+        started_at="2026-08-10T12:00:00+00:00",
+        ended_at="2026-08-10T14:30:00+00:00",
+    )
+    for hour, usage in (("12", tokens(80, 0, 0, 20)), ("14", tokens(150, 0, 0, 50))):
+        turn = build.turn(
+            "codex",
+            conversation,
+            f"turn-{hour}",
+            started_at=f"2026-08-10T{hour}:00:00+00:00",
+        )
+        build.call(
+            "codex",
+            conversation,
+            turn_id=turn,
+            timestamp=f"2026-08-10T{hour}:05:00+00:00",
+            model="gpt-x",
+            usage=usage,
+        )
+    return [
+        Snapshot.from_dict(snapshot.to_dict()) for snapshot in build.snapshots.values()
+    ]
+
+
+FIXED_INGESTION_TIME = "2026-09-01T00:00:00.000000+00:00"
+
+
+def seed_crosscheck_database(engine: Engine, name: str) -> None:
+    """Seed one named database with deterministic ingestion-run timestamps."""
+    snapshots = {
+        "main": report_snapshots,
+        "dateless-untimed": dateless_untimed_snapshots,
+        "all-dateless": lambda: dateless_untimed_snapshots(with_dated=False),
+        "intraday": intraday_snapshots,
+    }[name]()
+    for snapshot in snapshots:
+        ingest_snapshot(engine, snapshot)
+    with engine.begin() as connection:
+        if name == "all-dateless":
+            # Retention can remove every ingestion run, leaving no timestamp at all.
+            connection.execute(delete(IngestionRun))
+        else:
+            connection.execute(
+                update(IngestionRun).values(ingested_at=FIXED_INGESTION_TIME)
+            )
+
+
 CROSSCHECK_FIXTURE = Path(__file__).parent / "fixtures" / "usage_report_crosscheck.json"
-# name, since, until, report filters, dashboard filter, share-safe
+# name, database, since, until, report filters, dashboard filter, share-safe
 CROSSCHECK_CASES: tuple[
-    tuple[str, str | None, str | None, ReportFilters, dict[str, str], bool], ...
+    tuple[str, str, str | None, str | None, ReportFilters, dict[str, str], bool], ...
 ] = (
-    ("all-activity", None, None, ReportFilters(), {}, False),
+    ("all-activity", "main", None, None, ReportFilters(), {}, False),
     (
         "utc-window",
+        "main",
         "2026-08-04T00:00:00+00:00",
         "2026-08-13T00:00:00+00:00",
         ReportFilters(),
@@ -362,6 +496,7 @@ CROSSCHECK_CASES: tuple[
     ),
     (
         "intraday-window-provider",
+        "main",
         "2026-08-04T06:00:00+00:00",
         None,
         ReportFilters(providers=("codex",)),
@@ -370,6 +505,7 @@ CROSSCHECK_CASES: tuple[
     ),
     (
         "until-only-window",
+        "main",
         None,
         "2026-08-11T00:00:00+00:00",
         ReportFilters(),
@@ -378,6 +514,7 @@ CROSSCHECK_CASES: tuple[
     ),
     (
         "model-filter",
+        "main",
         None,
         None,
         ReportFilters(models=("gpt-y",)),
@@ -386,61 +523,156 @@ CROSSCHECK_CASES: tuple[
     ),
     (
         "project-machine-filter",
+        "main",
         None,
         None,
         ReportFilters(projects=("beta",), machines=("laptop",)),
         {"project": "beta", "machine": "laptop"},
         False,
     ),
-    ("share-safe", None, None, ReportFilters(), {}, True),
+    ("share-safe", "main", None, None, ReportFilters(), {}, True),
+    (
+        "share-safe-intraday-window-provider",
+        "main",
+        "2026-08-04T06:00:00+00:00",
+        "2026-08-05T09:05:00+00:00",
+        ReportFilters(providers=("codex",)),
+        {"provider": "codex"},
+        True,
+    ),
+    ("dateless-untimed", "dateless-untimed", None, None, ReportFilters(), {}, False),
+    (
+        "dateless-untimed-provider",
+        "dateless-untimed",
+        None,
+        None,
+        ReportFilters(providers=("copilot",)),
+        {"provider": "copilot"},
+        False,
+    ),
+    (
+        "dateless-untimed-share-safe",
+        "dateless-untimed",
+        None,
+        None,
+        ReportFilters(),
+        {},
+        True,
+    ),
+    ("all-dateless", "all-dateless", None, None, ReportFilters(), {}, False),
+    (
+        "all-dateless-model-filter",
+        "all-dateless",
+        None,
+        None,
+        ReportFilters(models=("copilot-m",)),
+        {"model": "copilot-m"},
+        False,
+    ),
+    (
+        "intraday-detailed",
+        "intraday",
+        "2026-08-10T13:00:00+00:00",
+        "2026-08-10T22:00:00+00:00",
+        ReportFilters(),
+        {},
+        False,
+    ),
+    (
+        "intraday-share-safe",
+        "intraday",
+        "2026-08-10T13:00:00+00:00",
+        "2026-08-10T22:00:00+00:00",
+        ReportFilters(),
+        {},
+        True,
+    ),
 )
 
 
-def crosscheck_payload(engine: Engine) -> dict[str, Any]:
-    """Pair each dashboard dataset with the terminal report totals it must match."""
-    cases = []
-    for name, since, until, filters, dashboard_filter, share_safe in CROSSCHECK_CASES:
-        window = ExportWindow(
-            since=None if since is None else datetime.fromisoformat(since),
-            until=None if until is None else datetime.fromisoformat(until),
-        )
-        dataset = build_dashboard_dataset(
-            engine, share_safe=share_safe, window=window, filters=filters
-        )
-        # Ingestion runs carry wall-clock timestamps and never enter token metrics.
-        dataset["ingestionRuns"] = []
-        report = aggregate_usage(
-            engine,
-            UsageQuery(window=window, filters=filters, share_safe=share_safe),
-        )
-        totals = report.totals
-        assert totals.tokens is not None
-        rate = totals.cache_rate
-        cases.append(
-            {
-                "name": name,
-                "dashboardFilter": {
-                    "provider": dashboard_filter.get("provider", ""),
-                    "machine": dashboard_filter.get("machine", ""),
-                    "project": dashboard_filter.get("project", ""),
-                    "model": dashboard_filter.get("model", ""),
-                },
-                "dataset": dataset,
-                "expected": {
-                    "conversations": totals.conversations,
-                    "turns": totals.turns,
-                    "calls": totals.calls,
-                    "inputTokens": totals.tokens.input,
-                    "cacheReadTokens": totals.tokens.cache_read,
-                    "cacheWriteTokens": totals.tokens.cache_write,
-                    "outputTokens": totals.tokens.output,
-                    "reasoningTokens": totals.tokens.reasoning,
-                    "totalTokens": totals.tokens.total,
-                    "cacheRatePercent": None if rate is None else round(100 * rate, 6),
-                },
-            }
-        )
+def crosscheck_case(
+    engine: Engine,
+    name: str,
+    since: str | None,
+    until: str | None,
+    filters: ReportFilters,
+    dashboard_filter: dict[str, str],
+    share_safe: bool,
+) -> dict[str, Any]:
+    """Pair one dashboard dataset with the terminal report totals it must match."""
+    window = ExportWindow(
+        since=None if since is None else datetime.fromisoformat(since),
+        until=None if until is None else datetime.fromisoformat(until),
+    )
+    dataset = build_dashboard_dataset(
+        engine, share_safe=share_safe, window=window, filters=filters
+    )
+    # Ingestion runs are ordered by random identifiers; their order is irrelevant.
+    dataset["ingestionRuns"].sort(key=lambda run: json.dumps(run, sort_keys=True))
+    report = aggregate_usage(
+        engine,
+        UsageQuery(window=window, filters=filters, share_safe=share_safe),
+    )
+    totals = report.totals
+    assert totals.tokens is not None
+    rate = totals.cache_rate
     return {
+        "name": name,
+        "dashboardFilter": {
+            "provider": dashboard_filter.get("provider", ""),
+            "machine": dashboard_filter.get("machine", ""),
+            "project": dashboard_filter.get("project", ""),
+            "model": dashboard_filter.get("model", ""),
+        },
+        "dataset": dataset,
+        "expected": {
+            "conversations": totals.conversations,
+            "turns": totals.turns,
+            "calls": totals.calls,
+            "inputTokens": totals.tokens.input,
+            "cacheReadTokens": totals.tokens.cache_read,
+            "cacheWriteTokens": totals.tokens.cache_write,
+            "outputTokens": totals.tokens.output,
+            "reasoningTokens": totals.tokens.reasoning,
+            "totalTokens": totals.tokens.total,
+            "cacheRatePercent": None if rate is None else round(100 * rate, 6),
+        },
+    }
+
+
+def render_crosscheck_fixture(directory: Path) -> str:
+    engines: dict[str, Engine] = {}
+    cases = []
+    try:
+        for (
+            name,
+            database,
+            since,
+            until,
+            filters,
+            dashboard_filter,
+            share_safe,
+        ) in CROSSCHECK_CASES:
+            if database not in engines:
+                engines[database] = create_database_engine(
+                    directory / f"crosscheck-{database}.sqlite"
+                )
+                seed_crosscheck_database(engines[database], database)
+            cases.append(
+                crosscheck_case(
+                    engines[database],
+                    name,
+                    since,
+                    until,
+                    filters,
+                    dashboard_filter,
+                    share_safe,
+                )
+            )
+    finally:
+        for engine in engines.values():
+            engine.dispose()
+    payload = {
         "description": (
             "Generated by tests/report_fixtures.py from synthetic records. The "
             "analytics tests check that dashboard calculations over each dataset "
@@ -448,15 +680,6 @@ def crosscheck_payload(engine: Engine) -> dict[str, Any]:
         ),
         "cases": cases,
     }
-
-
-def render_crosscheck_fixture(directory: Path) -> str:
-    engine = create_database_engine(directory / "crosscheck.sqlite")
-    try:
-        seed_report_database(engine)
-        payload = crosscheck_payload(engine)
-    finally:
-        engine.dispose()
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 

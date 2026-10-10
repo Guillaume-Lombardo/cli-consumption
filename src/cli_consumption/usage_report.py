@@ -27,7 +27,7 @@ from enum import StrEnum
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import and_, exists, false, or_, select, true
+from sqlalchemy import and_, exists, false, not_, or_, select, true
 from sqlalchemy.engine import Connection, Engine
 
 from cli_consumption.adapters.registry import ADAPTER_SPECS, resolve_adapter_spec
@@ -254,14 +254,21 @@ def parse_report_window(
             None if since is None or DATE_VALUE.fullmatch(since) else since,
             None if until is None or DATE_VALUE.fullmatch(until) else until,
         )
-        return ExportWindow(
+        window = ExportWindow(
             since=bound(since, end=False) or timestamps.since,
             until=bound(until, end=True) or timestamps.until,
         )
+        # Every later presentation must stay representable: local rendering and
+        # share-safe day rounding both shift the bounds near the calendar limits.
+        window.metadata(day_precision=True)
+        for value in (window.since, window.until):
+            if value is not None:
+                value.astimezone(zone)
     except UsageQueryError:
         raise
-    except ValueError:
+    except (ValueError, OverflowError):
         raise UsageQueryError("invalid_window") from None
+    return window
 
 
 def report_filters(
@@ -371,8 +378,21 @@ class _Aggregation:
             )
         )
         window = query.window
-        self.since = None if window.since is None else canonical_timestamp(window.since)
-        self.until = None if window.until is None else canonical_timestamp(window.until)
+        if query.share_safe:
+            # The share-safe dashboard rounds timestamps and its window to UTC days
+            # before analytical selection; day bounds make both selections equal.
+            self.zone = UTC
+            bounds = window.metadata(day_precision=True)
+            self.since, self.until = bounds["since"], bounds["until"]
+        else:
+            self.since = (
+                None if window.since is None else canonical_timestamp(window.since)
+            )
+            self.until = (
+                None if window.until is None else canonical_timestamp(window.until)
+            )
+        # Whether the dashboard has an analytical range; set by ``run``.
+        self.has_range = window.bounded
         self.selected = (
             report_statement(connection, "conversations", window, filters=query.filters)
             .order_by(None)
@@ -408,6 +428,49 @@ class _Aggregation:
             return false()
         return self.selected.c.provider.in_(self.untimed_providers)
 
+    def _untimed_admitted(self) -> Any:
+        """Untimed counters need a dated conversation once a range exists."""
+        if not self.has_range:
+            return self._untimed()
+        return and_(
+            self._untimed(),
+            or_(
+                self.selected.c.started_at.is_not(None),
+                self.selected.c.ended_at.is_not(None),
+            ),
+        )
+
+    def _has_dates(self) -> bool:
+        """Return whether the dashboard dataset would contain any timestamp."""
+        checks = (
+            ("conversations", ("started_at", "ended_at")),
+            ("turns", ("started_at", "ended_at")),
+            ("model_calls", ("timestamp",)),
+            ("tool_calls", ("timestamp",)),
+            ("context_samples", ("timestamp",)),
+            ("compaction_events", ("timestamp",)),
+            ("work_items", ("started_at_ms",)),
+            ("subagents", ("created_at_ms",)),
+            ("ingestion_runs", ("ingested_at",)),
+        )
+        for table_name, columns in checks:
+            rows = (
+                report_statement(
+                    self.connection,
+                    table_name,
+                    self.query.window,
+                    filters=self.query.filters,
+                )
+                .order_by(None)
+                .subquery(f"dated_{table_name}")
+            )
+            dated = or_(*(rows.c[column].is_not(None) for column in columns))
+            if self.connection.scalar(
+                select(exists(select(1).select_from(rows).where(dated)))
+            ):
+                return True
+        return False
+
     def _model_condition(self, call: Any) -> Any:
         models = self.query.filters.models
         if not models:
@@ -421,8 +484,12 @@ class _Aggregation:
 
     def _candidate_call(self, call: Any) -> Any:
         """Calls matching the model filter and the window (dashboard step one)."""
-        timed = and_(call.c.timestamp.is_not(None), *self._bounded(call.c.timestamp))
-        return and_(self._model_condition(call), or_(self._untimed(), timed))
+        timed = and_(
+            not_(self._untimed()),
+            call.c.timestamp.is_not(None),
+            *self._bounded(call.c.timestamp),
+        )
+        return and_(self._model_condition(call), or_(self._untimed_admitted(), timed))
 
     def _selected_call(self, call: Any, turn: Any) -> Any:
         """Candidate calls whose turn, when present, is inside the window."""
@@ -433,6 +500,7 @@ class _Aggregation:
 
     def run(self) -> UsageReport:
         query = self.query
+        self.has_range = query.window.bounded or self._has_dates()
         if query.share_safe:
             labels = share_safe_labels(
                 self.connection, window=query.window, filters=query.filters
@@ -447,7 +515,11 @@ class _Aggregation:
         self._aggregate_calls()
         return UsageReport(
             view=query.view,
-            timezone=query.timezone if query.timezone.upper() != "UTC" else "UTC",
+            timezone=(
+                "UTC"
+                if query.share_safe or query.timezone.upper() == "UTC"
+                else query.timezone
+            ),
             window=query.window,
             filters=self._display_filters(),
             breakdown=query.breakdown,
@@ -470,7 +542,9 @@ class _Aggregation:
         conditions: list[Any] = []
         if self.query.filters.models:
             conditions.append(exists(selected_call))
-        elif not self.query.window.bounded:
+        elif self.has_range and not self.query.window.bounded:
+            # Without a window, a dateless conversation counts only when active;
+            # without any timestamp at all, the dashboard has no range and counts it.
             any_turn = Turn.__table__.alias("conversation_turn")
             any_tool = ToolCall.__table__.alias("conversation_tool")
             conditions.append(
@@ -677,7 +751,7 @@ class _Aggregation:
             return None
         try:
             local = datetime.fromisoformat(value).astimezone(self.zone)
-        except ValueError:
+        except (ValueError, OverflowError):
             return None
         day = local.date()
         if self.query.view is ReportView.WEEKLY:
@@ -740,7 +814,7 @@ class _Aggregation:
             return None
         try:
             local = datetime.fromisoformat(value).astimezone(self.zone)
-        except ValueError:
+        except (ValueError, OverflowError):
             return None
         if self.query.share_safe:
             return local.date().isoformat()

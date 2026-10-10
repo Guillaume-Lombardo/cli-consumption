@@ -485,3 +485,74 @@ def test_postgresql_report_matches_sqlite_when_configured(tmp_path: Path) -> Non
             with admin_engine.begin() as connection:
                 connection.execute(DropSchema(schema_name, cascade=True))
         admin_engine.dispose()
+
+
+def _seeded(tmp_path: Path, name: str) -> Engine:
+    from report_fixtures import seed_crosscheck_database
+
+    engine = create_database_engine(tmp_path / f"{name}.sqlite")
+    seed_crosscheck_database(engine, name)
+    return engine
+
+
+def test_dateless_untimed_counters_follow_the_dashboard_range(tmp_path: Path) -> None:
+    dated = _seeded(tmp_path, "dateless-untimed")
+    dateless = _seeded(tmp_path, "all-dateless")
+    try:
+        with_range = aggregate_usage(dated, UsageQuery()).totals
+        without_range = aggregate_usage(dateless, UsageQuery()).totals
+    finally:
+        dated.dispose()
+        dateless.dispose()
+
+    # Ingestion runs and the dated conversation give the dashboard a range, so
+    # dateless conversation-aggregate and context-snapshot counters are excluded.
+    assert (with_range.conversations, with_range.calls) == (1, 0)
+    assert with_range.tokens is not None and with_range.tokens.total == 0
+    # Without any timestamp, the dashboard has no range and keeps every counter.
+    assert (without_range.conversations, without_range.calls) == (3, 2)
+    assert without_range.tokens is not None and without_range.tokens.total == 400
+
+
+def test_share_safe_selects_on_utc_days_like_the_dashboard(tmp_path: Path) -> None:
+    engine = _seeded(tmp_path, "intraday")
+    window = parse_report_window("2026-08-10T13:00:00Z", "2026-08-10T22:00:00Z")
+    try:
+        detailed = aggregate_usage(engine, UsageQuery(window=window))
+        shared = aggregate_usage(
+            engine,
+            UsageQuery(window=window, share_safe=True, timezone="America/New_York"),
+        )
+    finally:
+        engine.dispose()
+
+    assert detailed.totals.tokens is not None
+    assert shared.totals.tokens is not None
+    assert (detailed.totals.calls, detailed.totals.tokens.total) == (1, 200)
+    assert (shared.totals.calls, shared.totals.tokens.total) == (2, 300)
+    assert shared.timezone == "UTC"
+    assert [row.period for row in shared.rows] == ["2026-08-10"]
+
+
+def test_timestamps_beyond_the_local_calendar_are_undated(tmp_path: Path) -> None:
+    engine = create_database_engine(tmp_path / "edge.sqlite")
+    snapshot = next(item for item in report_snapshots() if item.provider == "claude")
+    edge = "9999-12-31T23:00:00+00:00"
+    for record in (*snapshot.conversations, *snapshot.turns, *snapshot.model_calls):
+        for field in ("started_at", "ended_at", "timestamp"):
+            if record.get(field):
+                record[field] = edge
+    try:
+        ingest_snapshot(engine, snapshot)
+        daily = aggregate_usage(engine, UsageQuery(timezone="Pacific/Kiritimati"))
+        sessions = aggregate_usage(
+            engine,
+            UsageQuery(view=ReportView.SESSION, timezone="Pacific/Kiritimati"),
+        )
+    finally:
+        engine.dispose()
+
+    assert [row.period for row in daily.rows] == [None]
+    assert daily.totals.calls == 1
+    assert sessions.rows[0].session is not None
+    assert sessions.rows[0].session.started_at is None

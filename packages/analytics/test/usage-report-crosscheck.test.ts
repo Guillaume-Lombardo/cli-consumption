@@ -45,6 +45,14 @@ describe("terminal usage report cross-check", () => {
       "model-filter",
       "project-machine-filter",
       "share-safe",
+      "share-safe-intraday-window-provider",
+      "dateless-untimed",
+      "dateless-untimed-provider",
+      "dateless-untimed-share-safe",
+      "all-dateless",
+      "all-dateless-model-filter",
+      "intraday-detailed",
+      "intraday-share-safe",
     ]);
   });
 

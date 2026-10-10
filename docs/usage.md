@@ -196,12 +196,19 @@ any timestamp appears in an `undated` row. With `--by model`, token and call sub
 add up to their period, while turns and conversations that used several models appear
 under each of them.
 
-Token selection is identical to the dashboard for the same window and filters: calls
-from `additive` providers count when they belong to no turn or to a completed or
-aborted turn inside the window, and an automated cross-check compares both
-calculations. Counters from `conversation-aggregate` and `context-snapshot` providers
-have no per-call time, so period views attribute them to their conversation's period
-and flag the row as `agg` or `snap`. A provider whose token semantics are
+Token selection is identical to the dashboard for the same window and filters, and an
+automated cross-check runs the dashboard calculations against the report:
+
+- Calls from `additive` providers count when they have a timestamp inside the window
+  and belong to no turn or to a completed or aborted turn that starts inside it.
+- Counters from `conversation-aggregate` and `context-snapshot` providers have no
+  per-call time. They count when their conversation has a start or end timestamp; a
+  conversation without either is excluded, as in the dashboard, unless the selection
+  contains no timestamp at all (including ingestion runs). Period views attribute
+  these counters to their conversation's period and flag the row as `agg` or `snap`.
+- Without `--since` and `--until`, a conversation without any timestamp is counted
+  only when it has a turn, a counted call, or a tool call, again unless the selection
+  contains no timestamp at all. A provider whose token semantics are
 `unavailable` contributes conversation, turn, and call counts, but its token cells
 show `n/a`, never `0`; a row mixing it with measured providers is flagged `partial`.
 Token counters are local usage metadata, not billing data, and the report contains no
@@ -213,9 +220,12 @@ an interactive terminal and never when `NO_COLOR` is set, `TERM=dumb`, or the ou
 is piped. Control characters in stored labels are replaced before printing.
 
 `--share-safe` replaces project, machine, and model labels with the aliases a
-share-safe dashboard uses for the same selection, shows session start dates without
-times, and rounds the JSON window to UTC days. Provider names and aggregate activity
-remain visible.
+share-safe dashboard uses for the same selection. Like that dashboard, it evaluates
+the window and every timestamp on UTC days: activity on the first and last day of a
+window counts even outside its exact hours, periods and session dates use UTC
+calendar days whatever `--timezone` says (which then only interprets plain dates),
+and the JSON window and `timezone` show the rounded UTC values. Provider names and
+aggregate activity remain visible.
 
 `--json` prints one deterministic line with sorted keys. Its contract is versioned;
 this example is formatted for reading:
@@ -266,9 +276,12 @@ the metrics with a `label`. Additive changes keep version 1; any removal or chan
 meaning increments `schema_version`.
 
 Errors exit with status 2 and fixed codes, as `{"error":{"code":...}}` with `--json`:
-`database_not_found`, `database_unavailable`, `invalid_timezone`, `invalid_window`,
-`unknown_provider`, or `report_limit_exceeded`. They never include paths or rejected
-values.
+`database_not_found`, `database_unavailable`, `database_driver_missing`,
+`invalid_timezone`, `invalid_window`, `unknown_provider`, or `report_limit_exceeded`.
+Invalid database URLs, filesystem errors, failed migrations, and failed ingestion
+during `quick` all become `database_unavailable`. Errors never include paths, URLs,
+SQL statements, parameters, or rejected values. Bounds that leave the supported
+calendar after timezone conversion or day rounding are `invalid_window`.
 
 ### First run with `quick`
 

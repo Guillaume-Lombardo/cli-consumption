@@ -331,14 +331,17 @@ conversation, turn, and call counts, cache rates, token-semantics labels, and fi
 flags. They never include conversation, turn, or provider identifiers, content
 hashes, source values, mapping sources, database or provider paths, environment
 values, or exception text. Session numbers are local to one output. Errors use fixed
-codes without echoing rejected values. Before printing, the terminal renderer replaces
+codes without echoing rejected values; database URL, filesystem, migration, and
+ingestion failures are reduced to `database_unavailable` before any SQL statement,
+bound parameter, or path can reach output. Before printing, the terminal renderer replaces
 control and format characters in stored labels so database values cannot emit escape
 sequences; JSON escapes them. Colors are only presentation and are disabled for pipes
 and `NO_COLOR`.
 
 `--share-safe` reuses the dashboard's share-safe aliases for project, machine, and
-model labels (including filter values echoed in JSON), prints session dates without
-times, and rounds the JSON window to UTC days. Provider names, daily activity, counts,
+model labels (including filter values echoed in JSON), selects and groups activity on
+UTC days like the share-safe dashboard, prints session dates without times, and
+rounds the JSON window to UTC days. Provider names, daily activity, counts,
 and token aggregates remain visible, so share-safe output is minimized, not anonymous.
 Detailed output discloses the same operational labels and timestamps as a detailed
 dashboard. `quick` writes the default normalized database in the current directory

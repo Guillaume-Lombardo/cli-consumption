@@ -194,7 +194,53 @@
             "visible_output_tokens": 0
           }
         ],
-        "ingestionRuns": [],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "claude",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 3,
+            "skipped": 0,
+            "written": 3
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "copilot",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "crush",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "cursor",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
         "meta": {
           "shareSafe": false
         },
@@ -900,7 +946,17 @@
             "visible_output_tokens": 0
           }
         ],
-        "ingestionRuns": [],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 3,
+            "skipped": 0,
+            "written": 3
+          }
+        ],
         "meta": {
           "exportWindow": {
             "since": "2026-08-04T06:00:00.000000+00:00",
@@ -1381,7 +1437,53 @@
             "visible_output_tokens": 0
           }
         ],
-        "ingestionRuns": [],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "claude",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 3,
+            "skipped": 0,
+            "written": 3
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "copilot",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "crush",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "cursor",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
         "meta": {
           "shareSafe": false
         },
@@ -1582,7 +1684,53 @@
             "visible_output_tokens": 0
           }
         ],
-        "ingestionRuns": [],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "claude",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 3,
+            "skipped": 0,
+            "written": 3
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "copilot",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "crush",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "cursor",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
         "meta": {
           "shareSafe": false
         },
@@ -1838,7 +1986,53 @@
             "visible_output_tokens": 0
           }
         ],
-        "ingestionRuns": [],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00+00:00",
+            "malformed": 0,
+            "provider": "claude",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 3,
+            "skipped": 0,
+            "written": 3
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00+00:00",
+            "malformed": 0,
+            "provider": "copilot",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00+00:00",
+            "malformed": 0,
+            "provider": "crush",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00+00:00",
+            "malformed": 0,
+            "provider": "cursor",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
         "meta": {
           "shareSafe": true
         },
@@ -2167,6 +2361,1237 @@
         "turns": 8
       },
       "name": "share-safe"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": "codex"
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-05T00:00:00+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "machine-1",
+            "modelCalls": 0,
+            "models": [
+              "model-1",
+              "model-2"
+            ],
+            "output_tokens": 0,
+            "project": "project-1",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-03T00:00:00+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [],
+        "meta": {
+          "exportWindow": {
+            "since": "2026-08-04T00:00:00.000000+00:00",
+            "until": "2026-08-06T00:00:00.000000+00:00"
+          },
+          "shareSafe": true
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 500,
+            "cached_input_tokens": 4000,
+            "conversationKey": 0,
+            "input_tokens": 5500,
+            "model": "model-1",
+            "output_tokens": 500,
+            "reasoning_output_tokens": 200,
+            "timestamp": "2026-08-03T00:00:00+00:00",
+            "total_tokens": 6000,
+            "turnKey": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 1000,
+            "visible_output_tokens": 300
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 900,
+            "model": "model-1",
+            "output_tokens": 100,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-04T00:00:00+00:00",
+            "total_tokens": 1000,
+            "turnKey": 1,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 900,
+            "visible_output_tokens": 100
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 1000,
+            "conversationKey": 0,
+            "input_tokens": 3000,
+            "model": "model-2",
+            "output_tokens": 500,
+            "reasoning_output_tokens": 100,
+            "timestamp": "2026-08-04T00:00:00+00:00",
+            "total_tokens": 3505,
+            "turnKey": null,
+            "unattributed_tokens": 5,
+            "uncached_input_tokens": 2000,
+            "visible_output_tokens": 400
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 30000,
+            "conversationKey": 0,
+            "input_tokens": 40000,
+            "model": "model-2",
+            "output_tokens": 1000,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-05T00:00:00+00:00",
+            "total_tokens": 41000,
+            "turnKey": 2,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 10000,
+            "visible_output_tokens": 1000
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 77777,
+            "model": "model-2",
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "timestamp": null,
+            "total_tokens": 77777,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 77777,
+            "visible_output_tokens": 0
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-03T00:00:00+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-03T00:00:00+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 1,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-04T00:00:00+00:00",
+            "status": "in-progress",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-05T00:00:00+00:00",
+            "input_tokens": 0,
+            "key": 2,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-05T00:00:00+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 72.093023,
+        "cacheReadTokens": 31000,
+        "cacheWriteTokens": 0,
+        "calls": 3,
+        "conversations": 1,
+        "inputTokens": 43000,
+        "outputTokens": 1500,
+        "reasoningTokens": 100,
+        "totalTokens": 44505,
+        "turns": 2
+      },
+      "name": "share-safe-intraday-window-provider"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T10:00:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "gpt-x"
+            ],
+            "output_tokens": 0,
+            "project": "alpha",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T09:00:00.000000+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 1,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "copilot-m"
+            ],
+            "output_tokens": 0,
+            "project": "beta",
+            "provider": "copilot",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "conversation-aggregate",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 2,
+            "machine": "desktop",
+            "modelCalls": 0,
+            "models": [
+              "crush-m"
+            ],
+            "output_tokens": 0,
+            "project": "gamma",
+            "provider": "crush",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "context-snapshot",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "copilot",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "crush",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
+        "meta": {
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 20,
+            "conversationKey": 1,
+            "input_tokens": 80,
+            "model": "copilot-m",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": null,
+            "total_tokens": 100,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 60,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 2,
+            "input_tokens": 300,
+            "model": "crush-m",
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-11T08:00:00.000000+00:00",
+            "total_tokens": 300,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 300,
+            "visible_output_tokens": 0
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T09:00:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T09:00:00.000000+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": null,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 0,
+        "conversations": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reasoningTokens": 0,
+        "totalTokens": 0,
+        "turns": 1
+      },
+      "name": "dateless-untimed"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": "copilot"
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "copilot-m"
+            ],
+            "output_tokens": 0,
+            "project": "beta",
+            "provider": "copilot",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "conversation-aggregate",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00.000000+00:00",
+            "malformed": 0,
+            "provider": "copilot",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
+        "meta": {
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 20,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "copilot-m",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": null,
+            "total_tokens": 100,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 60,
+            "visible_output_tokens": 20
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": null,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 0,
+        "conversations": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reasoningTokens": 0,
+        "totalTokens": 0,
+        "turns": 0
+      },
+      "name": "dateless-untimed-provider"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T00:00:00+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "machine-2",
+            "modelCalls": 0,
+            "models": [
+              "model-3"
+            ],
+            "output_tokens": 0,
+            "project": "project-1",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T00:00:00+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 1,
+            "machine": "machine-2",
+            "modelCalls": 0,
+            "models": [
+              "model-1"
+            ],
+            "output_tokens": 0,
+            "project": "project-2",
+            "provider": "copilot",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "conversation-aggregate",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 2,
+            "machine": "machine-1",
+            "modelCalls": 0,
+            "models": [
+              "model-2"
+            ],
+            "output_tokens": 0,
+            "project": "project-3",
+            "provider": "crush",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "context-snapshot",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00+00:00",
+            "malformed": 0,
+            "provider": "codex",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00+00:00",
+            "malformed": 0,
+            "provider": "copilot",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          },
+          {
+            "duplicates": 0,
+            "ingestedAt": "2026-09-01T00:00:00+00:00",
+            "malformed": 0,
+            "provider": "crush",
+            "received": 1,
+            "skipped": 0,
+            "written": 1
+          }
+        ],
+        "meta": {
+          "shareSafe": true
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 20,
+            "conversationKey": 1,
+            "input_tokens": 80,
+            "model": "model-1",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": null,
+            "total_tokens": 100,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 60,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 2,
+            "input_tokens": 300,
+            "model": "model-2",
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-11T00:00:00+00:00",
+            "total_tokens": 300,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 300,
+            "visible_output_tokens": 0
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T00:00:00+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T00:00:00+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": null,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 0,
+        "conversations": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reasoningTokens": 0,
+        "totalTokens": 0,
+        "turns": 1
+      },
+      "name": "dateless-untimed-share-safe"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "gpt-x"
+            ],
+            "output_tokens": 0,
+            "project": "alpha",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 1,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "copilot-m"
+            ],
+            "output_tokens": 0,
+            "project": "beta",
+            "provider": "copilot",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "conversation-aggregate",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 2,
+            "machine": "desktop",
+            "modelCalls": 0,
+            "models": [
+              "crush-m"
+            ],
+            "output_tokens": 0,
+            "project": "gamma",
+            "provider": "crush",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "context-snapshot",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [],
+        "meta": {
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 50,
+            "model": "gpt-x",
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "timestamp": null,
+            "total_tokens": 50,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 50,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 20,
+            "conversationKey": 1,
+            "input_tokens": 80,
+            "model": "copilot-m",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": null,
+            "total_tokens": 100,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 60,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 2,
+            "input_tokens": 300,
+            "model": "crush-m",
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "timestamp": null,
+            "total_tokens": 300,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 300,
+            "visible_output_tokens": 0
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 5.263158,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 0,
+        "calls": 2,
+        "conversations": 3,
+        "inputTokens": 380,
+        "outputTokens": 20,
+        "reasoningTokens": 0,
+        "totalTokens": 400,
+        "turns": 1
+      },
+      "name": "all-dateless"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "copilot-m",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": null,
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "copilot-m"
+            ],
+            "output_tokens": 0,
+            "project": "beta",
+            "provider": "copilot",
+            "reasoning_output_tokens": 0,
+            "startedAt": null,
+            "tokenSemantics": "conversation-aggregate",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [],
+        "meta": {
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 20,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "copilot-m",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": null,
+            "total_tokens": 100,
+            "turnKey": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 60,
+            "visible_output_tokens": 20
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 25.0,
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 0,
+        "calls": 1,
+        "conversations": 1,
+        "inputTokens": 80,
+        "outputTokens": 20,
+        "reasoningTokens": 0,
+        "totalTokens": 100,
+        "turns": 0
+      },
+      "name": "all-dateless-model-filter"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T14:30:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "laptop",
+            "modelCalls": 0,
+            "models": [
+              "gpt-x"
+            ],
+            "output_tokens": 0,
+            "project": "alpha",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.000000+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [],
+        "meta": {
+          "exportWindow": {
+            "since": "2026-08-10T13:00:00.000000+00:00",
+            "until": "2026-08-10T22:00:00.000000+00:00"
+          },
+          "shareSafe": false
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "gpt-x",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T12:05:00.000000+00:00",
+            "total_tokens": 100,
+            "turnKey": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 80,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 150,
+            "model": "gpt-x",
+            "output_tokens": 50,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T14:05:00.000000+00:00",
+            "total_tokens": 200,
+            "turnKey": 1,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 150,
+            "visible_output_tokens": 50
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T12:00:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T12:00:00.000000+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T14:00:00.000000+00:00",
+            "input_tokens": 0,
+            "key": 1,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T14:00:00.000000+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 0.0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 1,
+        "conversations": 1,
+        "inputTokens": 150,
+        "outputTokens": 50,
+        "reasoningTokens": 0,
+        "totalTokens": 200,
+        "turns": 1
+      },
+      "name": "intraday-detailed"
+    },
+    {
+      "dashboardFilter": {
+        "machine": "",
+        "model": "",
+        "project": "",
+        "provider": ""
+      },
+      "dataset": {
+        "compactions": [],
+        "contextSamples": [],
+        "contractVersion": 1,
+        "conversations": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "compactions": 0,
+            "durationSeconds": null,
+            "endedAt": "2026-08-10T00:00:00+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "machine": "machine-1",
+            "modelCalls": 0,
+            "models": [
+              "model-1"
+            ],
+            "output_tokens": 0,
+            "project": "project-1",
+            "provider": "codex",
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T00:00:00+00:00",
+            "tokenSemantics": "additive",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "turns": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "ingestionRuns": [],
+        "meta": {
+          "exportWindow": {
+            "since": "2026-08-10T00:00:00.000000+00:00",
+            "until": "2026-08-11T00:00:00.000000+00:00"
+          },
+          "shareSafe": true
+        },
+        "modelCalls": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 80,
+            "model": "model-1",
+            "output_tokens": 20,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T00:00:00+00:00",
+            "total_tokens": 100,
+            "turnKey": 0,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 80,
+            "visible_output_tokens": 20
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "input_tokens": 150,
+            "model": "model-1",
+            "output_tokens": 50,
+            "reasoning_output_tokens": 0,
+            "timestamp": "2026-08-10T00:00:00+00:00",
+            "total_tokens": 200,
+            "turnKey": 1,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 150,
+            "visible_output_tokens": 50
+          }
+        ],
+        "subagents": [],
+        "toolCalls": [],
+        "turnSettings": [],
+        "turns": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T00:00:00+00:00",
+            "input_tokens": 0,
+            "key": 0,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T00:00:00+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          },
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 0,
+            "conversationKey": 0,
+            "durationMs": 1000,
+            "endedAt": "2026-08-10T00:00:00+00:00",
+            "input_tokens": 0,
+            "key": 1,
+            "modelCalls": 0,
+            "output_tokens": 0,
+            "reasoning_output_tokens": 0,
+            "startedAt": "2026-08-10T00:00:00+00:00",
+            "status": "completed",
+            "toolCalls": 0,
+            "total_tokens": 0,
+            "ttftMs": null,
+            "unattributed_tokens": 0,
+            "uncached_input_tokens": 0,
+            "visible_output_tokens": 0
+          }
+        ],
+        "workItems": []
+      },
+      "expected": {
+        "cacheRatePercent": 0.0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "calls": 2,
+        "conversations": 1,
+        "inputTokens": 230,
+        "outputTokens": 70,
+        "reasoningTokens": 0,
+        "totalTokens": 300,
+        "turns": 2
+      },
+      "name": "intraday-share-safe"
     }
   ],
   "description": "Generated by tests/report_fixtures.py from synthetic records. The analytics tests check that dashboard calculations over each dataset equal the terminal report totals."

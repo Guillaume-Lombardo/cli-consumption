@@ -14,6 +14,7 @@ from sqlalchemy.engine import Engine
 from cli_consumption.storage import Conversation, create_database_engine
 from cli_consumption.terminal_report import (
     color_enabled,
+    display_width,
     render_report,
     safe_label,
 )
@@ -217,3 +218,95 @@ def test_empty_report_is_explicit(tmp_path: Path) -> None:
 def test_safe_label_replaces_control_and_format_characters() -> None:
     assert safe_label("a\x1b[2Jb‮c\nd") == "a?[2Jb?c?d"
     assert safe_label("projet-été") == "projet-été"
+
+
+def _cells(line: str) -> int:
+    return sum(display_width(character) for character in line)
+
+
+def test_display_width_counts_terminal_cells() -> None:
+    assert display_width("abc") == 3
+    assert display_width("项目") == 4
+    assert display_width("e\u0301te\u0301") == 3
+    assert display_width("\uff46\uff55\uff4c\uff4c") == 8
+
+
+@pytest.fixture
+def wide_label_engine(tmp_path: Path) -> Iterator[Engine]:
+    engine = create_database_engine(tmp_path / "wide.sqlite")
+    seed_report_database(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            update(Conversation)
+            .where(Conversation.provider == "codex")
+            .values(project="项目" * 10, source_machine="maché́ine-" * 4)
+        )
+    yield engine
+    engine.dispose()
+
+
+@pytest.mark.parametrize("width", [20, 25, 30, 40, 60, 80, 120])
+@pytest.mark.parametrize("view", list(ReportView))
+@pytest.mark.parametrize("breakdown", [None, Breakdown.PROJECT, Breakdown.MACHINE])
+def test_wide_and_combining_labels_fit_display_cells(
+    wide_label_engine: Engine,
+    width: int,
+    view: ReportView,
+    breakdown: Breakdown | None,
+) -> None:
+    text = render_report(
+        _report(wide_label_engine, view=view, breakdown=breakdown), width=width
+    )
+
+    assert max(_cells(line) for line in text.splitlines()) <= width
+    assert "92" in text
+    assert "not billing data" in " ".join(text.split())
+
+
+@pytest.mark.parametrize("width", range(20, 41))
+def test_minimum_widths_fit_display_cells(engine: Engine, width: int) -> None:
+    text = render_report(
+        _report(engine, view=ReportView.SESSION, breakdown=Breakdown.MODEL),
+        width=width,
+    )
+
+    assert max(_cells(line) for line in text.splitlines()) <= width
+    assert "Total" in text
+
+
+def test_wide_labels_keep_columns_aligned(wide_label_engine: Engine) -> None:
+    text = render_report(_report(wide_label_engine, view=ReportView.SESSION), width=200)
+    lines = text.splitlines()
+    header = next(line for line in lines if line.startswith("Session"))
+    total_end = _cells(header[: header.index("Total") + len("Total")])
+    for line in lines:
+        if line.startswith("#"):
+            prefix = line[: len(line) - len(line.lstrip())]
+            assert prefix == ""
+            cells = 0
+            for position, character in enumerate(line):
+                cells += display_width(character)
+                if cells == total_end:
+                    assert line[position] in "0123456789,KMB.a"
+                    break
+            else:
+                pytest.fail("Total column is misaligned")
+
+
+def test_long_breakdown_labels_do_not_hide_numeric_columns(
+    wide_label_engine: Engine,
+) -> None:
+    text = render_report(
+        _report(wide_label_engine, breakdown=Breakdown.MACHINE), width=80
+    )
+    header = text.splitlines()[1]
+
+    assert "  - mach" in text
+    assert all(column in header for column in ("Input", "Total", "Cache %"))
+
+
+def test_stacked_layout_breaks_values_at_separators(engine: Engine) -> None:
+    text = render_report(_report(engine), width=20)
+
+    assert "  Notes: agg,snap," in text.splitlines()
+    assert "  partial" in text.splitlines()

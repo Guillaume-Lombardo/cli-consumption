@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1074,7 +1075,11 @@ _REPORT_ERROR_MESSAGES = {
         "No usage database found. Run `cli-consumption quick` or "
         "`cli-consumption collect` first, or pass --database."
     ),
-    "database_unavailable": "The usage database could not be read.",
+    "database_driver_missing": (
+        "PostgreSQL support requires optional dependencies; "
+        "install cli-consumption[postgres]."
+    ),
+    "database_unavailable": "The usage database is unavailable.",
     "invalid_timezone": "Unknown timezone; use an IANA name such as Europe/Paris.",
     "invalid_window": (
         "Invalid report window; use dates or timezone-aware timestamps with "
@@ -1171,11 +1176,8 @@ def report_command(
         _abort_report(error.code, json_output=json_output)
     if "://" not in database and not Path(database).expanduser().is_file():
         _abort_report("database_not_found", json_output=json_output)
-    engine = _open_database(database)
-    try:
-        report = _build_usage_report(engine, query, json_output=json_output)
-    finally:
-        engine.dispose()
+    with _usage_database(database, json_output=json_output) as engine:
+        report = aggregate_usage(engine, query)
     _emit_usage_report(report, json_output=json_output)
 
 
@@ -1210,8 +1212,7 @@ def quick_command(
         inputs, mappings = [], []
     ingestions: list[dict[str, object]] = []
     failures: list[CollectionFailure] = []
-    engine = _open_database(database)
-    try:
+    with _usage_database(database, json_output=json_output) as engine:
         for spec, sources in inputs:
             try:
                 snapshot = _collect_adapter(spec, sources, mappings)
@@ -1230,11 +1231,7 @@ def quick_command(
                     "malformed": snapshot.malformed_records,
                 }
             )
-        report = _build_usage_report(
-            engine, UsageQuery(timezone=timezone), json_output=json_output
-        )
-    finally:
-        engine.dispose()
+        report = aggregate_usage(engine, UsageQuery(timezone=timezone))
     if json_output:
         payload = {
             "collection": {
@@ -1263,19 +1260,33 @@ def quick_command(
         raise typer.Exit(code=2)
 
 
-def _build_usage_report(
-    engine: Engine, query: UsageQuery, *, json_output: bool
-) -> UsageReport:
+@contextmanager
+def _usage_database(database: str, *, json_output: bool) -> Iterator[Engine]:
+    """Open, use, and dispose a database behind a fixed-code error boundary.
+
+    Engine construction, migrations, ingestion, and aggregation failures can carry
+    URLs, paths, SQL statements, and bound parameters in their text, so they are
+    reduced to fixed codes and never printed.
+    """
     from sqlalchemy.exc import SQLAlchemyError
 
     from cli_consumption.schema import SchemaCompatibilityError
 
+    database_errors = (SQLAlchemyError, SchemaCompatibilityError, OSError, ValueError)
     try:
-        return aggregate_usage(engine, query)
+        engine = create_database_engine(database)
+    except MissingOptionalDependencyError:
+        _abort_report("database_driver_missing", json_output=json_output)
+    except database_errors:
+        _abort_report("database_unavailable", json_output=json_output)
+    try:
+        yield engine
     except DashboardLimitError:
         _abort_report("report_limit_exceeded", json_output=json_output)
-    except (SQLAlchemyError, SchemaCompatibilityError):
+    except database_errors:
         _abort_report("database_unavailable", json_output=json_output)
+    finally:
+        engine.dispose()
 
 
 def _emit_usage_report(report: UsageReport, *, json_output: bool) -> None:

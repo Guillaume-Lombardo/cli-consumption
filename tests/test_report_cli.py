@@ -347,3 +347,123 @@ def test_quick_reports_invalid_snapshots_with_a_fixed_code(
     }
     assert payload["report"]["rows"] == []
     _assert_private(result.output, tmp_path)
+
+
+BAD_DATABASE_URL = f"postgresql+psycopg://user:{CANARY}@db.invalid:{CANARY}/usage"
+
+
+@pytest.mark.parametrize("command", ["report", "quick"])
+def test_invalid_database_urls_use_a_fixed_code(
+    command: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli_module, "ADAPTER_SPECS", ())
+
+    text = runner.invoke(app, [command, "--database", BAD_DATABASE_URL])
+    payload = runner.invoke(app, [command, "--database", BAD_DATABASE_URL, "--json"])
+
+    assert text.exit_code == payload.exit_code == 2, text.output
+    assert json.loads(payload.stdout) == {"error": {"code": "database_unavailable"}}
+    assert text.stderr.strip() == "The usage database is unavailable."
+    assert text.exception is None or isinstance(text.exception, SystemExit)
+    _assert_private(text.output + payload.output)
+
+
+def test_quick_database_path_failures_use_a_fixed_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli_module, "ADAPTER_SPECS", ())
+    blocker = tmp_path / f"{CANARY}-file"
+    blocker.write_text(PATH_CANARY, encoding="utf-8")
+    database = blocker / "usage.sqlite"
+
+    result = runner.invoke(app, ["quick", "--database", str(database), "--json"])
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.stdout) == {"error": {"code": "database_unavailable"}}
+    _assert_private(result.output, database)
+
+
+def test_quick_ingestion_failures_never_print_sql_or_parameters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from report_fixtures import report_snapshots
+    from sqlalchemy import text as sql_text
+
+    database = tmp_path / "usage.sqlite"
+    engine = create_database_engine(database)
+    try:
+        engine.dispose()
+        from cli_consumption.storage import initialize_database
+
+        initialize_database(engine)
+        with engine.begin() as connection:
+            connection.execute(
+                sql_text(
+                    "CREATE TRIGGER reject_conversations BEFORE INSERT ON "
+                    "conversations BEGIN SELECT RAISE(ABORT, 'rejected'); END"
+                )
+            )
+    finally:
+        engine.dispose()
+    snapshot = next(item for item in report_snapshots() if item.provider == "codex")
+    spec = resolve_adapter_spec("codex")
+    monkeypatch.setattr(
+        cli_module,
+        "_collection_inputs",
+        lambda *_args: ([(spec, [("m", tmp_path)])], []),
+    )
+    monkeypatch.setattr(cli_module, "_collect_adapter", lambda *_args: snapshot)
+
+    text = runner.invoke(app, ["quick", "--database", str(database)])
+    payload = runner.invoke(app, ["quick", "--database", str(database), "--json"])
+
+    assert text.exit_code == payload.exit_code == 2, text.output
+    assert json.loads(payload.stdout) == {"error": {"code": "database_unavailable"}}
+    assert text.stderr.strip() == "The usage database is unavailable."
+    for output in (text.output, payload.output):
+        assert "INSERT" not in output
+        assert "rejected" not in output
+    _assert_private(text.output + payload.output, database, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--until", "9999-12-31"],
+        ["--since", "0001-01-01", "--timezone", "Asia/Tokyo"],
+        ["--since", "0001-01-01T00:30:00+01:00"],
+        ["--until", "9999-12-31T23:00:00Z", "--timezone", "Pacific/Kiritimati"],
+        ["--until", "9999-12-31T23:00:00Z", "--share-safe"],
+    ],
+)
+def test_calendar_boundaries_are_invalid_windows(
+    database: Path, arguments: list[str]
+) -> None:
+    payload = runner.invoke(
+        app, ["report", "--database", str(database), "--json", *arguments]
+    )
+    text = runner.invoke(app, ["report", "--database", str(database), *arguments])
+
+    assert payload.exit_code == text.exit_code == 2, text.output
+    assert json.loads(payload.stdout) == {"error": {"code": "invalid_window"}}
+    assert text.stderr.startswith("Invalid report window")
+    assert "Traceback" not in text.output + payload.output
+
+
+def test_missing_postgresql_driver_uses_a_fixed_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cli_consumption.storage import MissingOptionalDependencyError
+
+    def missing(_database: str) -> None:
+        raise MissingOptionalDependencyError(PATH_CANARY)
+
+    monkeypatch.setattr(cli_module, "create_database_engine", missing)
+
+    result = runner.invoke(
+        app, ["report", "--database", "postgresql://db.invalid/usage", "--json"]
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout) == {"error": {"code": "database_driver_missing"}}
+    _assert_private(result.output)

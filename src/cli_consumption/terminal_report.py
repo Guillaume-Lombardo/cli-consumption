@@ -28,7 +28,9 @@ from cli_consumption.usage_report import (
 
 NOT_AVAILABLE = "n/a"
 DEFAULT_WIDTH = 120
+MINIMUM_WIDTH = 20
 MINIMUM_LABEL_WIDTH = 10
+MAXIMUM_TEXT_COLUMN_WIDTH = 24
 COLUMN_GAP = "  "
 _BOLD = "\x1b[1m"
 _DIM = "\x1b[2m"
@@ -85,7 +87,67 @@ def color_enabled(stream: TextIO, environ: Mapping[str, str] | None = None) -> b
 
 def terminal_width(fallback: int = DEFAULT_WIDTH) -> int:
     """Return the usable terminal width, honoring ``COLUMNS``."""
-    return max(20, shutil.get_terminal_size((fallback, 24)).columns)
+    return max(MINIMUM_WIDTH, shutil.get_terminal_size((fallback, 24)).columns)
+
+
+def display_width(text: str) -> int:
+    """Return the number of terminal cells ``text`` occupies."""
+    width = 0
+    for character in text:
+        if unicodedata.combining(character) or unicodedata.category(character) in {
+            "Mn",
+            "Me",
+            "Cf",
+        }:
+            continue
+        width += 2 if unicodedata.east_asian_width(character) in {"W", "F"} else 1
+    return width
+
+
+def _truncate(text: str, width: int) -> str:
+    """Shorten ``text`` to ``width`` cells, marking the cut with ``~``."""
+    if display_width(text) <= width:
+        return text
+    kept: list[str] = []
+    used = 0
+    for character in text:
+        size = display_width(character)
+        if used + size > width - 1:
+            break
+        kept.append(character)
+        used += size
+    return "".join(kept) + "~"
+
+
+def _pad(text: str, width: int, *, left: bool) -> str:
+    padding = " " * max(0, width - display_width(text))
+    return text + padding if left else padding + text
+
+
+def _chunks(text: str, width: int) -> list[str]:
+    """Split ``text`` into pieces of at most ``width`` cells.
+
+    Pieces end after the last comma or space that fits, or at the width limit when
+    a value has no separator.
+    """
+    pieces: list[str] = []
+    current: list[str] = []
+    for character in text:
+        if (
+            current
+            and display_width("".join(current)) + display_width(character) > width
+        ):
+            cut = max(
+                (index + 1 for index, item in enumerate(current) if item in ", "),
+                default=len(current),
+            )
+            pieces.append("".join(current[:cut]).rstrip())
+            current = current[cut:]
+            while current and current[0] == " ":
+                current.pop(0)
+        current.append(character)
+    pieces.append("".join(current))
+    return pieces
 
 
 def safe_label(value: object) -> str:
@@ -101,6 +163,7 @@ def safe_label(value: object) -> str:
 def render_report(report: UsageReport, *, width: int, color: bool = False) -> str:
     """Render a report as an aligned table that fits ``width`` when possible."""
     title, period_header = _VIEW_TITLES[report.view]
+    width = max(MINIMUM_WIDTH, width)
     lines = [_style(line, _BOLD, color) for line in _wrap(_title(report, title), width)]
     if not report.rows:
         lines.append("No usage recorded for this selection.")
@@ -125,14 +188,22 @@ def render_report(report: UsageReport, *, width: int, color: bool = False) -> st
         columns = [column for column in columns if column is not dropped]
         table = _layout(entries, columns, compact)
     table = _fit_label(table, width)
+    if _table_width(table) > width:
+        lines.extend(_stacked(entries, _columns(report, period_header), width, color))
+        lines.extend(
+            _style(line, _DIM, color)
+            for note in _notes(report, [])
+            for line in _wrap(note, width)
+        )
+        return "\n".join(lines) + "\n"
 
-    widths = [max(len(row[index]) for row in table) for index in range(len(columns))]
+    widths = [
+        max(display_width(row[index]) for row in table) for index in range(len(columns))
+    ]
     separator = "-" * (sum(widths) + len(COLUMN_GAP) * (len(widths) - 1))
     for index, cells in enumerate(table):
         line = COLUMN_GAP.join(
-            cell.ljust(widths[position])
-            if columns[position].align_left
-            else cell.rjust(widths[position])
+            _pad(cell, widths[position], left=columns[position].align_left)
             for position, cell in enumerate(cells)
         ).rstrip()
         if index == 0:
@@ -177,7 +248,27 @@ def _title(report: UsageReport, title: str) -> str:
 
 
 def _wrap(text: str, width: int) -> list[str]:
-    return textwrap.wrap(text, width=max(20, width), break_on_hyphens=False) or [""]
+    return textwrap.wrap(text, width=width, break_on_hyphens=False) or [""]
+
+
+def _stacked(
+    entries: list[_Entry], columns: list[_Column], width: int, color: bool
+) -> list[str]:
+    """Render one labelled block per entry when no table layout fits."""
+    lines: list[str] = []
+    for label, row, metrics in entries:
+        indent = " " * (len(label) - len(label.lstrip()) + 2)
+        heading = _truncate(label, width)
+        lines.append(_style(heading, _BOLD, color) if label == "Total" else heading)
+        for column in columns[1:]:
+            value = column.value(row, metrics, True)
+            if not value:
+                continue
+            text = f"{column.header}: {value}"
+            pieces = _chunks(text, width - len(indent))
+            lines.append(indent + pieces[0])
+            lines.extend(indent + piece for piece in pieces[1:])
+    return lines
 
 
 def _entries(report: UsageReport) -> list[_Entry]:
@@ -185,7 +276,11 @@ def _entries(report: UsageReport) -> list[_Entry]:
     for row in report.rows:
         entries.append((_row_label(row), row, row.metrics))
         entries.extend(
-            (f"  - {safe_label(item.label)}", None, item.metrics)
+            (
+                f"  - {_truncate(safe_label(item.label), MAXIMUM_TEXT_COLUMN_WIDTH)}",
+                None,
+                item.metrics,
+            )
             for item in row.breakdown
         )
     entries.append(("Total", None, report.totals))
@@ -275,7 +370,9 @@ def _columns(report: UsageReport, period_header: str) -> list[_Column]:
                     lambda row, *_: (
                         ""
                         if row is None or row.session is None
-                        else safe_label(row.session.provider)
+                        else _truncate(
+                            safe_label(row.session.provider), MAXIMUM_TEXT_COLUMN_WIDTH
+                        )
                     ),
                     6,
                     align_left=True,
@@ -285,7 +382,9 @@ def _columns(report: UsageReport, period_header: str) -> list[_Column]:
                     lambda row, *_: (
                         ""
                         if row is None or row.session is None
-                        else safe_label(row.session.project)
+                        else _truncate(
+                            safe_label(row.session.project), MAXIMUM_TEXT_COLUMN_WIDTH
+                        )
                     ),
                     5,
                     align_left=True,
@@ -329,7 +428,10 @@ def _layout(
 
 
 def _table_width(table: list[list[str]]) -> int:
-    widths = [max(len(row[index]) for row in table) for index in range(len(table[0]))]
+    widths = [
+        max(display_width(row[index]) for row in table)
+        for index in range(len(table[0]))
+    ]
     return sum(widths) + len(COLUMN_GAP) * (len(widths) - 1)
 
 
@@ -337,14 +439,11 @@ def _fit_label(table: list[list[str]], width: int) -> list[list[str]]:
     excess = _table_width(table) - width
     if excess <= 0:
         return table
-    label_width = max(len(row[0]) for row in table)
+    label_width = max(display_width(row[0]) for row in table)
     target = max(MINIMUM_LABEL_WIDTH, label_width - excess)
     if target >= label_width:
         return table
-    return [
-        [cell if len(cell) <= target else cell[: target - 1] + "~", *rest]
-        for cell, *rest in table
-    ]
+    return [[_truncate(cell, target), *rest] for cell, *rest in table]
 
 
 def _number(value: int, compact: bool) -> str:

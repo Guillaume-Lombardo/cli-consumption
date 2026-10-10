@@ -191,7 +191,9 @@ moves them back; Codex's own rollout lookups also walk nested archive directorie
 Both trees are therefore walked identically and recursively: in sorted order, without
 following directory symlinks, refusing symlinked rollout files, and charging every
 listed `*.jsonl` entry to the same candidate, read, per-file, and per-line limits.
-Compressed `*.jsonl.zst` rollouts are not read.
+An `archived_sessions` symlink is skipped rather than followed outside the home,
+while a symlinked `sessions/` root keeps being followed as before. Compressed
+`*.jsonl.zst` rollouts are not read.
 
 A rollout keeps its conversation ID wherever it lives, so archiving or unarchiving a
 collected thread changes nothing stored. A conversation present in both trees, or on

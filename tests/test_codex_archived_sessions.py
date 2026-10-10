@@ -569,3 +569,49 @@ def test_adversarial_archive_layouts_stay_within_existing_limits(
         with pytest.raises(ProviderDataLimitError, match=code):
             list(CodexAdapter().collect_incrementally([("desktop", home)]))
     assert "outside" not in str(snapshot.to_dict())
+
+
+def test_a_symlinked_archive_root_is_never_followed(
+    tmp_path: Path, rollout_factory: RolloutFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _home(tmp_path, rollout_factory, ["active"])
+    outside = tmp_path / "unrelated"
+    _place(
+        outside / "private.jsonl",
+        _content(tmp_path, rollout_factory, "outside"),
+    )
+    (home / "archived_sessions").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(codex_module, "INCREMENTAL_CANDIDATES_PER_BATCH", 1)
+
+    snapshot = _collect(home)
+    batches = list(CodexAdapter().collect_incrementally([("desktop", home)]))
+    single = create_database_engine(tmp_path / "single.sqlite")
+    batched = create_database_engine(tmp_path / "batched.sqlite")
+    try:
+        ingest_snapshot(single, snapshot)
+        _ingest_batches(batched, batches)
+        stored = [_tables(single), _tables(batched)]
+    finally:
+        single.dispose()
+        batched.dispose()
+
+    assert _ids(snapshot) == ["codex:active"]
+    assert [_ids(batch.snapshot) for batch in batches] == [["codex:active"]]
+    for tables in stored:
+        assert [row["id"] for row in tables["conversations"]] == ["codex:active"]
+        assert "outside" not in str(tables)
+
+
+def test_a_symlinked_sessions_root_keeps_its_existing_semantics(
+    tmp_path: Path, rollout_factory: RolloutFactory
+) -> None:
+    # Unlike the optional archive, the required sessions root has always been
+    # followed when it is a symlink; this change deliberately leaves it alone.
+    real = _home(tmp_path, rollout_factory, ["active"], name="real")
+    home = tmp_path / "codex"
+    home.mkdir()
+    (home / "sessions").symlink_to(real / "sessions", target_is_directory=True)
+
+    assert _ids(_collect(home)) == ["codex:active"]
+    batches = list(CodexAdapter().collect_incrementally([("desktop", home)]))
+    assert [_ids(batch.snapshot) for batch in batches] == [["codex:active"]]

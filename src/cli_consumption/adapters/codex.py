@@ -6,6 +6,7 @@ import math
 import os
 import re
 import sqlite3
+import stat
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from itertools import chain
@@ -113,12 +114,23 @@ def _rollout_roots(codex_home: Path) -> tuple[Path, ...]:
     flat, while Codex's own rollout lookups walk ``archived_sessions/`` recursively,
     so both layouts are read with the same walk. ``sessions/`` stays required;
     ``archived_sessions/`` is optional because Codex creates it on first archive.
+
+    ``sessions/`` keeps its existing semantics, including a symlinked root. Codex
+    itself only ever creates ``archived_sessions/`` as a real directory, so a
+    symlink there is skipped rather than followed outside the selected home.
     """
     sessions = codex_home / SESSIONS_SUBDIR
     if not sessions.is_dir():
         raise ValueError("Missing Codex sessions directory")
     archived = codex_home / ARCHIVED_SESSIONS_SUBDIR
-    return (sessions, archived) if archived.is_dir() else (sessions,)
+    return (sessions, archived) if _is_real_directory(archived) else (sessions,)
+
+
+def _is_real_directory(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(path.lstat().st_mode)
+    except OSError:
+        return False
 
 
 def _incremental_session_files(codex_home: Path) -> Iterator[Path]:

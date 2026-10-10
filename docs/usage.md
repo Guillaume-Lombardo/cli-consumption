@@ -48,37 +48,55 @@ fields. A snapshot may contain at most 250,000 normalized records. Direct provid
 symlinks are refused. Add `--strict` to refuse ingestion when malformed records were
 skipped.
 
-Large Codex stores can opt into automatic bounded batching without copying sessions
-into temporary source directories:
+When a provider store exceeds the aggregate candidate, provider-read, or
+normalized-record limit, `collect` switches that provider automatically to bounded,
+restart-safe batches written to the same database. Other providers in the same
+command keep their normal single snapshot. Forbid the switch to restore the
+all-or-nothing `provider_limit_exceeded` failure, or force batches from the start:
 
 ```bash
+uv run cli-consumption collect --provider claude --no-incremental \
+  --source desktop=/data/claude/desktop --database usage.sqlite
 uv run cli-consumption collect --provider codex --incremental \
-  --source desktop=/data/codex/desktop \
-  --database usage.sqlite
+  --source desktop=/data/codex/desktop --database usage.sqlite
 ```
 
-Each batch is independently committed, so an interrupted non-strict run may leave a
-valid partial import. The failure output reports the number of committed batches, and
+Batching is available for Claude Code, Codex, Amp, Continue CLI, Gemini CLI, Pi, and
+Qwen Code; the [support ledger](provider-support.md#incremental-collection) lists the
+reason each other provider keeps one snapshot. The overflowing first attempt is
+discarded before any write, so the switch reads part of the store twice. Each batch
+is independently committed, so an interrupted non-strict run may leave a valid
+partial import. The failure output reports the number of committed batches, and
 rerunning the same command safely converges without duplicate conversations or child
-records. `--strict` instead validates every metadata-only batch in a private temporary
-staging directory before opening the destination database; any malformed provider
-record leaves the database untouched. Staging is removed on success or failure.
+records. `--strict` instead validates every metadata-only batch in a private
+temporary staging directory before opening the destination database; any malformed
+provider record leaves the database untouched. Staging is removed on success or
+failure.
 
-Automatic batching currently applies to Codex JSONL sessions. Other providers retain
-their existing one-snapshot collection when `--incremental` is present. Batching resets
-only aggregate candidate, read, and normalized-record budgets. An individually
-oversized JSONL file or line, an unsafe symlink or file type, an oversized single
-conversation still fail with the generic `provider_limit_exceeded` code. Incremental
-mode deliberately leaves the Codex SQLite subagent graph unchanged because safely
-refreshing that authoritative scope requires whole-collection freshness; normal
-collection remains responsible for it. A separate 10,000-batch command ceiling bounds
-total work, and strict metadata staging is capped at 4 GiB.
+Batching resets only aggregate candidate, read, and normalized-record budgets. An
+individually oversized JSONL file or line, an unsafe symlink or file type, an
+oversized single conversation, or a Claude Code session whose transcripts across all
+sources and project directories, including its subagent transcripts, exceed one
+batch budget still fail with the generic `provider_limit_exceeded` code. A separate 10,000-batch command ceiling bounds total
+work, one directory listing is capped at 1,000,000 entries, and strict metadata
+staging is capped at 4 GiB.
 
-Incremental JSON summaries call the adapter-level counter `batch_duplicates` because
-duplicate copies separated by a batch boundary are resolved deterministically by SQL
-replacement and therefore appear in the actual `written` or `skipped` totals. The
-database result is independent of the boundary even though physical ingestion-run
-counts necessarily are not.
+Claude Code subagent relationships converge across batches: each relationship
+follows the stored copy of its child conversation, and batches never delete a
+relationship. Normal collection remains responsible for removing relationships whose
+transcripts were deleted. Batched Codex collection deliberately leaves the Codex
+SQLite subagent graph unchanged because safely refreshing that authoritative scope
+requires whole-collection freshness.
+
+Batched JSON summaries contain `"incremental": true`, an `incremental_trigger` of
+`requested` (`--incremental`) or `automatic` (aggregate limit exceeded), and one entry
+per provider with a `batched` flag, the batch count, and aggregate counters. They omit
+ingestion-run identifiers and paths, so identical inputs produce identical output.
+The adapter-level counter is called `batch_duplicates` because duplicate copies
+separated by a batch boundary are resolved deterministically by SQL replacement and
+therefore appear in the actual `written` or `skipped` totals. The database result is
+independent of the boundary even though physical ingestion-run counts necessarily
+are not.
 
 ## Transfer signed offline snapshots
 

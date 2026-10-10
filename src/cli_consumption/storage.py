@@ -365,8 +365,19 @@ def ingest_snapshot(
     *,
     idempotency_key: str | None = None,
     authoritative_subagent_scopes: frozenset[tuple[str, str]] | None = None,
+    subagent_merge: bool = False,
 ) -> IngestionResult:
+    """Idempotently store one snapshot.
+
+    By default subagent relationships replace whole provider/source-machine graphs
+    under the freshness rules documented in the architecture. ``subagent_merge``
+    is for partial batches that never see a whole graph: no graph is replaced or
+    deleted, and each relationship instead follows the stored copy of its child
+    conversation from the same snapshot.
+    """
     snapshot = validate_snapshot(snapshot)
+    if subagent_merge and authoritative_subagent_scopes:
+        raise SnapshotValidationError()
     if authoritative_subagent_scopes is not None and any(
         provider != snapshot.provider
         or not isinstance(source_machine, str)
@@ -398,6 +409,15 @@ def ingest_snapshot(
         if authoritative_subagent_scopes is None
         else set(authoritative_subagent_scopes)
     )
+    if subagent_merge:
+        authoritative_subagent_scopes = frozenset()
+        subagent_scopes = {
+            (snapshot.provider, str(record["source_machine"]))
+            for record in snapshot.subagents
+        }
+    # (source machine, external ID) -> whether this snapshot's copy was written (True)
+    # or is identical to the stored copy (False). Only populated for merging.
+    child_copies: dict[tuple[str, str], bool] = {}
     stale_subagent_scopes: set[tuple[str, str]] = set()
     richer_subagent_scopes: set[tuple[str, str]] = set()
     try:
@@ -426,6 +446,16 @@ def ingest_snapshot(
                     richer_subagent_scopes.add(scope)
                 if existing_rank is not None and existing_rank >= incoming_rank:
                     skipped += 1
+                    # Only an identical copy may repair a missing relationship; a
+                    # strictly older copy must not restore one that a richer graph
+                    # replacement removed.
+                    if (
+                        subagent_merge
+                        and existing is not None
+                        and existing_rank == incoming_rank
+                        and existing.source_machine == scope[1]
+                    ):
+                        child_copies[(scope[1], str(record["external_id"]))] = False
                     continue
                 session.execute(
                     delete(ModelCall).where(
@@ -473,6 +503,8 @@ def ingest_snapshot(
                 for compaction in compactions_by_conversation.get(conversation_id, []):
                     session.add(CompactionEvent(**compaction))
                 written += 1
+                if subagent_merge:
+                    child_copies[(scope[1], str(record["external_id"]))] = True
             inferred_authoritative_scopes = initial_subagent_scopes | (
                 richer_subagent_scopes - stale_subagent_scopes
             )
@@ -492,6 +524,8 @@ def ingest_snapshot(
                 scope = (snapshot.provider, str(subagent["source_machine"]))
                 if scope in authoritative_scopes:
                     session.add(Subagent(**subagent))
+            if subagent_merge:
+                _merge_subagents(session, snapshot, child_copies)
             session.add(
                 IngestionRun(
                     id=run_id,
@@ -518,6 +552,32 @@ def ingest_snapshot(
             return previous
         raise
     return IngestionResult(run_id, len(snapshot.conversations), written, skipped)
+
+
+def _merge_subagents(
+    session: Session,
+    snapshot: Snapshot,
+    child_copies: dict[tuple[str, str], bool],
+) -> None:
+    """Make each relationship follow the stored copy of its child conversation."""
+    for subagent in snapshot.subagents:
+        written = child_copies.get(
+            (str(subagent["source_machine"]), str(subagent["child_thread_id"]))
+        )
+        if written is None:
+            # The stored child came from another copy, or is absent from this batch.
+            continue
+        same_child = (
+            Subagent.provider == snapshot.provider,
+            Subagent.child_thread_id == str(subagent["child_thread_id"]),
+        )
+        if written:
+            # A richer child copy replaces every relationship recorded for the
+            # previous copy, including one recorded from another source machine.
+            session.execute(delete(Subagent).where(*same_child))
+        elif session.scalar(select(Subagent.id).where(*same_child).limit(1)):
+            continue
+        session.add(Subagent(**subagent))
 
 
 def _canonical_idempotency_key(value: str) -> str:

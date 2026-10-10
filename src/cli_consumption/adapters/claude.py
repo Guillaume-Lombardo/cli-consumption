@@ -2,12 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
 from typing import Any
 
 from cli_consumption import models
+from cli_consumption.adapters._incremental import (
+    INCREMENTAL_CANDIDATES_PER_BATCH,
+    MAX_INCREMENTAL_LISTING,
+    bounded_sorted_paths,
+    charge_candidates,
+    iter_collection_batches,
+)
 from cli_consumption.adapters._shared import (
     MAX_BIGINT as MAX_BIGINT,
 )
@@ -26,6 +35,7 @@ from cli_consumption.adapters._shared import (
 from cli_consumption.adapters._shared import (
     counter as _counter,
 )
+from cli_consumption.adapters.base import CollectionBatch
 from cli_consumption.models import Snapshot, empty_tokens
 
 
@@ -40,9 +50,68 @@ class ClaudeAdapter:
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
         budget = ProviderInputBudget()
-        selected, duplicates, malformed = self._discover(
-            sources, project_mappings or [], budget
+        transcripts: list[_Transcript] = []
+        for machine, home in sources:
+            projects = home / "projects"
+            if not projects.is_dir():
+                raise ValueError(f"Missing Claude Code projects directory: {projects}")
+            paths = chain(
+                projects.glob("*/*.jsonl"),
+                projects.glob("*/*/subagents/**/agent-*.jsonl"),
+            )
+            transcripts.extend(
+                _classify(machine, projects, path)
+                for path in budget.sorted_paths(paths)
+            )
+        selected, duplicates, malformed = self._select(
+            transcripts, project_mappings or [], budget
         )
+        return self._snapshot(selected, duplicates, malformed)
+
+    def collect_incrementally(
+        self,
+        sources: list[tuple[str, Path]],
+        project_mappings: list[tuple[str, str]] | None = None,
+    ) -> Iterator[CollectionBatch]:
+        """Yield bounded batches whose results equal one collection.
+
+        A first pass reads each transcript only until it knows the identities that
+        duplicate selection and replay filtering use. Every transcript sharing one
+        of those identities, across all sources and project directories, lands in
+        the same indivisible batch group, so each group is normalized exactly as a
+        single collection would normalize it. Relationships use merge semantics
+        because one batch never sees the whole provider/source-machine graph.
+        """
+        mappings = project_mappings or []
+        for _, home in sources:
+            if not (home / "projects").is_dir():
+                raise ValueError("Missing Claude Code projects directory")
+        yielded = False
+        for batch in iter_collection_batches(
+            _transcript_groups(sources),
+            lambda items: self._collect_batch(items, mappings),
+            candidates_per_batch=INCREMENTAL_CANDIDATES_PER_BATCH,
+            subagent_merge=True,
+        ):
+            yielded = True
+            yield batch
+        if not yielded:
+            yield CollectionBatch(
+                Snapshot(provider=self.name), frozenset(), subagent_merge=True
+            )
+
+    def _collect_batch(
+        self, transcripts: list[_Transcript], mappings: list[tuple[str, str]]
+    ) -> Snapshot:
+        budget = ProviderInputBudget()
+        selected, duplicates, malformed = self._select(
+            list(charge_candidates(transcripts, budget)), mappings, budget
+        )
+        return self._snapshot(selected, duplicates, malformed)
+
+    def _snapshot(
+        self, selected: dict[str, _Selection], duplicates: int, malformed: int
+    ) -> Snapshot:
         snapshot = Snapshot(
             provider=self.name,
             duplicate_conversations=duplicates,
@@ -55,9 +124,9 @@ class ClaudeAdapter:
                 snapshot.subagents.append(edge)
         return snapshot
 
-    def _discover(
+    def _select(
         self,
-        sources: list[tuple[str, Path]],
+        transcripts: list[_Transcript],
         mappings: list[tuple[str, str]],
         budget: ProviderInputBudget,
     ) -> tuple[dict[str, _Selection], int, int]:
@@ -67,30 +136,14 @@ class ClaudeAdapter:
         retained_records = 0
         retained_message_ids = 0
         duplicates = malformed = 0
-        sessions: list[tuple[str, Path]] = []
-        agents: list[tuple[str, Path, str | None]] = []
-        for machine, home in sources:
-            projects = home / "projects"
-            if not projects.is_dir():
-                raise ValueError(f"Missing Claude Code projects directory: {projects}")
-            paths = chain(
-                projects.glob("*/*.jsonl"),
-                projects.glob("*/*/subagents/**/agent-*.jsonl"),
-            )
-            for path in budget.sorted_paths(paths):
-                parts = path.relative_to(projects).parts
-                if (
-                    len(parts) >= 4 and parts[2] == "subagents"
-                ) or path.name.startswith("agent-"):
-                    agents.append((machine, path, _nested_agent_session(parts)))
-                else:
-                    sessions.append((machine, path))
+        sessions = [item for item in transcripts if not item.agent]
+        agents = [item for item in transcripts if item.agent]
 
         # Sidechain transcripts can replay parent responses. Only the response
         # identifiers of possible parent sessions are kept, and
         # only until agent transcripts have been read.
-        parents = {parent for _, _, parent in agents if parent is not None}
-        has_legacy_agents = any(parent is None for _, _, parent in agents)
+        parents = {item.parent for item in agents if item.parent is not None}
+        has_legacy_agents = any(item.parent is None for item in agents)
         parent_messages: dict[str, set[str]] = {}
 
         def choose(key: str, rank: tuple[int, str]) -> bool:
@@ -109,8 +162,8 @@ class ClaudeAdapter:
             del selected[key]
             return True
 
-        for machine, path in sessions:
-            events, content_hash, session_id, invalid = _load_events(path, budget)
+        for item in sessions:
+            events, content_hash, session_id, invalid = _load_events(item.path, budget)
             malformed += invalid
             rank = (len(events), content_hash)
             if not choose(session_id, rank):
@@ -128,24 +181,24 @@ class ClaudeAdapter:
                 provider=self.name,
                 _record_limit=models.MAX_SNAPSHOT_RECORDS - retained_records,
             )
-            self._read(records, machine, events, rank, session_id, mappings)
+            self._read(records, item.machine, events, rank, session_id, mappings)
             del events
             retained_records += sum(
                 len(getattr(records, name)) for name in _RECORD_COLLECTIONS
             )
             selected[session_id] = (rank, records, None)
 
-        for machine, path, parent in agents:
-            events, content_hash, session_id, invalid = _load_events(path, budget)
+        for item in agents:
+            events, content_hash, session_id, invalid = _load_events(item.path, budget)
             malformed += invalid
-            if parent is None and not any(
+            if item.parent is None and not any(
                 _label(event.get("sessionId"), 512) for event in events
             ):
                 malformed += 1
                 del events
                 continue
-            session_id = parent or session_id
-            agent_id = _agent_id(events, path)
+            session_id = item.parent or session_id
+            agent_id = _agent_id(events, item.path)
             external_id = _label(f"{session_id}:agent:{agent_id}", 512)
             if agent_id is None or external_id is None:
                 malformed += 1
@@ -162,7 +215,7 @@ class ClaudeAdapter:
             )
             self._read(
                 records,
-                machine,
+                item.machine,
                 [event for event in events if not _replays(event, replayed)],
                 rank,
                 external_id,
@@ -172,11 +225,11 @@ class ClaudeAdapter:
             del events
             edge = _subagent_edge(
                 self.name,
-                machine,
+                item.machine,
                 session_id,
                 external_id,
                 records,
-                _agent_role(path, budget),
+                _agent_role(item.path, budget),
             )
             retained_records += 1 + sum(
                 len(getattr(records, name)) for name in _RECORD_COLLECTIONS
@@ -404,6 +457,145 @@ _RECORD_COLLECTIONS = (
 
 
 _Selection = tuple[tuple[int, str], Snapshot, dict[str, Any] | None]
+
+
+@dataclass(frozen=True, slots=True)
+class _Transcript:
+    machine: str
+    path: Path
+    agent: bool
+    parent: str | None
+
+
+def _classify(machine: str, projects: Path, path: Path) -> _Transcript:
+    parts = path.relative_to(projects).parts
+    agent = (len(parts) >= 4 and parts[2] == "subagents") or path.name.startswith(
+        "agent-"
+    )
+    return _Transcript(
+        machine=machine,
+        path=path,
+        agent=agent,
+        parent=_nested_agent_session(parts) if agent else None,
+    )
+
+
+def _transcript_groups(
+    sources: list[tuple[str, Path]],
+) -> Iterator[list[_Transcript]]:
+    """Group transcripts by every identity shared during one collection.
+
+    In a single collection a session copy interacts with other transcripts only
+    through its selection key (its session ID), and a subagent copy only through its
+    selection key and the session ID it is filtered against. Joining those keys
+    into connected components across all sources and project directories yields
+    groups with no interaction between them, so normalizing each group alone is
+    exactly the single-collection result. Members keep the single-collection order:
+    source order, then sorted paths.
+    """
+    members: list[tuple[int, Path, _Transcript, str | None]] = []
+    roots: dict[str, str] = {}
+
+    def find(key: str) -> str:
+        roots.setdefault(key, key)
+        while roots[key] != key:
+            roots[key] = roots[roots[key]]
+            key = roots[key]
+        return key
+
+    for index, (machine, home) in enumerate(sources):
+        projects = home / "projects"
+        paths = bounded_sorted_paths(
+            chain(
+                projects.glob("*/*.jsonl"),
+                projects.glob("*/*/subagents/**/agent-*.jsonl"),
+            )
+        )
+        if len(members) + len(paths) > MAX_INCREMENTAL_LISTING:
+            raise ProviderDataLimitError("provider_incremental_listing_limit_exceeded")
+        for path in paths:
+            item = _classify(machine, projects, path)
+            key, parent = _identity(item)
+            if key is not None and parent is not None:
+                roots[find(key)] = find(parent)
+            members.append((index, path, item, key))
+
+    groups: dict[str, list[tuple[int, Path, _Transcript]]] = {}
+    isolated: list[list[tuple[int, Path, _Transcript]]] = []
+    for index, path, item, key in members:
+        if key is None:
+            isolated.append([(index, path, item)])
+        else:
+            groups.setdefault(find(key), []).append((index, path, item))
+    ordered = sorted(
+        [*groups.values(), *isolated], key=lambda group: (group[0][0], group[0][1])
+    )
+    for group in ordered:
+        yield [item for _, _, item in group]
+
+
+def _identity(item: _Transcript) -> tuple[str | None, str | None]:
+    """Return the selection key and, for a subagent, its parent session ID.
+
+    Reads only until the labels used by ``_load_events`` and ``_agent_id`` are
+    found; the whole file is read only when one is absent. ``None`` marks a
+    transcript that a single collection skips as malformed.
+    """
+    session_label, agent_label, digest = _scan_identity(
+        item.path,
+        session=not item.agent or item.parent is None,
+        agent=item.agent,
+    )
+    if not item.agent:
+        key = (
+            session_label
+            or _label(item.path.stem, 512)
+            or f"session-{(digest or '')[:24]}"
+        )
+        return key, None
+    parent = item.parent or session_label
+    stem = item.path.stem
+    agent_id = agent_label or (
+        _label(stem.removeprefix("agent-"), 255) if stem.startswith("agent-") else None
+    )
+    if parent is None or agent_id is None:
+        return None, None
+    external_id = _label(f"{parent}:agent:{agent_id}", 512)
+    return (external_id, parent) if external_id is not None else (None, None)
+
+
+def _scan_identity(
+    path: Path, *, session: bool, agent: bool
+) -> tuple[str | None, str | None, str | None]:
+    budget = ProviderInputBudget()
+    digest = hashlib.sha256()
+    session_label = agent_label = None
+    lines = iter_bounded_jsonl_bytes(path, budget)
+    try:
+        for line in lines:
+            digest.update(line)
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(event, dict):
+                continue
+            if session and session_label is None:
+                session_label = _label(event.get("sessionId"), 512)
+            if agent and agent_label is None:
+                agent_label = _label(event.get("agentId"), 255)
+            if (not session or session_label is not None) and (
+                not agent or agent_label is not None
+            ):
+                return session_label, agent_label, None
+    finally:
+        # Stopping early must still release the no-follow descriptor.
+        close = getattr(lines, "close", None)
+        if close is not None:
+            close()
+    return session_label, agent_label, digest.hexdigest()
+
+
 MAX_AGENT_METADATA_BYTES = 64 * 1024
 _AGENT_ROLE_ALIASES = {
     "explore": "research",

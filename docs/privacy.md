@@ -141,20 +141,31 @@ failures expose only generic codes, never paths or record content. The sync clie
 requires HTTPS beyond loopback unless the operator uses the explicit
 `--allow-insecure` override.
 
-Opt-in Codex incremental collection resets aggregate candidate, actual-read, and
-normalized-snapshot counters only at deterministic batch boundaries. It never resets
-the per-file, per-line, file-identity, file-type, symlink, SQLite-field, or
-single-conversation protections, and a separate 10,000-batch ceiling bounds one
-command. Non-strict batches commit independently and fixed failure output reports only
+Incremental collection, forced with `--incremental` or switched on automatically when
+an incremental-capable provider exceeds an aggregate limit, resets aggregate
+candidate, actual-read, and normalized-snapshot counters only at deterministic batch
+boundaries. It never resets the per-file, per-line, file-identity, file-type, symlink,
+SQLite-field, or single-conversation protections, and a separate 10,000-batch ceiling
+bounds one command. The overflowing first attempt is discarded in memory before any
+write. Non-strict batches commit independently and fixed failure output reports only
 aggregate completed-batch counts. Strict mode first serializes up to 4 GiB of validated
 normalized metadata—not provider events, prompts, responses, or paths—into a private
 temporary directory with private files, ingests only after every batch passes, and
-removes the staging directory on every exit.
+removes the staging directory on every exit. Machine-readable output adds only a fixed
+`incremental_trigger` label and a per-provider `batched` boolean.
+
+Before Claude Code batches are formed, an identity pass reads each transcript only
+until it finds the provider session and agent identifiers used for duplicate
+selection, under the per-file and per-line limits. It keeps in memory only paths and
+those identifiers, which serve only to group transcripts and are never persisted,
+logged, or emitted.
 
 Incremental Codex collection does not read or replace SQLite subagent relationships.
 Conversation batches explicitly suppress authoritative subagent-scope replacement, so
 a partial run, a stale copied source, or an interleaved writer cannot erase a previously
-validated graph.
+validated graph. Incremental Claude Code collection stores the same metadata-only
+relationship fields as normal collection, but merges them per child conversation and
+never deletes one.
 
 A normalized database selected for snapshot extraction is also untrusted. Extraction
 requires the exact current revision and physical layout without running migrations,

@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cli_consumption.adapters._incremental import (
+    INCREMENTAL_CANDIDATES_PER_BATCH,
+    bounded_sorted_paths,
+    charge_candidates,
+    iter_source_batches,
+)
 from cli_consumption.adapters._shared import (
     ProviderInputBudget,
     iter_bounded_jsonl_bytes,
@@ -23,6 +30,7 @@ from cli_consumption.adapters._shared import (
 from cli_consumption.adapters._shared import (
     counter as _counter,
 )
+from cli_consumption.adapters.base import CollectionBatch
 from cli_consumption.models import Snapshot, empty_tokens
 
 RECORD_TYPES = {"user", "assistant", "tool_result", "system"}
@@ -38,6 +46,13 @@ class _Candidate:
     digest: str
 
 
+def _chat_paths(home: Path, sort: Callable[[Iterable[Path]], list[Path]]) -> list[Path]:
+    projects = home / "projects"
+    if not projects.is_dir():
+        raise ValueError(f"Missing Qwen Code projects directory: {projects}")
+    return sort(projects.glob("*/chats/*.jsonl"))
+
+
 class QwenAdapter:
     """Read Qwen Code transcript metadata while discarding conversation content."""
 
@@ -49,33 +64,70 @@ class QwenAdapter:
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Snapshot:
         budget = ProviderInputBudget()
+        return self._collect_candidates(
+            (
+                (machine, path)
+                for machine, home in sources
+                for path in _chat_paths(home, budget.sorted_paths)
+            ),
+            project_mappings or [],
+            budget,
+        )
+
+    def collect_incrementally(
+        self,
+        sources: list[tuple[str, Path]],
+        project_mappings: list[tuple[str, str]] | None = None,
+    ) -> Iterator[CollectionBatch]:
+        """Yield bounded batches of independently selected chat files."""
+        mappings = project_mappings or []
+        return iter_source_batches(
+            self.name,
+            sources,
+            lambda home: _chat_paths(home, bounded_sorted_paths),
+            lambda candidates: self._collect_batch(candidates, mappings),
+            candidates_per_batch=INCREMENTAL_CANDIDATES_PER_BATCH,
+        )
+
+    def _collect_batch(
+        self,
+        candidates: list[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
+    ) -> Snapshot:
+        budget = ProviderInputBudget()
+        return self._collect_candidates(
+            charge_candidates(candidates, budget), mappings, budget
+        )
+
+    def _collect_candidates(
+        self,
+        candidates: Iterable[tuple[str, Path]],
+        mappings: list[tuple[str, str]],
+        budget: ProviderInputBudget,
+    ) -> Snapshot:
         selected: dict[str, _Candidate] = {}
         duplicates = malformed = 0
-        for machine, home in sources:
-            projects = home / "projects"
-            if not projects.is_dir():
-                raise ValueError(f"Missing Qwen Code projects directory: {projects}")
-            for path in budget.sorted_paths(projects.glob("*/chats/*.jsonl")):
-                records, invalid, digest = _read_records(path, budget)
-                malformed += invalid
-                session_id = _session_id(records)
-                if session_id is None:
-                    malformed += 1
-                    continue
-                candidate = _Candidate(
-                    machine=machine,
-                    path=path,
-                    external_id=session_id,
-                    event_count=len(records),
-                    digest=digest,
-                )
-                previous = selected.get(session_id)
-                if previous is None:
-                    selected[session_id] = candidate
-                    continue
-                duplicates += 1
-                if _rank(candidate) > _rank(previous):
-                    selected[session_id] = candidate
+        for machine, path in candidates:
+            records, invalid, digest = _read_records(path, budget)
+            malformed += invalid
+            session_id = _session_id(records)
+            if session_id is None:
+                malformed += 1
+                continue
+            candidate = _Candidate(
+                machine=machine,
+                path=path,
+                external_id=session_id,
+                event_count=len(records),
+                digest=digest,
+            )
+            previous = selected.get(session_id)
+            if previous is None:
+                selected[session_id] = candidate
+                continue
+            duplicates += 1
+            if _rank(candidate) > _rank(previous):
+                selected[session_id] = candidate
 
         snapshot = Snapshot(
             provider=self.name,
@@ -86,7 +138,7 @@ class QwenAdapter:
             records, _, _ = _read_records(candidate.path, budget)
             active, invalid = _active_branch(records, candidate.external_id)
             snapshot.malformed_records += invalid
-            self._normalize(snapshot, candidate, active, project_mappings or [])
+            self._normalize(snapshot, candidate, active, mappings)
         return snapshot
 
     def _normalize(

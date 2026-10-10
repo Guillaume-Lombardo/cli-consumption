@@ -105,17 +105,52 @@ All adapters share the provider-input limits documented in the privacy boundary:
 SQLite stores, 512 MiB cumulatively across databases plus active sidecars, 250,000
 selected rows, 8 MiB per structured field, and 256 MiB across structured fields.
 Exceeding a limit aborts collection with a generic code rather than silently producing
-a partial snapshot.
+a partial snapshot, except that an aggregate overrun switches an incremental-capable
+provider to the bounded batches described below.
 
-`collect --incremental` gives the Codex adapter an opt-in streaming path for stores
-that exceed aggregate candidate, provider-read, or normalized-record limits. It walks
-session files deterministically, keeps every conversation graph within one snapshot,
-and subdivides a batch only when an aggregate read or snapshot limit is reached.
+## Incremental collection
+
+`collect` switches an incremental-capable provider to bounded batches when it exceeds
+the aggregate candidate, provider-read, or normalized-record limit, unless
+`--no-incremental` is passed; `--incremental` forces batches. Each batch is collected
+with fresh aggregate budgets, keeps every conversation within one snapshot, and is
+subdivided only at an indivisible group boundary when an aggregate limit is reached.
 Per-file, per-line, file-identity, symlink, SQLite, and single-conversation limits are
-unchanged. Providers without this optional adapter capability use their normal bounded
-single snapshot. Incremental Codex batches do not read or replace the authoritative
-SQLite subagent graph, so an existing graph is preserved until a normal collection can
-refresh it atomically.
+unchanged. Batches are formed per source, so duplicate copies in different batches
+converge through the storage rank of event count then content hash. An adapter opts
+in only when its own duplicate ranking is exactly that storage rank; otherwise the
+stored winner could depend on where a batch boundary falls.
+
+| Provider name | Batched collection | Batch unit or reason |
+| --- | --- | --- |
+| `claude` | yes | Every transcript sharing a session or subagent identity across all sources and project directories, found by a bounded identity pass. |
+| `codex` | yes | One rollout file; the SQLite subagent graph is neither read nor replaced. |
+| `amp` | yes | One thread file. |
+| `continue` | yes | One session file. |
+| `gemini` | yes | One session file. |
+| `pi` | yes | One session file. |
+| `qwen` | yes | One chat file. |
+| `copilot` | no | Duplicate ranking breaks event-count and hash ties by file path, which storage cannot compare. |
+| `grok` | no | Duplicate ranking uses the summary `updated_at` before the hash. |
+| `kimi` | no | Duplicate ranking uses file modification time before the hash. |
+| `mistral-vibe` | no | Duplicate ranking uses the session end time before the hash. |
+| `openhands` | no | Duplicate ranking uses the token-usage count before the hash. |
+| `aider`, `amazon-q`, `cline`, `crush`, `cursor`, `goose`, `kilo`, `opencode`, `plandex` | no | Outside the per-session-file scope of this mechanism; they keep one bounded snapshot. |
+
+Claude Code first reads each transcript only until it finds the session and agent
+identifiers used for duplicate selection, and the whole file only when one is absent.
+It then groups every transcript sharing such an identity across all sources and
+project directories, regardless of file names. Each group therefore contains every
+copy of a parent session and every nested or legacy subagent transcript that
+references it. Sidechain replays are excluded against the same winning parent copy as
+in a single collection. Each batch records
+subagent relationships with merge semantics: a relationship is written when its child
+conversation is written, replaces any relationship recorded for an older copy of that
+child, and is never deleted by a batch. A relationship is restored for an unchanged
+child only from an identical copy of the stored child, never from an older one. A
+single Claude Code session group, including all of its copies and subagent
+transcripts, above the 512 MiB batch read budget still fails with
+`provider_limit_exceeded`.
 
 ## Mistral Vibe CLI
 
@@ -243,7 +278,9 @@ discarded. Sidechain responses that replay a parent response identifier, such as
 `/btw` side questions, are not counted again. The relationship graph is authoritative
 per machine, so relationships whose transcripts Claude Code has already deleted under
 `cleanupPeriodDays` are removed when a richer collection replaces the graph; their
-conversations and tokens remain stored.
+conversations and tokens remain stored. Large stores are collected in batches that
+keep every transcript sharing a session identity together; batches merge
+relationships and never remove one (see [Incremental collection](#incremental-collection)).
 
 Claude Code emits uncached, cache-read, and cache-creation input separately. Normalized
 `input_tokens` is their sum, with each component retained in its corresponding field.

@@ -76,9 +76,10 @@ To collect one provider or select another database:
 uv run cli-consumption collect --provider codex --database usage.sqlite
 ```
 
-For a Codex store that exceeds aggregate collection limits, add `--incremental`.
-The command automatically writes bounded, restart-safe batches to the same database;
-individual file and line safety limits remain enforced.
+When a Claude Code, Codex, Amp, Continue, Gemini, Pi, or Qwen store exceeds aggregate
+collection limits, the command automatically writes bounded, restart-safe batches to
+the same database; individual file and line safety limits remain enforced. Pass
+`--no-incremental` to fail instead, or `--incremental` to force batches.
 
 Use `--source [LABEL=]PATH` for trusted offline copies and repeated
 `--project NAME=PATH_PREFIX` mappings for stable project labels. See the
@@ -108,8 +109,8 @@ uv run cli-consumption providers --json
 
 - Provider files are untrusted. Collection enforces discovery, file, line, SQLite row,
   structured-field, and total normalized-record limits; direct provider-file symlinks
-  are refused. Opt-in Codex incremental collection resets only aggregate per-batch
-  limits and keeps a separate hard batch-count ceiling.
+  are refused. Incremental collection resets only aggregate per-batch limits and
+  keeps a separate hard batch-count ceiling.
 - `collect --strict` and `sync --strict` refuse a batch when any provider skipped
   malformed records. Collection distinguishes `provider_limit_exceeded`,
   `provider_format_incompatible`, `invalid_snapshot`, and the unexpected-failure

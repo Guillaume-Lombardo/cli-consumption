@@ -328,6 +328,59 @@ transaction for the entire output directory.
 The temporary text stream disables newline translation, so the encoded-byte counter,
 file position, and bytes written remain identical on Windows as well as POSIX systems.
 
+### Incremental collection
+
+Aggregate input limits bound one snapshot, not one store. An adapter can opt into the
+`IncrementalAdapter` contract by yielding `CollectionBatch` values from
+`collect_incrementally`. The shared helper in `adapters/_incremental.py` packs an
+ordered stream of indivisible candidate groups into batches of at most 1,000
+candidates, collects each batch with a fresh `ProviderInputBudget`, and bisects a
+batch at a group boundary only when it exceeds the candidate, provider-read, or
+normalized-record limit. Any other limit, and a single group that still overflows,
+fails as before. Batches are formed per source; a directory listing is capped at
+1,000,000 entries and one command at 10,000 batches. An adapter opts in only when
+its in-memory duplicate ranking equals the storage rank (event count, then content
+hash), so duplicates split across batches converge on the same stored copy as a
+single collection.
+
+`collect` first attempts the normal all-or-nothing collection. When an
+incremental-capable provider fails only on an aggregate limit, the command discards
+that attempt and ingests the provider through batches, while every other provider
+keeps its already collected snapshot. `--no-incremental` disables the switch and
+`--incremental` forces batches. Non-strict batches commit independently and rerun
+safely; strict mode stages every validated batch before opening the database. Output
+reports the trigger, a per-provider `batched` flag, and aggregate counters only.
+
+In one collection, a Claude Code session transcript interacts with other transcripts
+only through its selection key, its session ID. A subagent transcript interacts
+only through its selection key, `<parent>:agent:<agent>`, and the parent session ID
+whose winning copy filters its replays. Batched collection therefore starts with an
+identity pass over every source. The pass reads each transcript only until it finds
+the same first `sessionId` and `agentId` labels that normalization uses, and reads a
+whole file only when a label is absent and the file-name or content-hash fallback
+applies. It keeps only paths and labels, under the 1,000,000-path bound and the
+per-file and per-line limits. The keys are joined into connected components, and
+each component becomes one indivisible group whose members keep the
+single-collection order of source, then sorted path. No selection key or parent
+lookup crosses a group, so normalizing each group alone gives exactly the
+single-collection records, and no duplicate is ever split between batches. This
+holds whatever the file names or project directories of the copies. A randomized
+property test compares batch sizes 1, 2, and 1,000 and a rerun with one collection.
+The residual difference is a transcript rewritten, rather than appended to, between
+the identity pass and its batch, because one collection reads each file only once.
+
+A batch never sees a complete provider/source-machine relationship graph, so Claude
+Code batches use merge semantics instead of graph replacement. In the ingestion
+transaction, a relationship is inserted when its child conversation is written, after
+deleting any relationship recorded for another copy of that child; it is inserted for
+an unchanged child only when the incoming copy has exactly the stored rank, comes from
+the same source machine, and no relationship exists yet. A strictly older copy can
+therefore never restore a relationship that graph replacement removed. Batches never delete a relationship, and the scope row is
+still locked to serialize writers on SQLite and PostgreSQL. Normal collection keeps
+replacing the whole graph under the freshness rules above. Codex batches instead pass
+an empty authoritative scope set and leave its SQLite graph untouched. No schema
+change is involved.
+
 ### Offline dashboard continuity gate
 
 Every pull request in the persistent-dashboard migration must preserve the standalone

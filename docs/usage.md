@@ -164,6 +164,127 @@ the final HTML is capped at 128 MiB. Narrow large databases with `--since` and
 combined `--csv` export is atomic per file, not across the whole directory, so an early
 CSV can be replaced before a later table or dashboard fails.
 
+## Report usage in the terminal
+
+`report` reads an existing database and prints one table. It never collects provider
+data; run `collect` or `quick` first.
+
+```bash
+uv run cli-consumption report daily
+uv run cli-consumption report weekly --timezone Europe/Paris
+uv run cli-consumption report monthly --by model --since 2026-08-01 --until 2026-09-30
+uv run cli-consumption report session --provider codex --project api --json
+```
+
+The view is `daily` (the default), `weekly` (ISO weeks starting on Monday), `monthly`,
+or `session` (one row per conversation, numbered in start order; provider IDs and
+paths are never shown). `--provider` accepts canonical names and documented aliases;
+`--provider`, `--project`, `--machine`, and `--model` can be repeated.
+`--by model|provider|project|machine` adds sub-rows under every period or session.
+
+`--timezone` takes an IANA name and defaults to `UTC`. It sets period boundaries and
+the meaning of plain `--since` and `--until` dates: `--since` is inclusive, and a plain
+`--until` date is included in the report. Timestamps must carry an offset. The window
+selects conversations exactly like `export`, then counts only the activity inside it.
+
+The columns follow the normalized token model. Input includes cache-read and
+cache-write tokens, output includes reasoning tokens, and the cache rate is cache
+reads divided by input. Conversations are counted once, in the period where they
+start, or in the first period of the window when they started earlier. Turns are
+counted where they start and calls at their timestamp. A conversation or turn without
+any timestamp appears in an `undated` row. With `--by model`, token and call sub-rows
+add up to their period, while turns and conversations that used several models appear
+under each of them.
+
+Token selection is identical to the dashboard for the same window and filters: calls
+from `additive` providers count when they belong to no turn or to a completed or
+aborted turn inside the window, and an automated cross-check compares both
+calculations. Counters from `conversation-aggregate` and `context-snapshot` providers
+have no per-call time, so period views attribute them to their conversation's period
+and flag the row as `agg` or `snap`. A provider whose token semantics are
+`unavailable` contributes conversation, turn, and call counts, but its token cells
+show `n/a`, never `0`; a row mixing it with measured providers is flagged `partial`.
+Token counters are local usage metadata, not billing data, and the report contains no
+cost estimate.
+
+The table fits the terminal width. When it is too narrow, numbers are abbreviated and
+less essential columns are hidden and listed below the table. Colors are used only on
+an interactive terminal and never when `NO_COLOR` is set, `TERM=dumb`, or the output
+is piped. Control characters in stored labels are replaced before printing.
+
+`--share-safe` replaces project, machine, and model labels with the aliases a
+share-safe dashboard uses for the same selection, shows session start dates without
+times, and rounds the JSON window to UTC days. Provider names and aggregate activity
+remain visible.
+
+`--json` prints one deterministic line with sorted keys. Its contract is versioned;
+this example is formatted for reading:
+
+```json
+{
+  "schema": "cli-consumption/usage-report",
+  "schema_version": 1,
+  "view": "daily",
+  "timezone": "UTC",
+  "window": {"since": null, "until": null},
+  "filters": {"providers": [], "projects": [], "machines": [], "models": []},
+  "breakdown": null,
+  "share_safe": false,
+  "notice": "Token counters are local usage metadata, not billing data.",
+  "rows": [
+    {
+      "period": "2026-08-03",
+      "session": null,
+      "conversations": 1,
+      "turns": 1,
+      "calls": 1,
+      "tokens": {
+        "input": 5500, "cache_read": 4000, "cache_write": 500,
+        "uncached_input": 1000, "output": 500, "reasoning": 200,
+        "visible_output": 300, "unattributed": 0, "total": 6000
+      },
+      "cache_rate": 0.727273,
+      "token_semantics": ["additive"],
+      "flags": [],
+      "breakdown": []
+    }
+  ],
+  "totals": {
+    "conversations": 1, "turns": 1, "calls": 1, "tokens": {"total": 6000},
+    "cache_rate": 0.727273, "token_semantics": ["additive"], "flags": []
+  }
+}
+```
+
+The `totals.tokens` object has the same nine counters as a row; it is shortened here.
+`period` is `YYYY-MM-DD` for days, the Monday date for weeks, `YYYY-MM` for months,
+and `null` for the undated row and for sessions. Session rows carry `session` with
+`number`, `started_at`, `provider`, `project`, `machine`, and `models`. `tokens` and
+`cache_rate` are `null` when unavailable. `flags` contains `conversation-aggregate`,
+`context-snapshot`, `tokens-unavailable`, or `partial-tokens`. Breakdown items repeat
+the metrics with a `label`. Additive changes keep version 1; any removal or change of
+meaning increments `schema_version`.
+
+Errors exit with status 2 and fixed codes, as `{"error":{"code":...}}` with `--json`:
+`database_not_found`, `database_unavailable`, `invalid_timezone`, `invalid_window`,
+`unknown_provider`, or `report_limit_exceeded`. They never include paths or rejected
+values.
+
+### First run with `quick`
+
+```bash
+uv tool run cli-consumption quick
+```
+
+`quick` detects providers like `collect --provider all` without `--source`, collects
+each of them into the default `cli-consumption.sqlite` in the current directory (or
+`--database`), then prints `report daily` for all recorded activity. It is a dedicated command so that
+running `cli-consumption` without arguments keeps printing help. Collection is
+idempotent, so rerunning `quick` refreshes the same database. A provider that fails
+is reported on standard error with its fixed collection message, the remaining
+providers are still collected and reported, and the command then exits with status 2.
+`--json` prints `{"collection":{"ingestions":[...],"failures":[...]},"report":{...}}`.
+
 ## SQLite, PostgreSQL, migrations, and retention
 
 A file path selects SQLite; a SQLAlchemy URL selects PostgreSQL:
@@ -319,6 +440,6 @@ compatibility states: `no-data`, `detected`, `compatible`, `degraded`, or
 `unsupported-schema`. They never expose paths, identifiers, record content, counts, or
 parser errors.
 
-`collect`, `snapshot create`, `snapshot ingest`, `sync`, `upload-db`, `export`, and `retention`
-accept `--json`. Run
+`collect`, `snapshot create`, `snapshot ingest`, `sync`, `upload-db`, `export`,
+`retention`, `report`, and `quick` accept `--json`. Run
 `uv run cli-consumption COMMAND --help` for complete options.

@@ -44,6 +44,31 @@ Extras can be combined, for example `cli-consumption[postgres]` on a central col
 
 ## Quick start
 
+See your local usage in the terminal with one command. `quick` detects supported
+CLIs, collects their metadata into `cli-consumption.sqlite` in the current directory
+(or `--database`), and prints the daily report:
+
+```bash
+uv tool run cli-consumption quick
+```
+
+Running `cli-consumption` without a command still prints help; `quick` is the explicit
+first-run command. Rerunning it is safe: collection is idempotent and refreshes the
+same database. Afterwards, `report` reads that database without collecting:
+
+```bash
+uv tool run cli-consumption report daily
+uv tool run cli-consumption report monthly --by model --since 2026-09-01
+uv tool run cli-consumption report session --provider claude --json
+```
+
+Tables show input, cache-read, cache-write, output, reasoning, and total tokens, the
+cache rate, and conversation, turn, and call counts. Token values that a provider does
+not record display as `n/a`, never as zero, and conversation-aggregate or
+context-snapshot counters are flagged. Token counters are local usage metadata, not
+billing data. See [terminal reports](https://github.com/Guillaume-Lombardo/cli-consumption/blob/main/docs/usage.md#report-usage-in-the-terminal)
+for every option and the JSON contract.
+
 From a checkout, detect supported local CLIs, collect their metadata, and create an
 offline dashboard:
 
@@ -133,7 +158,9 @@ for ingestion, idempotency, migrations, report limits, and collector behavior.
 
 | Command | Purpose |
 | --- | --- |
+| `quick` | Collect detected providers, then print the daily usage report. |
 | `collect` | Collect local or copied provider data into SQL. |
+| `report` | Print daily, weekly, monthly, or session usage tables from SQL. |
 | `snapshot` | Create or ingest signed, compressed offline snapshot files. |
 | `sync` | Collect and send metadata-only snapshots to a central API. |
 | `upload-db` | Upload validated snapshots reconstructed from a local collect database. |

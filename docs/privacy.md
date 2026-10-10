@@ -321,6 +321,31 @@ detailed exports and earlier tables may have been replaced before a later table 
 dashboard failure. Replacement preserves an existing CSV's file mode; new CSV files
 retain private temporary-file permissions.
 
+## Terminal reports
+
+`report` and `quick` print aggregates computed from the normalized database by the
+shared `usage_report` layer. Their text and versioned JSON outputs contain only view
+and timezone names, the selected window, period keys, provider names, project,
+machine, and model labels, session numbers and start times, token counters,
+conversation, turn, and call counts, cache rates, token-semantics labels, and fixed
+flags. They never include conversation, turn, or provider identifiers, content
+hashes, source values, mapping sources, database or provider paths, environment
+values, or exception text. Session numbers are local to one output. Errors use fixed
+codes without echoing rejected values. Before printing, the terminal renderer replaces
+control and format characters in stored labels so database values cannot emit escape
+sequences; JSON escapes them. Colors are only presentation and are disabled for pipes
+and `NO_COLOR`.
+
+`--share-safe` reuses the dashboard's share-safe aliases for project, machine, and
+model labels (including filter values echoed in JSON), prints session dates without
+times, and rounds the JSON window to UTC days. Provider names, daily activity, counts,
+and token aggregates remain visible, so share-safe output is minimized, not anonymous.
+Detailed output discloses the same operational labels and timestamps as a detailed
+dashboard. `quick` writes the default normalized database in the current directory
+and reports collection outcomes with the existing fixed provider messages, never
+source paths. Token counters are usage metadata, not billing data, and no output
+contains a cost estimate.
+
 ## Public synthetic demo
 
 The repository preview is generated only by `docs/demo/generate.py`. Its provider,

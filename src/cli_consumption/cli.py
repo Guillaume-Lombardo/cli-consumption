@@ -49,6 +49,17 @@ from cli_consumption.storage import (
     initialize_database,
     validate_snapshot,
 )
+from cli_consumption.usage_report import (
+    Breakdown,
+    ReportView,
+    UsageQuery,
+    UsageQueryError,
+    UsageReport,
+    aggregate_usage,
+    parse_report_window,
+    report_filters,
+    resolve_timezone,
+)
 
 MAX_INCREMENTAL_BATCHES = 10_000
 MAX_INCREMENTAL_STAGING_BYTES = 4 * 1024 * 1024 * 1024
@@ -1054,6 +1065,245 @@ def retention_command(
             f"{result.conversations} conversations, {result.subagents} subagents, "
             f"{result.ingestion_runs} ingestion runs."
         )
+
+
+# Terminal usage reports -----------------------------------------------------
+
+_REPORT_ERROR_MESSAGES = {
+    "database_not_found": (
+        "No usage database found. Run `cli-consumption quick` or "
+        "`cli-consumption collect` first, or pass --database."
+    ),
+    "database_unavailable": "The usage database could not be read.",
+    "invalid_timezone": "Unknown timezone; use an IANA name such as Europe/Paris.",
+    "invalid_window": (
+        "Invalid report window; use dates or timezone-aware timestamps with "
+        "--since earlier than --until."
+    ),
+    "report_limit_exceeded": (
+        "Share-safe labels exceed safe limits; narrow the report with --since "
+        "and/or --until."
+    ),
+    "unknown_provider": "Unknown provider. Run `cli-consumption providers`.",
+}
+
+
+@app.command("report")
+def report_command(
+    view: Annotated[
+        ReportView,
+        typer.Argument(
+            help="Group by day, ISO week (Monday start), month, or session.",
+        ),
+    ] = ReportView.DAILY,
+    database: Annotated[
+        str,
+        typer.Option(
+            "--database",
+            "-d",
+            envvar="CLI_CONSUMPTION_DATABASE",
+            help="SQLite path or SQLAlchemy PostgreSQL URL.",
+        ),
+    ] = "cli-consumption.sqlite",
+    since: Annotated[
+        str | None,
+        typer.Option(
+            help="Window start: a date in --timezone or a zoned timestamp.",
+        ),
+    ] = None,
+    until: Annotated[
+        str | None,
+        typer.Option(
+            help="Exclusive window end: a date (included) or a zoned timestamp.",
+        ),
+    ] = None,
+    provider: Annotated[
+        list[str] | None,
+        typer.Option("--provider", help="Only this provider or alias. Repeatable."),
+    ] = None,
+    project: Annotated[
+        list[str] | None,
+        typer.Option("--project", help="Only this project label. Repeatable."),
+    ] = None,
+    machine: Annotated[
+        list[str] | None,
+        typer.Option("--machine", help="Only this machine label. Repeatable."),
+    ] = None,
+    model: Annotated[
+        list[str] | None,
+        typer.Option("--model", help="Only calls of this model. Repeatable."),
+    ] = None,
+    timezone: Annotated[
+        str,
+        typer.Option(help="IANA timezone for periods and plain dates."),
+    ] = "UTC",
+    by: Annotated[
+        Breakdown | None,
+        typer.Option("--by", help="Break every row down by this dimension."),
+    ] = None,
+    share_safe: Annotated[
+        bool,
+        typer.Option(
+            "--share-safe",
+            help="Pseudonymize project, machine, and model labels.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit the versioned JSON report.")
+    ] = False,
+) -> None:
+    """Show token usage tables from the database without collecting."""
+    try:
+        query = UsageQuery(
+            view=view,
+            window=parse_report_window(since, until, timezone),
+            filters=report_filters(
+                providers=provider or (),
+                machines=machine or (),
+                projects=project or (),
+                models=model or (),
+            ),
+            timezone=timezone,
+            breakdown=by,
+            share_safe=share_safe,
+        )
+    except UsageQueryError as error:
+        _abort_report(error.code, json_output=json_output)
+    if "://" not in database and not Path(database).expanduser().is_file():
+        _abort_report("database_not_found", json_output=json_output)
+    engine = _open_database(database)
+    try:
+        report = _build_usage_report(engine, query, json_output=json_output)
+    finally:
+        engine.dispose()
+    _emit_usage_report(report, json_output=json_output)
+
+
+@app.command("quick")
+def quick_command(
+    database: Annotated[
+        str,
+        typer.Option(
+            "--database",
+            "-d",
+            envvar="CLI_CONSUMPTION_DATABASE",
+            help="SQLite path or SQLAlchemy PostgreSQL URL.",
+        ),
+    ] = "cli-consumption.sqlite",
+    timezone: Annotated[
+        str,
+        typer.Option(help="IANA timezone for daily periods."),
+    ] = "UTC",
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit collection results and the JSON report."),
+    ] = False,
+) -> None:
+    """Collect every detected provider, then show the daily usage report."""
+    try:
+        resolve_timezone(timezone)
+    except UsageQueryError as error:
+        _abort_report(error.code, json_output=json_output)
+    try:
+        inputs, mappings = _collection_inputs("all", None, None)
+    except typer.BadParameter:
+        inputs, mappings = [], []
+    ingestions: list[dict[str, object]] = []
+    failures: list[CollectionFailure] = []
+    engine = _open_database(database)
+    try:
+        for spec, sources in inputs:
+            try:
+                snapshot = _collect_adapter(spec, sources, mappings)
+                result = ingest_snapshot(engine, snapshot)
+            except CollectionFailure as error:
+                failures.append(error)
+                continue
+            except SnapshotValidationError as error:
+                failures.append(_snapshot_failure(spec.name, error))
+                continue
+            ingestions.append(
+                {
+                    "provider": snapshot.provider,
+                    "written": result.written,
+                    "skipped": result.skipped,
+                    "malformed": snapshot.malformed_records,
+                }
+            )
+        report = _build_usage_report(
+            engine, UsageQuery(timezone=timezone), json_output=json_output
+        )
+    finally:
+        engine.dispose()
+    if json_output:
+        payload = {
+            "collection": {
+                "ingestions": ingestions,
+                "failures": [
+                    {"provider": failure.provider, "code": failure.code}
+                    for failure in failures
+                ],
+            },
+            "report": report.to_dict(),
+        }
+        typer.echo(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    else:
+        if not inputs:
+            typer.echo("No supported provider data detected.", err=True)
+        for item in ingestions:
+            typer.echo(
+                f"Collected {item['provider']}: {item['written']} written, "
+                f"{item['skipped']} unchanged, {item['malformed']} malformed skipped.",
+                err=True,
+            )
+        for failure in failures:
+            typer.echo(failure.message, err=True)
+        _emit_usage_report(report, json_output=False)
+    if failures:
+        raise typer.Exit(code=2)
+
+
+def _build_usage_report(
+    engine: Engine, query: UsageQuery, *, json_output: bool
+) -> UsageReport:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from cli_consumption.schema import SchemaCompatibilityError
+
+    try:
+        return aggregate_usage(engine, query)
+    except DashboardLimitError:
+        _abort_report("report_limit_exceeded", json_output=json_output)
+    except (SQLAlchemyError, SchemaCompatibilityError):
+        _abort_report("database_unavailable", json_output=json_output)
+
+
+def _emit_usage_report(report: UsageReport, *, json_output: bool) -> None:
+    import sys
+
+    from cli_consumption.terminal_report import (
+        color_enabled,
+        render_report,
+        terminal_width,
+    )
+
+    if json_output:
+        typer.echo(json.dumps(report.to_dict(), sort_keys=True, separators=(",", ":")))
+        return
+    typer.echo(
+        render_report(report, width=terminal_width(), color=color_enabled(sys.stdout)),
+        nl=False,
+    )
+
+
+def _abort_report(code: str, *, json_output: bool) -> Never:
+    if json_output:
+        typer.echo(
+            json.dumps({"error": {"code": code}}, sort_keys=True, separators=(",", ":"))
+        )
+    else:
+        typer.echo(_REPORT_ERROR_MESSAGES[code], err=True)
+    raise typer.Exit(code=2)
 
 
 @app.command()

@@ -6,6 +6,17 @@ use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `report daily|weekly|monthly|session` prints token usage tables from the database
+  without collecting. It supports `--since`, `--until`, `--timezone`, repeated
+  `--provider`, `--project`, `--machine`, and `--model` filters, `--by
+  model|provider|project|machine` breakdowns, `--share-safe` pseudonyms, and a
+  versioned deterministic `--json` contract. Unavailable token counters display as
+  `n/a`, and conversation-aggregate or context-snapshot counters are flagged.
+- `quick` collects every detected provider into the default database, then prints the
+  daily report, for a one-command first run.
+
 ### Changed
 
 - `collect` now switches automatically to bounded, restart-safe batches when an

@@ -12,11 +12,79 @@ from cli_consumption.storage import create_database_engine, ingest_snapshot
 
 def test_schema_version_is_emitted_and_absence_is_accepted() -> None:
     snapshot = Snapshot(provider="codex")
-    assert snapshot.to_dict()["schema_version"] == 1
+    assert snapshot.to_dict()["schema_version"] == 2
 
     legacy = snapshot.to_dict()
     legacy.pop("schema_version")
-    assert Snapshot.from_dict(legacy).schema_version == 1
+    # An unversioned payload is schema 1 and is represented as schema 2 in memory.
+    assert Snapshot.from_dict(legacy).schema_version == 2
+
+
+def _call(**overrides: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "id": "codex:one:model:1",
+        "conversation_id": "codex:one",
+        "turn_id": None,
+        "sequence": 1,
+        "timestamp": None,
+        "model": "model-a",
+        "input_tokens": 30,
+        "cached_input_tokens": 10,
+        "cache_write_input_tokens": 15,
+        "uncached_input_tokens": 5,
+        "output_tokens": 9,
+        "reasoning_output_tokens": 4,
+        "visible_output_tokens": 5,
+        "unattributed_tokens": 0,
+        "total_tokens": 39,
+    }
+    record.update(overrides)
+    return record
+
+
+def _payload(version: int | None, call: dict[str, object]) -> dict[str, object]:
+    payload = Snapshot(provider="codex").to_dict()
+    payload["model_calls"] = [call]
+    if version is None:
+        payload.pop("schema_version")
+    else:
+        payload["schema_version"] = version
+    return payload
+
+
+def test_schema_1_payloads_upgrade_without_a_cache_write_duration() -> None:
+    for version in (None, 1):
+        snapshot = Snapshot.from_dict(_payload(version, _call()))
+        assert snapshot.schema_version == 2
+        assert snapshot.model_calls[0]["cache_write_1h_input_tokens"] is None
+        # The upgraded form is itself a valid current payload.
+        assert Snapshot.from_dict(snapshot.to_dict()).to_dict() == snapshot.to_dict()
+
+
+@pytest.mark.parametrize("value", (None, 0, 15))
+def test_schema_1_rejects_the_cache_write_duration_field(value: object) -> None:
+    with pytest.raises(SnapshotValidationError, match="invalid_snapshot"):
+        Snapshot.from_dict(_payload(1, _call(cache_write_1h_input_tokens=value)))
+
+
+@pytest.mark.parametrize("value", (None, 0, 7, 15))
+def test_schema_2_accepts_a_bounded_or_unreported_cache_write_duration(
+    value: int | None,
+) -> None:
+    snapshot = Snapshot.from_dict(_payload(2, _call(cache_write_1h_input_tokens=value)))
+    assert snapshot.model_calls[0]["cache_write_1h_input_tokens"] == value
+    assert (
+        Snapshot.from_dict(_payload(2, _call())).model_calls[0][
+            "cache_write_1h_input_tokens"
+        ]
+        is None
+    )
+
+
+@pytest.mark.parametrize("value", (16, -1, True, 1.5, "1", 2**63))
+def test_schema_2_rejects_an_invalid_cache_write_duration(value: object) -> None:
+    with pytest.raises(SnapshotValidationError, match="invalid_snapshot"):
+        Snapshot.from_dict(_payload(2, _call(cache_write_1h_input_tokens=value)))
 
 
 def test_strict_types_and_values_are_rejected_without_echoing_input() -> None:
@@ -24,7 +92,8 @@ def test_strict_types_and_values_are_rejected_without_echoing_input() -> None:
         ("malformed_records", True),
         ("duplicate_conversations", -1),
         ("provider", "privacy canary\nsecret"),
-        ("schema_version", 2),
+        ("schema_version", 3),
+        ("schema_version", 0),
     ):
         payload = Snapshot(provider="codex").to_dict()
         payload[field] = value

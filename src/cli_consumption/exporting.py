@@ -11,7 +11,7 @@ from typing import Any, TextIO, cast
 
 from sqlalchemy.engine import Connection, Engine
 
-from cli_consumption.reporting import ExportWindow, iter_report_rows
+from cli_consumption.reporting import ExportWindow, iter_report_rows, reported_columns
 from cli_consumption.storage import TABLES, initialize_database
 
 FORMULA_PREFIXES = ("=", "+", "-", "@")
@@ -30,7 +30,7 @@ def export_csv(
     with engine.connect() as connection:
         for table_name in TABLES:
             path = output / f"{table_name}.csv"
-            fieldnames = list(TABLES[table_name].__table__.columns.keys())
+            fieldnames = reported_columns(table_name)
             _atomic_write_csv(
                 path,
                 lambda handle, table_name=table_name, fieldnames=fieldnames: _write_csv(

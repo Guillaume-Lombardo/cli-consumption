@@ -342,7 +342,7 @@ def test_revision_0007_upgrades_legacy_layout_and_downgrades_cleanly(
     assert state.revision == 1
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
 
     downgrade_database(engine, "0006")
@@ -381,7 +381,7 @@ def test_unversioned_revision_0006_layout_is_adopted_before_upgrade(
     assert load_dashboard_layout_state(engine).revision == 1
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
     engine.dispose()
 

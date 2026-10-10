@@ -35,6 +35,7 @@ from cli_consumption.migrations.versions import (
     v0003_canonical_timestamps,
     v0004_subagent_scope_freshness,
     v0005_sync_receipts,
+    v0008_cache_write_duration,
 )
 from cli_consumption.models import Snapshot
 from cli_consumption.retention import retain_before
@@ -166,7 +167,7 @@ def test_empty_database_upgrades_to_packaged_head(tmp_path: Path) -> None:
     assert set(inspector.get_table_names()) == {*BASELINE_COLUMNS, "alembic_version"}
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
     for table in Base.metadata.sorted_tables:
         assert {column["name"] for column in inspector.get_columns(table.name)} == (
@@ -219,7 +220,7 @@ def test_concurrent_sqlite_initialization_reaches_one_packaged_head(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
     assert set(inspect(engine).get_table_names()) == {
         *BASELINE_COLUMNS,
@@ -245,7 +246,7 @@ def test_concurrent_sqlite_migration_is_idempotent(tmp_path: Path) -> None:
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
     assert "ix_conversations_ended_at" in {
         item["name"] for item in inspect(engine).get_indexes("conversations")
@@ -300,7 +301,7 @@ def test_failed_sqlite_migration_releases_waiter(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
     engine.dispose()
 
@@ -396,7 +397,7 @@ def test_unversioned_database_is_adopted_without_data_loss(tmp_path: Path) -> No
     assert read_table(engine, "ingestion_runs")[0]["id"] == "run"
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
     assert "agent_nickname" not in {
         column["name"] for column in inspect(engine).get_columns("subagents")
@@ -446,7 +447,7 @@ def test_unversioned_head_database_preserves_validated_scope_state(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
         assert (
             connection.scalar(
@@ -493,7 +494,7 @@ def test_unversioned_revision_0004_is_adopted_before_sync_receipt_upgrade(
 
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0007"
+            "0008"
         )
         assert (
             connection.scalar(
@@ -603,6 +604,7 @@ def test_migrations_emit_portable_postgresql_structure() -> None:
         v0003_canonical_timestamps.upgrade()
         v0004_subagent_scope_freshness.upgrade()
         v0005_sync_receipts.upgrade()
+        v0008_cache_write_duration.upgrade()
 
     ddl = output.getvalue()
     assert "CREATE TABLE conversations" in ddl
@@ -618,6 +620,9 @@ def test_migrations_emit_portable_postgresql_structure() -> None:
     assert "INSERT INTO subagent_scopes" in ddl
     assert "CREATE TABLE sync_receipts" in ddl
     assert "FOREIGN KEY(ingestion_run_id)" in ddl
+    assert (
+        "ALTER TABLE model_calls ADD COLUMN cache_write_1h_input_tokens BIGINT" in ddl
+    )
 
 
 def test_subagent_scope_migration_seeds_existing_scopes_and_round_trips(
@@ -1037,7 +1042,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0007"
+                == "0008"
             )
             verify_current_database_schema(connection)
 
@@ -1064,7 +1069,7 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
         with test_engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM alembic_version"))
-                == "0007"
+                == "0008"
             )
             assert (
                 connection.scalar(
@@ -1436,3 +1441,193 @@ def test_postgresql_runtime_migrations_ingestion_and_retention(
             with admin_engine.begin() as connection:
                 connection.execute(DropSchema(schema_name, cascade=True))
         admin_engine.dispose()
+
+
+_INSERT_LEGACY_MODEL_CALL = (
+    "INSERT INTO model_calls (id, conversation_id, turn_id, sequence, timestamp, "
+    "model, input_tokens, cached_input_tokens, cache_write_input_tokens, "
+    "uncached_input_tokens, output_tokens, reasoning_output_tokens, "
+    "visible_output_tokens, unattributed_tokens, total_tokens) VALUES "
+    "(:id, 'test:duration', NULL, :sequence, NULL, 'model-a', "
+    ":input, 0, :cache_write, 0, 0, 0, 0, 0, :input)"
+)
+
+
+def _insert_legacy_model_call(connection, identifier: str, cache_write: int) -> None:
+    connection.execute(
+        text(_INSERT_LEGACY_MODEL_CALL),
+        {
+            "id": identifier,
+            "sequence": int(identifier.rsplit(":", 1)[-1]),
+            "input": cache_write,
+            "cache_write": cache_write,
+        },
+    )
+
+
+def _model_call_durations(engine) -> dict[str, tuple[int, int | None]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT id, cache_write_input_tokens, cache_write_1h_input_tokens "
+                "FROM model_calls ORDER BY id"
+            )
+        ).all()
+    return {row[0]: (row[1], row[2]) for row in rows}
+
+
+def _assert_cache_write_duration_round_trip(engine) -> None:
+    initialize_database(engine)
+    downgrade_database(engine, "0007")
+    assert "cache_write_1h_input_tokens" not in {
+        column["name"] for column in inspect(engine).get_columns("model_calls")
+    }
+    with Session(engine) as session, session.begin():
+        session.add(_conversation("test:duration", "2026-01-01T00:00:00+00:00"))
+    with engine.begin() as connection:
+        _insert_legacy_model_call(connection, "test:duration:model:1", 40)
+        with pytest.raises(SchemaCompatibilityError):
+            verify_current_database_schema(connection)
+
+    upgrade_database(engine)
+
+    # Existing rows were written without a duration split, so none is invented.
+    assert _model_call_durations(engine) == {"test:duration:model:1": (40, None)}
+    with engine.begin() as connection:
+        verify_current_database_schema(connection)
+        connection.execute(
+            text(
+                "UPDATE model_calls SET cache_write_1h_input_tokens = 25 "
+                "WHERE id = 'test:duration:model:1'"
+            )
+        )
+        assert (
+            connection.scalar(text("SELECT version_num FROM alembic_version")) == "0008"
+        )
+
+    downgrade_database(engine, "0007")
+    # Downgrade keeps the cache-write total and discards only its duration split.
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT id, cache_write_input_tokens FROM model_calls")
+        ).all() == [("test:duration:model:1", 40)]
+    upgrade_database(engine)
+    assert _model_call_durations(engine) == {"test:duration:model:1": (40, None)}
+    with engine.connect() as connection:
+        verify_current_database_schema(connection)
+
+
+def test_cache_write_duration_migration_round_trips_on_sqlite(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "cache-write-duration.sqlite")
+    try:
+        _assert_cache_write_duration_round_trip(engine)
+        indexes = {
+            index["name"] for index in inspect(engine).get_indexes("model_calls")
+        }
+        assert indexes == {
+            "ix_model_calls_conversation_id",
+            "ix_model_calls_model",
+            "ix_model_calls_timestamp",
+            "ix_model_calls_turn_id",
+        }
+        foreign_key = inspect(engine).get_foreign_keys("model_calls")[0]
+        assert foreign_key["options"] == {"ondelete": "CASCADE"}
+    finally:
+        engine.dispose()
+
+
+def test_cache_write_duration_migration_round_trips_on_postgresql() -> None:
+    database_url = os.environ.get("TEST_POSTGRESQL_URL")
+    if database_url is None:
+        pytest.skip("TEST_POSTGRESQL_URL is not configured")
+    schema_name = f"cli_consumption_test_{uuid.uuid4().hex}"
+    admin_engine = create_database_engine(database_url)
+    test_engine = None
+    try:
+        with admin_engine.begin() as connection:
+            connection.execute(CreateSchema(schema_name))
+        test_engine = create_engine(
+            make_url(database_url).update_query_dict(
+                {"options": f"-csearch_path={schema_name}"}
+            )
+        )
+        _assert_cache_write_duration_round_trip(test_engine)
+        column = next(
+            column
+            for column in inspect(test_engine).get_columns("model_calls")
+            if column["name"] == "cache_write_1h_input_tokens"
+        )
+        assert isinstance(column["type"], BigInteger)
+        assert column["nullable"] is True
+
+        with test_engine.begin() as connection:
+            connection.execute(text("DROP TABLE alembic_version"))
+        upgrade_database(test_engine)
+        assert _model_call_durations(test_engine) == {
+            "test:duration:model:1": (40, None)
+        }
+    finally:
+        if test_engine is not None:
+            test_engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.execute(DropSchema(schema_name, cascade=True))
+        admin_engine.dispose()
+
+
+def test_unversioned_revision_0007_layout_is_adopted_before_upgrade(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "unversioned-0007.sqlite")
+    try:
+        initialize_database(engine)
+        downgrade_database(engine, "0007")
+        with Session(engine) as session, session.begin():
+            session.add(_conversation("test:duration", "2026-01-01T00:00:00+00:00"))
+        with engine.begin() as connection:
+            _insert_legacy_model_call(connection, "test:duration:model:1", 12)
+            connection.execute(
+                text(
+                    "INSERT INTO dashboard_layouts (owner_key, layout_json, revision) "
+                    "VALUES ('deployment-operator', '{}', 41)"
+                )
+            )
+            connection.execute(text("DROP TABLE alembic_version"))
+
+        initialize_database(engine)
+        initialize_database(engine)
+
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == "0008"
+            )
+            # Adoption stamps 0007 instead of replaying earlier revisions.
+            assert (
+                connection.scalar(text("SELECT revision FROM dashboard_layouts")) == 41
+            )
+            verify_current_database_schema(connection)
+        assert _model_call_durations(engine) == {"test:duration:model:1": (12, None)}
+    finally:
+        engine.dispose()
+
+
+def test_unversioned_head_layout_keeps_cache_write_durations(tmp_path: Path) -> None:
+    engine = create_database_engine(tmp_path / "unversioned-0008.sqlite")
+    try:
+        initialize_database(engine)
+        with Session(engine) as session, session.begin():
+            session.add(_conversation("test:duration", "2026-01-01T00:00:00+00:00"))
+        with engine.begin() as connection:
+            _insert_legacy_model_call(connection, "test:duration:model:1", 12)
+            connection.execute(
+                text("UPDATE model_calls SET cache_write_1h_input_tokens = 5")
+            )
+            connection.execute(text("DROP TABLE alembic_version"))
+
+        initialize_database(engine)
+
+        assert _model_call_durations(engine) == {"test:duration:model:1": (12, 5)}
+    finally:
+        engine.dispose()

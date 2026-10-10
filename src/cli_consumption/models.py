@@ -19,8 +19,10 @@ from pydantic import (
 
 from cli_consumption.timestamps import canonical_timestamp
 
-CURRENT_SNAPSHOT_SCHEMA = 1
+CURRENT_SNAPSHOT_SCHEMA = 2
 MIN_SUPPORTED_SNAPSHOT_SCHEMA = 1
+# Snapshot schema 2 adds this optional model-call counter; schema 1 must omit it.
+CACHE_WRITE_1H_FIELD = "cache_write_1h_input_tokens"
 MAX_SNAPSHOT_RECORDS = 250_000
 MAX_SNAPSHOT_CONVERSATIONS = 10_000
 MAX_MODELS_PER_CONVERSATION = 256
@@ -157,6 +159,19 @@ class ModelCallRecord(TokenRecord):
     sequence: NonNegativeInt
     timestamp: Timestamp | None
     model: Normalized255
+    # Subset of cache_write_input_tokens written with a one-hour cache lifetime.
+    # Null means the provider did not report a cache-write duration breakdown; the
+    # remainder of cache_write_input_tokens is never presented as a measured split.
+    cache_write_1h_input_tokens: NonNegativeBigInt | None = None
+
+    @model_validator(mode="after")
+    def validate_cache_write_split(self) -> ModelCallRecord:
+        if (
+            self.cache_write_1h_input_tokens is not None
+            and self.cache_write_1h_input_tokens > self.cache_write_input_tokens
+        ):
+            raise ValueError("invalid token composition")
+        return self
 
 
 class ToolCallRecord(StrictRecord):
@@ -241,7 +256,8 @@ class SubagentRecord(StrictRecord):
 
 
 class SnapshotPayload(StrictRecord):
-    schema_version: Literal[1] = CURRENT_SNAPSHOT_SCHEMA
+    # An absent version is a legacy schema-1 payload.
+    schema_version: Literal[1, 2] = 1
     provider: Normalized64
     conversations: Annotated[
         list[ConversationRecord], Field(max_length=MAX_SNAPSHOT_CONVERSATIONS)
@@ -292,6 +308,23 @@ class SnapshotPayload(StrictRecord):
         )
         if total > MAX_SNAPSHOT_RECORDS:
             raise ValueError("too many records")
+        return self
+
+    @model_validator(mode="after")
+    def upgrade_legacy_schema(self) -> SnapshotPayload:
+        """Keep schema 1 strict, then represent it losslessly as the current schema.
+
+        Schema 1 predates the optional cache-write duration counter, so a schema-1
+        payload that carries it is rejected. Every accepted payload is upgraded in
+        memory, where the absent counter is null (not reported).
+        """
+        if self.schema_version < CURRENT_SNAPSHOT_SCHEMA:
+            if any(
+                CACHE_WRITE_1H_FIELD in record.model_fields_set
+                for record in self.model_calls
+            ):
+                raise ValueError("field requires a newer snapshot schema")
+            self.schema_version = CURRENT_SNAPSHOT_SCHEMA
         return self
 
 

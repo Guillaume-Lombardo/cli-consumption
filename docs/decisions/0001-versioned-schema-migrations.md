@@ -54,6 +54,16 @@ rows start at one; downgrade removes the revision while preserving the content-f
 layout JSON. The server must migrate before the BFF begins sending `If-Match`, and
 mixed-version writers are not supported during this transition.
 
+Revision `0008` adds the nullable `model_calls.cache_write_1h_input_tokens` counter.
+Existing rows keep null, meaning no duration breakdown was recorded; no split is
+inferred. Downgrade to `0007` drops only that column and keeps every cache-write total.
+An unversioned database that matches the complete `0007` layout is stamped `0007` and
+then upgraded; an unversioned partial layout that already carries the new column is
+refused before mutation. The column arrives with snapshot schema 2, so the collector
+must migrate and advertise that schema before clients upgrade. Older schema-1 clients
+remain accepted and store null, while an older application refuses the migrated
+database as newer than it supports.
+
 Schema inspection, adoption, and migration are serialized for concurrent processes of
 the same application version in one outer transaction. SQLite waits at most 15 seconds
 for `BEGIN IMMEDIATE`, then holds that transaction across the decision and migration.

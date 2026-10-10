@@ -87,7 +87,7 @@ The API is intentionally bounded. Separate bearer credentials protect `ingest`,
 `read`, and combined `read`/`export` operations; the legacy API token grants ingestion
 only. A production deployment still needs TLS, token rotation, backups, monitoring,
 and a reverse proxy or platform ingress. The collector limits snapshot bodies to 32 MiB
-including chunked requests, accepts snapshot schema v1, and caps a snapshot at 250,000
+including chunked requests, accepts snapshot schemas 1 and 2, and caps a snapshot at 250,000
 normalized records. `/api/v1/capabilities` publishes these limits and the supported
 schema range so clients can fail before uploading incompatible data. One sync command
 reuses a single HTTP client and negotiates capabilities once for its endpoint. A
@@ -175,7 +175,7 @@ and avoid mixed-version access during migration. The detailed policy is recorded
 Snapshot extraction is the deliberate exception to migration-on-open. It accepts only
 an existing regular local SQLite file, opens it with URI `mode=ro` and SQLite
 `query_only`, starts an explicit read transaction, and requires both Alembic revision
-`0007` and the exact current table, column, type, nullability, key, constraint, and
+`0008` and the exact current table, column, type, nullability, key, constraint, and
 index layout. It never adopts, stamps, migrates, or repairs the source. A normal
 read-only SQLite connection keeps committed WAL contents visible; every estimate and
 row query therefore observes the same database snapshot while collection may continue.
@@ -187,7 +187,7 @@ or copies the database and WAL into a private writable directory.
 The extractor reuses reporting's half-open `since`/`until` selection. A selected
 conversation always carries all its normalized child rows, and a subagent edge is
 retained when either endpoint belongs to the selection. Unbounded graph-only provider
-scopes remain representable. Rows are grouped into strict snapshot-schema-v1 instances
+scopes remain representable. Rows are grouped into strict current-schema snapshot instances
 by provider, with stable IDs, relationships, and content hashes unchanged.
 `ingestion_runs`, `sync_receipts`, `subagent_scopes`, `dashboard_layouts`, and Alembic state are never
 transferred. SQL preflight and serialized-output checks cap one extraction at 10,000
@@ -218,10 +218,23 @@ and wholly older snapshots cannot regress the graph. An internal scope row seria
 this decision across concurrent writers on SQLite and PostgreSQL; it is not exported.
 
 Workflow analytics use additive child tables: `work_items`, `context_samples`,
-`turn_settings`, and `compaction_events`. Snapshot schema v1 validates every record,
+`turn_settings`, and `compaction_events`. The snapshot schema validates every record,
 rejects unknown fields, enforces normalized labels and relationships, and exposes only
 generic validation errors. A newer client sent to an older strict API is rejected
 before ingestion, so central deployments must upgrade the server first.
+
+Snapshot schema 2 adds one optional model-call counter,
+`cache_write_1h_input_tokens`: the part of `cache_write_input_tokens` written with a
+one-hour cache lifetime, the remainder being the five-minute default. Null means the
+provider reported no duration breakdown, so no split is implied; zero means a reported
+breakdown with no one-hour writes. Validation rejects a value above the call's
+cache-write total. Schema 1 remains accepted, must omit the field, and is upgraded in
+memory with a null value, so stored data, offline snapshot files, and extraction
+always use the current schema. Clients emit schema 2 and refuse a collector whose
+advertised range excludes it. Revision `0008` adds the nullable `model_calls` column
+without backfilling earlier rows; downgrade to `0007` drops only the duration split and
+keeps every cache-write total. The column is stored for cost estimation but is not yet
+part of reporting datasets, the dashboard, or CSV exports.
 
 Dashboard composition is a separate provider-neutral `DashboardLayout v1` contract,
 not part of the reporting query or dataset. A closed widget registry defines allowed

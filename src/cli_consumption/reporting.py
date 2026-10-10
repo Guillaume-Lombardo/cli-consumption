@@ -54,6 +54,22 @@ REPORT_TABLES = (
     "subagents",
     "ingestion_runs",
 )
+# Stored columns that no reporting, dashboard, or CSV contract publishes yet. Only
+# snapshot extraction, which transfers stored rows between databases, selects them.
+UNREPORTED_COLUMNS: dict[str, frozenset[str]] = {
+    "model_calls": frozenset({"cache_write_1h_input_tokens"}),
+}
+
+
+def reported_columns(table_name: str) -> list[str]:
+    """Return the stored column names a reporting surface may expose, in order."""
+    model = TABLES.get(table_name)
+    if model is None:
+        raise ValueError(f"Unknown table: {table_name}")
+    hidden = UNREPORTED_COLUMNS.get(table_name, frozenset())
+    return [
+        column.name for column in model.__table__.columns if column.name not in hidden
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,8 +135,15 @@ def iter_report_rows(
     *,
     batch_size: int = 1_000,
     filters: ReportFilters | None = None,
+    include_unreported: bool = False,
 ) -> Iterator[dict[str, Any]]:
-    statement = report_statement(connection, table_name, window, filters=filters)
+    statement = report_statement(
+        connection,
+        table_name,
+        window,
+        filters=filters,
+        include_unreported=include_unreported,
+    )
     result = connection.execution_options(
         stream_results=True, yield_per=batch_size
     ).execute(statement)
@@ -152,6 +175,7 @@ def report_estimate_statement(
     *,
     table_names: tuple[str, ...] = REPORT_TABLES,
     filters: ReportFilters | None = None,
+    include_unreported: bool = False,
 ) -> Any:
     """Build one statement so all table estimates share one database snapshot."""
     active_window = window or ExportWindow()
@@ -162,6 +186,7 @@ def report_estimate_statement(
             table_name,
             active_window,
             filters=filters,
+            include_unreported=include_unreported,
         ).order_by(None)
         rows = selected.subquery(f"selected_{table_name}")
         byte_lengths = [_byte_length(column, connection) for column in rows.c]
@@ -190,6 +215,7 @@ def report_statement(
     window: ExportWindow | None = None,
     *,
     filters: ReportFilters | None = None,
+    include_unreported: bool = False,
 ) -> Select[Any]:
     model = TABLES.get(table_name)
     if model is None:
@@ -201,7 +227,11 @@ def report_statement(
         window or ExportWindow(),
         active_filters,
     )
-    statement = select(table)
+    statement = (
+        select(table)
+        if include_unreported
+        else select(*(table.c[name] for name in reported_columns(table_name)))
+    )
     active_window = window or ExportWindow()
     selection_is_filtered = active_window.bounded or active_filters != ReportFilters()
     if selection_is_filtered:

@@ -28,6 +28,7 @@ from cli_consumption.dashboard import (
 )
 from cli_consumption.exporting import export_csv
 from cli_consumption.models import Snapshot
+from cli_consumption.schema import SchemaCompatibilityError
 from cli_consumption.storage import (
     SCHEMA_TABLES,
     TABLES,
@@ -275,6 +276,11 @@ def test_existing_database_gains_additive_analytics_tables(tmp_path: Path) -> No
     )
     for table_name in original_tables:
         cast(Table, TABLES[table_name].__table__).create(engine)
+    with engine.begin() as connection:
+        # The original tables predate the revision-0008 cache-write duration.
+        connection.execute(
+            text("ALTER TABLE model_calls DROP COLUMN cache_write_1h_input_tokens")
+        )
 
     assert "work_items" not in inspect(engine).get_table_names()
     initialize_database(engine)
@@ -282,6 +288,23 @@ def test_existing_database_gains_additive_analytics_tables(tmp_path: Path) -> No
     assert set(SCHEMA_TABLES) | {"alembic_version"} == set(
         inspect(engine).get_table_names()
     )
+    assert "cache_write_1h_input_tokens" in {
+        column["name"] for column in inspect(engine).get_columns("model_calls")
+    }
+    engine.dispose()
+
+
+def test_partial_unversioned_database_with_revision_0008_column_is_rejected(
+    tmp_path: Path,
+) -> None:
+    engine = create_database_engine(tmp_path / "partial-0008.sqlite")
+    for table_name in ("conversations", "model_calls"):
+        cast(Table, TABLES[table_name].__table__).create(engine)
+
+    with pytest.raises(SchemaCompatibilityError, match="published schema"):
+        initialize_database(engine)
+
+    assert set(inspect(engine).get_table_names()) == {"conversations", "model_calls"}
     engine.dispose()
 
 

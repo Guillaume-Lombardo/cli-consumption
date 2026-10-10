@@ -368,7 +368,7 @@ def test_rejects_non_current_or_modified_schema_without_migrating(
     with check.connect() as connection:
         revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
     assert revision == (
-        "0004" if mutation == "old" else "9999" if mutation == "new" else "0007"
+        "0004" if mutation == "old" else "9999" if mutation == "new" else "0008"
     )
     check.dispose()
 
@@ -499,8 +499,8 @@ def test_wal_extraction_uses_one_snapshot_during_concurrent_ingestion(
     release_reader = Event()
     original_iter = extraction_module.iter_report_rows
 
-    def paused_iter(connection, table_name, window, *, batch_size=1_000):
-        yield from original_iter(connection, table_name, window, batch_size=batch_size)
+    def paused_iter(connection, table_name, window, **options):
+        yield from original_iter(connection, table_name, window, **options)
         if table_name == "conversations":
             conversations_read.set()
             assert release_reader.wait(5)
@@ -564,3 +564,42 @@ def test_orphan_wal_without_shm_in_read_only_directory_fails_generically(
         keeper.rollback()
         keeper.close()
         engine.dispose()
+
+
+def test_extraction_transfers_the_cache_write_duration_split(tmp_path: Path) -> None:
+    database = tmp_path / "usage.sqlite"
+    engine = create_database_engine(database)
+    snapshot = _snapshot("claude", "durations", complete=True)
+    call = snapshot.model_calls[0]
+    call.update(
+        input_tokens=9,
+        cache_write_input_tokens=9,
+        total_tokens=9,
+        cache_write_1h_input_tokens=4,
+    )
+    snapshot.conversations[0].update(
+        input_tokens=9, cache_write_input_tokens=9, total_tokens=9
+    )
+    unreported = dict(call, id=f"{call['id']}:unreported", sequence=1)
+    unreported["cache_write_1h_input_tokens"] = None
+    snapshot.model_calls.append(unreported)
+    snapshot.conversations[0]["model_calls"] = 2
+    ingest_snapshot(engine, snapshot)
+    engine.dispose()
+
+    [extracted] = extract_snapshots(database)
+
+    assert extracted.schema_version == 2
+    assert [
+        (row["id"], row["cache_write_1h_input_tokens"]) for row in extracted.model_calls
+    ] == [
+        ("claude:durations:call", 4),
+        ("claude:durations:call:unreported", None),
+    ]
+    target = create_database_engine(tmp_path / "copy.sqlite")
+    try:
+        ingest_snapshot(target, extracted)
+        [copied] = extract_snapshots(tmp_path / "copy.sqlite")
+        assert copied.model_calls == extracted.model_calls
+    finally:
+        target.dispose()

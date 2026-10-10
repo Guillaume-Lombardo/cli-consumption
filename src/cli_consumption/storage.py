@@ -119,6 +119,9 @@ class ModelCall(Base):
     visible_output_tokens: Mapped[int] = mapped_column(BigInteger)
     unattributed_tokens: Mapped[int] = mapped_column(BigInteger)
     total_tokens: Mapped[int] = mapped_column(BigInteger)
+    # Revision 0008: subset of cache_write_input_tokens with a one-hour lifetime;
+    # null when the provider does not report a cache-write duration breakdown.
+    cache_write_1h_input_tokens: Mapped[int | None] = mapped_column(BigInteger)
 
 
 class ToolCall(Base):

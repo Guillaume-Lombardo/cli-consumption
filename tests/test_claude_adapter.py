@@ -11,6 +11,7 @@ from cli_consumption.adapters._shared import ProviderDataLimitError
 from cli_consumption.adapters.claude import ClaudeAdapter
 from cli_consumption.dashboard import generate_dashboard
 from cli_consumption.exporting import export_csv
+from cli_consumption.models import Snapshot
 from cli_consumption.storage import (
     TABLES,
     create_database_engine,
@@ -156,6 +157,10 @@ def test_collects_usage_tools_turns_and_compactions(tmp_path: Path) -> None:
     assert conversation["cache_write_input_tokens"] == 10
     assert conversation["output_tokens"] == 30
     assert conversation["total_tokens"] == 287
+    assert conversation["reasoning_output_tokens"] == 0
+    assert {call["cache_write_1h_input_tokens"] for call in snapshot.model_calls} == {
+        None
+    }
     assert [turn["status"] for turn in snapshot.turns] == ["completed", "aborted"]
     assert snapshot.tool_calls[0]["tool_name"] == "Bash"
     assert snapshot.compaction_events[0]["turn_id"] == "claude:session-1:prompt-2"
@@ -588,3 +593,405 @@ def test_project_named_subagents_is_not_an_agent_transcript(tmp_path: Path) -> N
     snapshot = ClaudeAdapter().collect([("machine", home)])
     assert [row["external_id"] for row in snapshot.conversations] == ["parent"]
     assert not snapshot.subagents
+
+
+def _response(
+    message_id: str,
+    usage: dict[str, Any],
+    *,
+    session_id: str = "session-r",
+    model: str = "claude-sonnet-4-5",
+    stop_reason: str | None = "end_turn",
+    second: int = 1,
+    identity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "sessionId": session_id,
+        **(identity or {}),
+        "type": "assistant",
+        "requestId": f"{message_id}-request",
+        "timestamp": f"2026-10-09T08:00:{second:02d}Z",
+        "message": {
+            "id": message_id,
+            "model": model,
+            "stop_reason": stop_reason,
+            "usage": usage,
+            "content": [{"type": "text", "text": "privacy canary"}],
+        },
+    }
+
+
+def _prompt(
+    session_id: str = "session-r", identity: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return {
+        "sessionId": session_id,
+        **(identity or {}),
+        "type": "user",
+        "uuid": f"{session_id}-prompt",
+        "timestamp": "2026-10-09T08:00:00Z",
+        "message": {"role": "user", "content": "privacy canary"},
+    }
+
+
+def _collect_session(tmp_path: Path, events: list[dict[str, Any]]):
+    home = tmp_path / "claude"
+    _write_jsonl(home / "projects" / "p" / "session-r.jsonl", [_prompt(), *events])
+    snapshot = ClaudeAdapter().collect([("machine", home)])
+    # Every emitted record must satisfy the strict provider-neutral contract.
+    Snapshot.from_dict(snapshot.to_dict())
+    assert "privacy canary" not in json.dumps(snapshot.to_dict())
+    return snapshot
+
+
+def _split(call: dict[str, Any]) -> tuple[int, int, int]:
+    return (
+        call["output_tokens"],
+        call["reasoning_output_tokens"],
+        call["visible_output_tokens"],
+    )
+
+
+def test_thinking_tokens_are_a_bounded_reasoning_subset_of_output(
+    tmp_path: Path,
+) -> None:
+    details: list[object] = [
+        {"thinking_tokens": 30},
+        {"thinking_tokens": 500},
+        {"thinking_tokens": -4},
+        {"thinking_tokens": "12"},
+        {"thinking_tokens": 7.9},
+        {"thinking_tokens": True},
+        {"thinking_tokens": float("nan")},
+        {"thinking_tokens": None},
+        {},
+        "privacy canary",
+        [30],
+    ]
+    events = [
+        _response(
+            f"m-{index}",
+            {"input_tokens": 1, "output_tokens": 100, "output_tokens_details": value},
+            second=index + 1,
+        )
+        for index, value in enumerate(details)
+    ]
+    events.append(_response("m-small", {"input_tokens": 1, "output_tokens": 20}))
+    events[-1]["message"]["usage"]["output_tokens_details"] = {"thinking_tokens": 50}
+    events.append(
+        _response(
+            "m-absent",
+            {"input_tokens": 1, "output_tokens": 8},
+            second=59,
+        )
+    )
+
+    snapshot = _collect_session(tmp_path, events)
+
+    assert [_split(call) for call in snapshot.model_calls] == [
+        (100, 30, 70),
+        (100, 100, 0),
+        (100, 0, 100),
+        (100, 0, 100),
+        (100, 7, 93),
+        (100, 0, 100),
+        (100, 0, 100),
+        (100, 0, 100),
+        (100, 0, 100),
+        (100, 0, 100),
+        (100, 0, 100),
+        (20, 20, 0),
+        (8, 0, 8),
+    ]
+    conversation = snapshot.conversations[0]
+    assert conversation["output_tokens"] == 1128
+    assert conversation["reasoning_output_tokens"] == 157
+    assert conversation["visible_output_tokens"] == 971
+    assert snapshot.turns[0]["reasoning_output_tokens"] == 157
+
+
+ADVISOR_USAGE: dict[str, Any] = {
+    "input_tokens": 1760,
+    "cache_read_input_tokens": 412,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 531,
+    "output_tokens_details": {"thinking_tokens": 31},
+    "iterations": [
+        {
+            "type": "message",
+            "input_tokens": 412,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 89,
+        },
+        {
+            "type": "advisor_message",
+            "model": "claude-opus-5",
+            "input_tokens": 823,
+            "cache_read_input_tokens": 100,
+            "cache_creation_input_tokens": 50,
+            "cache_creation": {
+                "ephemeral_5m_input_tokens": 20,
+                "ephemeral_1h_input_tokens": 30,
+            },
+            "output_tokens": 1612,
+        },
+        {
+            "type": "message",
+            "model": None,
+            "input_tokens": 1348,
+            "cache_read_input_tokens": 412,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 442,
+        },
+        {"type": "compaction", "input_tokens": 9_000, "output_tokens": 900},
+        {
+            "type": "fallback_message",
+            "model": "claude-haiku-4-5",
+            "input_tokens": 7_000,
+            "output_tokens": 700,
+        },
+        {"type": "advisor_message", "input_tokens": 5, "output_tokens": 6},
+        {
+            "type": "advisor_message",
+            "model": "privacy canary",
+            "input_tokens": -5,
+            "output_tokens": "6",
+        },
+        {"type": "advisor_message", "model": "", "input_tokens": 2.5},
+        {"type": "ADVISOR_MESSAGE", "model": "claude-opus-5", "input_tokens": 1},
+        "privacy canary",
+        None,
+    ],
+}
+
+
+def test_advisor_iterations_are_separate_model_calls_under_their_own_model(
+    tmp_path: Path,
+) -> None:
+    events = [
+        # Streaming fragments of one response share its identifiers; only the
+        # most complete fragment, with its own advisor iterations, is counted.
+        _response(
+            "m-advised",
+            {**ADVISOR_USAGE, "iterations": ADVISOR_USAGE["iterations"][:2]},
+            stop_reason=None,
+        ),
+        _response("m-advised", ADVISOR_USAGE, second=2),
+        _response(
+            "m-plain",
+            {"input_tokens": 3, "output_tokens": 4, "iterations": "privacy canary"},
+            model="claude-haiku-4-5",
+            second=3,
+        ),
+    ]
+
+    snapshot = _collect_session(tmp_path, events)
+
+    calls = snapshot.model_calls
+    assert [
+        (call["sequence"], call["model"], call["input_tokens"], call["output_tokens"])
+        for call in calls
+    ] == [
+        # Top-level usage is the executor only; message, compaction, and fallback
+        # iterations are never added to it again.
+        (1, "claude-sonnet-4-5", 2172, 531),
+        (2, "claude-opus-5", 973, 1612),
+        (3, "unknown", 5, 6),
+        (4, "unknown", 0, 0),
+        (5, "unknown", 2, 0),
+        (6, "claude-haiku-4-5", 3, 4),
+    ]
+    assert [call["id"] for call in calls] == [
+        f"claude:session-r:model:{sequence}" for sequence in range(1, 7)
+    ]
+    assert {call["timestamp"] for call in calls[:5]} == {"2026-10-09T08:00:02+00:00"}
+    assert _split(calls[0]) == (531, 31, 500)
+    assert _split(calls[1]) == (1612, 0, 1612)
+    assert calls[1]["cached_input_tokens"] == 100
+    assert calls[1]["cache_write_input_tokens"] == 50
+    assert calls[1]["cache_write_1h_input_tokens"] == 30
+    assert calls[0]["cache_write_1h_input_tokens"] is None
+
+    conversation = snapshot.conversations[0]
+    assert conversation["model_calls"] == 6
+    assert conversation["models"] == [
+        "claude-haiku-4-5",
+        "claude-opus-5",
+        "claude-sonnet-4-5",
+        "unknown",
+    ]
+    assert conversation["total_tokens"] == sum(call["total_tokens"] for call in calls)
+    assert conversation["total_tokens"] == 2703 + 2585 + 11 + 0 + 2 + 7
+    [turn] = snapshot.turns
+    assert turn["model_calls"] == 6
+    assert turn["total_tokens"] == conversation["total_tokens"]
+    # Advisors do not make a single-executor turn look like a model mix.
+    assert snapshot.turn_settings[0]["model"] is None
+    events[2]["message"]["model"] = "claude-sonnet-4-5"
+    single_executor = _collect_session(tmp_path / "single", events)
+    assert single_executor.turn_settings[0]["model"] == "claude-sonnet-4-5"
+
+
+def test_cache_write_one_hour_share_is_bounded_or_unreported(
+    tmp_path: Path,
+) -> None:
+    breakdowns: list[object] = [
+        {"ephemeral_5m_input_tokens": 10, "ephemeral_1h_input_tokens": 30},
+        {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 90},
+        {"ephemeral_5m_input_tokens": 40, "ephemeral_1h_input_tokens": 0},
+        {"ephemeral_1h_input_tokens": 12.9},
+        {"ephemeral_5m_input_tokens": 40},
+        {"ephemeral_1h_input_tokens": -1},
+        {"ephemeral_1h_input_tokens": "30"},
+        {"ephemeral_1h_input_tokens": True},
+        {"ephemeral_1h_input_tokens": None},
+        {"ephemeral_1h_input_tokens": float("inf")},
+        "privacy canary",
+        None,
+    ]
+    events = [
+        _response(
+            f"m-{index}",
+            {
+                "input_tokens": 1,
+                "cache_creation_input_tokens": 40,
+                "cache_creation": value,
+                "output_tokens": 1,
+            },
+            second=index + 1,
+        )
+        for index, value in enumerate(breakdowns)
+    ]
+    events.append(
+        _response(
+            "m-no-total",
+            {
+                "input_tokens": 1,
+                "cache_creation_input_tokens": -3,
+                "cache_creation": {"ephemeral_1h_input_tokens": 5},
+                "output_tokens": 1,
+            },
+            second=40,
+        )
+    )
+    events.append(
+        _response("m-absent", {"input_tokens": 1, "output_tokens": 1}, second=41)
+    )
+
+    snapshot = _collect_session(tmp_path, events)
+
+    assert [
+        (call["cache_write_input_tokens"], call["cache_write_1h_input_tokens"])
+        for call in snapshot.model_calls
+    ] == [
+        (40, 30),
+        (40, 40),
+        (40, 0),
+        (40, 12),
+        (40, None),
+        (40, None),
+        (40, None),
+        (40, None),
+        (40, None),
+        (40, None),
+        (40, None),
+        (40, None),
+        (0, 0),
+        (0, None),
+    ]
+
+
+def test_sidechain_replay_drops_replayed_advisor_iterations(tmp_path: Path) -> None:
+    home = tmp_path / "claude"
+    project = home / "projects" / "p"
+    _write_jsonl(
+        project / "session-r.jsonl",
+        [_prompt(), _response("m-advised", ADVISOR_USAGE)],
+    )
+    sidechain = {"isSidechain": True, "agentId": "aside"}
+    _write_jsonl(
+        project / "session-r" / "subagents" / "agent-aside.jsonl",
+        [
+            _prompt(identity=sidechain),
+            _response("m-advised", ADVISOR_USAGE, identity=sidechain, second=5),
+            _response(
+                "m-own",
+                {
+                    "input_tokens": 2,
+                    "output_tokens": 3,
+                    "iterations": [
+                        {
+                            "type": "advisor_message",
+                            "model": "claude-opus-5",
+                            "input_tokens": 7,
+                            "output_tokens": 11,
+                        }
+                    ],
+                },
+                identity=sidechain,
+                second=6,
+            ),
+        ],
+    )
+
+    snapshot = ClaudeAdapter().collect([("machine", home)])
+
+    child = [
+        call
+        for call in snapshot.model_calls
+        if call["conversation_id"] == "claude:session-r:agent:aside"
+    ]
+    assert [(call["model"], call["total_tokens"]) for call in child] == [
+        ("claude-sonnet-4-5", 5),
+        ("claude-opus-5", 18),
+    ]
+    assert snapshot.subagents[0]["tokens_used"] == 23
+    parent = next(
+        row for row in snapshot.conversations if row["external_id"] == "session-r"
+    )
+    assert parent["model_calls"] == 5
+
+
+def test_advisor_calls_and_cache_durations_are_stored_idempotently(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "claude"
+    _write_jsonl(
+        home / "projects" / "p" / "session-r.jsonl",
+        [_prompt(), _response("m-advised", ADVISOR_USAGE)],
+    )
+    engine = create_database_engine(tmp_path / "usage.sqlite")
+    try:
+        first = ingest_snapshot(engine, ClaudeAdapter().collect([("machine", home)]))
+        stored = read_table(engine, "model_calls")
+        second = ingest_snapshot(engine, ClaudeAdapter().collect([("machine", home)]))
+        assert read_table(engine, "model_calls") == stored
+        output = tmp_path / "reports"
+        paths = export_csv(engine, output)
+        dashboard = output / "dashboard.html"
+        generate_dashboard(engine, dashboard)
+    finally:
+        engine.dispose()
+
+    assert (first.written, second.written, second.skipped) == (1, 0, 1)
+    assert [
+        (
+            row["model"],
+            row["cache_write_1h_input_tokens"],
+            row["reasoning_output_tokens"],
+        )
+        for row in stored
+    ] == [
+        ("claude-sonnet-4-5", None, 31),
+        ("claude-opus-5", 30, 0),
+        ("unknown", None, 0),
+        ("unknown", None, 0),
+        ("unknown", None, 0),
+    ]
+    # The duration split is stored for cost estimation but not yet published.
+    model_calls_csv = (output / "model_calls.csv").read_text().splitlines()[0]
+    assert "cache_write_1h_input_tokens" not in model_calls_csv
+    assert "cache_write_input_tokens" in model_calls_csv
+    assert "cache_write_1h" not in dashboard.read_text()
+    assert all("privacy canary" not in path.read_text() for path in paths)

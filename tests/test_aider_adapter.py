@@ -171,7 +171,7 @@ def test_privacy_canary_is_absent_from_surfaces(
 
     class CapabilitiesResponse(Response):
         def json(self) -> dict[str, int | str]:
-            return {"snapshot_schema_min": 1, "snapshot_schema_max": 1}
+            return {"snapshot_schema_min": 1, "snapshot_schema_max": 2}
 
     class Client:
         def __init__(self, **_kwargs: Any) -> None:

@@ -63,7 +63,7 @@ class ClaudeAdapter:
                 _classify(machine, projects, path)
                 for path in budget.sorted_paths(paths)
             )
-        selected, duplicates, malformed, _ = self._select(
+        selected, duplicates, malformed = self._select(
             transcripts, project_mappings or [], budget
         )
         return self._snapshot(selected, duplicates, malformed)
@@ -73,26 +73,23 @@ class ClaudeAdapter:
         sources: list[tuple[str, Path]],
         project_mappings: list[tuple[str, str]] | None = None,
     ) -> Iterator[CollectionBatch]:
-        """Yield bounded batches whose replay filtering matches one collection.
+        """Yield bounded batches whose results equal one collection.
 
-        A batch group holds every copied-source copy of one session transcript with
-        every copy of the nested subagent transcripts stored under that session
-        directory, so a nested transcript is always normalized against the same
-        winning parent copy as a single collection. Legacy flat agent transcripts
-        are read after every session group; the response identifiers of the winning
-        parent copies in projects that contain them are carried until then.
-        Relationships use merge semantics because one batch never sees the whole
-        provider/source-machine graph.
+        A first pass reads each transcript only until it knows the identities that
+        duplicate selection and replay filtering use. Every transcript sharing one
+        of those identities, across all sources and project directories, lands in
+        the same indivisible batch group, so each group is normalized exactly as a
+        single collection would normalize it. Relationships use merge semantics
+        because one batch never sees the whole provider/source-machine graph.
         """
         mappings = project_mappings or []
         for _, home in sources:
             if not (home / "projects").is_dir():
                 raise ValueError("Missing Claude Code projects directory")
-        carried: dict[str, _CarriedMessages] = {}
         yielded = False
         for batch in iter_collection_batches(
             _transcript_groups(sources),
-            lambda items: self._collect_batch(items, mappings, carried),
+            lambda items: self._collect_batch(items, mappings),
             candidates_per_batch=INCREMENTAL_CANDIDATES_PER_BATCH,
             subagent_merge=True,
         ):
@@ -104,26 +101,13 @@ class ClaudeAdapter:
             )
 
     def _collect_batch(
-        self,
-        transcripts: list[_Transcript],
-        mappings: list[tuple[str, str]],
-        carried: dict[str, _CarriedMessages],
+        self, transcripts: list[_Transcript], mappings: list[tuple[str, str]]
     ) -> Snapshot:
         budget = ProviderInputBudget()
-        selected, duplicates, malformed, retained = self._select(
-            list(charge_candidates(transcripts, budget)),
-            mappings,
-            budget,
-            carried=carried,
+        selected, duplicates, malformed = self._select(
+            list(charge_candidates(transcripts, budget)), mappings, budget
         )
-        snapshot = self._snapshot(selected, duplicates, malformed)
-        # Commit carried state only after the whole batch succeeded, keeping the
-        # identifiers of the most complete parent copy seen so far.
-        for key, value in retained.items():
-            previous = carried.get(key)
-            if previous is None or value[0] > previous[0]:
-                carried[key] = value
-        return snapshot
+        return self._snapshot(selected, duplicates, malformed)
 
     def _snapshot(
         self, selected: dict[str, _Selection], duplicates: int, malformed: int
@@ -145,18 +129,12 @@ class ClaudeAdapter:
         transcripts: list[_Transcript],
         mappings: list[tuple[str, str]],
         budget: ProviderInputBudget,
-        *,
-        carried: dict[str, _CarriedMessages] | None = None,
-    ) -> tuple[dict[str, _Selection], int, int, dict[str, _CarriedMessages]]:
+    ) -> tuple[dict[str, _Selection], int, int]:
         # Each file is read once. Only the normalized, content-free records of the
         # most complete copy of each session or subagent are retained between files.
-        # Incremental batches (``carried`` is not None) retain parent identifiers
-        # only for sessions in projects that contain legacy agent transcripts and
-        # also consult the winning parent copies of earlier batches.
-        incremental = carried is not None
         selected: dict[str, _Selection] = {}
         retained_records = 0
-        retained_message_ids = sum(len(value[1]) for value in (carried or {}).values())
+        retained_message_ids = 0
         duplicates = malformed = 0
         sessions = [item for item in transcripts if not item.agent]
         agents = [item for item in transcripts if item.agent]
@@ -166,8 +144,7 @@ class ClaudeAdapter:
         # only until agent transcripts have been read.
         parents = {item.parent for item in agents if item.parent is not None}
         has_legacy_agents = any(item.parent is None for item in agents)
-        parent_messages: dict[str, _CarriedMessages] = {}
-        legacy_parents: set[str] = set()
+        parent_messages: dict[str, set[str]] = {}
 
         def choose(key: str, rank: tuple[int, str]) -> bool:
             nonlocal duplicates, retained_records
@@ -192,17 +169,12 @@ class ClaudeAdapter:
             if not choose(session_id, rank):
                 del events
                 continue
-            legacy = item.legacy_agents if incremental else has_legacy_agents
-            if session_id in parents or legacy:
-                previous_ids = parent_messages.pop(session_id, None)
-                if previous_ids is not None:
-                    retained_message_ids -= len(previous_ids[1])
+            if session_id in parents or has_legacy_agents:
+                retained_message_ids -= len(parent_messages.pop(session_id, set()))
                 identifiers = _message_ids(
                     events, models.MAX_SNAPSHOT_RECORDS - retained_message_ids
                 )
-                parent_messages[session_id] = (rank, identifiers)
-                if legacy:
-                    legacy_parents.add(session_id)
+                parent_messages[session_id] = identifiers
                 retained_message_ids += len(identifiers)
                 del identifiers
             records = Snapshot(
@@ -236,7 +208,7 @@ class ClaudeAdapter:
             if not choose(external_id, rank):
                 del events
                 continue
-            replayed = _parent_messages(session_id, parent_messages, carried or {})
+            replayed = parent_messages.get(session_id, set())
             records = Snapshot(
                 provider=self.name,
                 _record_limit=models.MAX_SNAPSHOT_RECORDS - retained_records - 1,
@@ -263,12 +235,7 @@ class ClaudeAdapter:
                 len(getattr(records, name)) for name in _RECORD_COLLECTIONS
             )
             selected[external_id] = (rank, records, edge)
-        retained = {
-            key: value
-            for key, value in parent_messages.items()
-            if incremental and key in legacy_parents
-        }
-        return selected, duplicates, malformed, retained
+        return selected, duplicates, malformed
 
     def _read(
         self,
@@ -490,8 +457,6 @@ _RECORD_COLLECTIONS = (
 
 
 _Selection = tuple[tuple[int, str], Snapshot, dict[str, Any] | None]
-# (winning parent rank, response identifiers)
-_CarriedMessages = tuple[tuple[int, str], set[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,12 +465,9 @@ class _Transcript:
     path: Path
     agent: bool
     parent: str | None
-    legacy_agents: bool = False
 
 
-def _classify(
-    machine: str, projects: Path, path: Path, *, legacy_agents: bool = False
-) -> _Transcript:
+def _classify(machine: str, projects: Path, path: Path) -> _Transcript:
     parts = path.relative_to(projects).parts
     agent = (len(parts) >= 4 and parts[2] == "subagents") or path.name.startswith(
         "agent-"
@@ -515,76 +477,123 @@ def _classify(
         path=path,
         agent=agent,
         parent=_nested_agent_session(parts) if agent else None,
-        legacy_agents=legacy_agents,
     )
 
 
 def _transcript_groups(
     sources: list[tuple[str, Path]],
 ) -> Iterator[list[_Transcript]]:
-    """Index every source into deterministic, indivisible batch groups.
+    """Group transcripts by every identity shared during one collection.
 
-    One group holds every source's ``<project>/<session>.jsonl`` copy and every
-    ``<project>/<session>/subagents/**/agent-*.jsonl`` copy for one session name, in
-    the source and path order used by a single collection. Legacy flat agent
-    transcripts follow all session groups, one transcript per group. Only paths are
-    indexed; the index shares the incremental listing bound.
+    In a single collection a session copy interacts with other transcripts only
+    through its selection key (its session ID), and a subagent copy only through its
+    selection key and the session ID it is filtered against. Joining those keys
+    into connected components across all sources and project directories yields
+    groups with no interaction between them, so normalizing each group alone is
+    exactly the single-collection result. Members keep the single-collection order:
+    source order, then sorted paths.
     """
-    groups: dict[str, list[tuple[int, Path]]] = {}
-    legacy: list[tuple[int, Path]] = []
-    legacy_projects: set[str] = set()
-    indexed = 0
-    for index, (_, home) in enumerate(sources):
-        projects = home / "projects"
-        for directory in bounded_sorted_paths(projects.iterdir()):
-            if not directory.is_dir():
-                continue
-            entries = [
-                *bounded_sorted_paths(directory.glob("*.jsonl")),
-                *bounded_sorted_paths(directory.glob("*/subagents/**/agent-*.jsonl")),
-            ]
-            indexed += len(entries)
-            if indexed > MAX_INCREMENTAL_LISTING:
-                raise ProviderDataLimitError(
-                    "provider_incremental_listing_limit_exceeded"
-                )
-            for path in entries:
-                parts = path.relative_to(directory).parts
-                if len(parts) == 1 and path.name.startswith("agent-"):
-                    legacy.append((index, path))
-                    legacy_projects.add(directory.name)
-                else:
-                    key = path.stem if len(parts) == 1 else parts[0]
-                    groups.setdefault(key, []).append((index, path))
+    members: list[tuple[int, Path, _Transcript, str | None]] = []
+    roots: dict[str, str] = {}
 
-    def transcript(index: int, path: Path) -> _Transcript:
-        machine, home = sources[index]
+    def find(key: str) -> str:
+        roots.setdefault(key, key)
+        while roots[key] != key:
+            roots[key] = roots[roots[key]]
+            key = roots[key]
+        return key
+
+    for index, (machine, home) in enumerate(sources):
         projects = home / "projects"
-        return _classify(
-            machine,
-            projects,
-            path,
-            legacy_agents=path.relative_to(projects).parts[0] in legacy_projects,
+        paths = bounded_sorted_paths(
+            chain(
+                projects.glob("*/*.jsonl"),
+                projects.glob("*/*/subagents/**/agent-*.jsonl"),
+            )
         )
+        if len(members) + len(paths) > MAX_INCREMENTAL_LISTING:
+            raise ProviderDataLimitError("provider_incremental_listing_limit_exceeded")
+        for path in paths:
+            item = _classify(machine, projects, path)
+            key, parent = _identity(item)
+            if key is not None and parent is not None:
+                roots[find(key)] = find(parent)
+            members.append((index, path, item, key))
 
-    for key in sorted(groups):
-        yield [transcript(index, path) for index, path in sorted(groups[key])]
-    for index, path in legacy:
-        yield [transcript(index, path)]
+    groups: dict[str, list[tuple[int, Path, _Transcript]]] = {}
+    isolated: list[list[tuple[int, Path, _Transcript]]] = []
+    for index, path, item, key in members:
+        if key is None:
+            isolated.append([(index, path, item)])
+        else:
+            groups.setdefault(find(key), []).append((index, path, item))
+    ordered = sorted(
+        [*groups.values(), *isolated], key=lambda group: (group[0][0], group[0][1])
+    )
+    for group in ordered:
+        yield [item for _, _, item in group]
 
 
-def _parent_messages(
-    key: str,
-    local: dict[str, _CarriedMessages],
-    carried: dict[str, _CarriedMessages],
-) -> set[str]:
-    current = local.get(key)
-    previous = carried.get(key)
-    if current is None:
-        return previous[1] if previous is not None else set()
-    if previous is not None and previous[0] > current[0]:
-        return previous[1]
-    return current[1]
+def _identity(item: _Transcript) -> tuple[str | None, str | None]:
+    """Return the selection key and, for a subagent, its parent session ID.
+
+    Reads only until the labels used by ``_load_events`` and ``_agent_id`` are
+    found; the whole file is read only when one is absent. ``None`` marks a
+    transcript that a single collection skips as malformed.
+    """
+    session_label, agent_label, digest = _scan_identity(
+        item.path,
+        session=not item.agent or item.parent is None,
+        agent=item.agent,
+    )
+    if not item.agent:
+        key = (
+            session_label
+            or _label(item.path.stem, 512)
+            or f"session-{(digest or '')[:24]}"
+        )
+        return key, None
+    parent = item.parent or session_label
+    stem = item.path.stem
+    agent_id = agent_label or (
+        _label(stem.removeprefix("agent-"), 255) if stem.startswith("agent-") else None
+    )
+    if parent is None or agent_id is None:
+        return None, None
+    external_id = _label(f"{parent}:agent:{agent_id}", 512)
+    return (external_id, parent) if external_id is not None else (None, None)
+
+
+def _scan_identity(
+    path: Path, *, session: bool, agent: bool
+) -> tuple[str | None, str | None, str | None]:
+    budget = ProviderInputBudget()
+    digest = hashlib.sha256()
+    session_label = agent_label = None
+    lines = iter_bounded_jsonl_bytes(path, budget)
+    try:
+        for line in lines:
+            digest.update(line)
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(event, dict):
+                continue
+            if session and session_label is None:
+                session_label = _label(event.get("sessionId"), 512)
+            if agent and agent_label is None:
+                agent_label = _label(event.get("agentId"), 255)
+            if (not session or session_label is not None) and (
+                not agent or agent_label is not None
+            ):
+                return session_label, agent_label, None
+    finally:
+        # Stopping early must still release the no-follow descriptor.
+        close = getattr(lines, "close", None)
+        if close is not None:
+            close()
+    return session_label, agent_label, digest.hexdigest()
 
 
 MAX_AGENT_METADATA_BYTES = 64 * 1024

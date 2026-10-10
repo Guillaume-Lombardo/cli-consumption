@@ -123,7 +123,7 @@ stored winner could depend on where a batch boundary falls.
 
 | Provider name | Batched collection | Batch unit or reason |
 | --- | --- | --- |
-| `claude` | yes | Every source's copy of one session transcript plus every copy of its nested subagent transcripts; legacy flat agent transcripts follow all session groups. |
+| `claude` | yes | Every transcript sharing a session or subagent identity across all sources and project directories, found by a bounded identity pass. |
 | `codex` | yes | One rollout file; the SQLite subagent graph is neither read nor replaced. |
 | `amp` | yes | One thread file. |
 | `continue` | yes | One session file. |
@@ -137,18 +137,19 @@ stored winner could depend on where a batch boundary falls.
 | `openhands` | no | Duplicate ranking uses the token-usage count before the hash. |
 | `aider`, `amazon-q`, `cline`, `crush`, `cursor`, `goose`, `kilo`, `opencode`, `plandex` | no | Outside the per-session-file scope of this mechanism; they keep one bounded snapshot. |
 
-Claude Code groups copies across sources, so a nested subagent transcript is always
-normalized against the same winning parent copy as a single collection. Legacy flat
-agent transcripts are read after every session group; until then, batches carry only
-the response identifiers of the most complete copy of each session in a project
-directory that contains legacy transcripts, so sidechain replays are still excluded
-across batch and source boundaries. Each batch records
+Claude Code first reads each transcript only until it finds the session and agent
+identifiers used for duplicate selection, and the whole file only when one is absent.
+It then groups every transcript sharing such an identity across all sources and
+project directories, regardless of file names. Each group therefore contains every
+copy of a parent session and every nested or legacy subagent transcript that
+references it. Sidechain replays are excluded against the same winning parent copy as
+in a single collection. Each batch records
 subagent relationships with merge semantics: a relationship is written when its child
 conversation is written, replaces any relationship recorded for an older copy of that
 child, and is never deleted by a batch. A relationship is restored for an unchanged
 child only from an identical copy of the stored child, never from an older one. A
-single Claude Code session group, including all of its copies, above the 512 MiB
-batch read budget, or carried response identifiers above 250,000, still fail with
+single Claude Code session group, including all of its copies and subagent
+transcripts, above the 512 MiB batch read budget still fails with
 `provider_limit_exceeded`.
 
 ## Mistral Vibe CLI
@@ -278,8 +279,8 @@ discarded. Sidechain responses that replay a parent response identifier, such as
 per machine, so relationships whose transcripts Claude Code has already deleted under
 `cleanupPeriodDays` are removed when a richer collection replaces the graph; their
 conversations and tokens remain stored. Large stores are collected in batches that
-keep each session with its nested subagent transcripts; batches merge relationships
-and never remove one (see [Incremental collection](#incremental-collection)).
+keep every transcript sharing a session identity together; batches merge
+relationships and never remove one (see [Incremental collection](#incremental-collection)).
 
 Claude Code emits uncached, cache-read, and cache-creation input separately. Normalized
 `input_tokens` is their sum, with each component retained in its corresponding field.

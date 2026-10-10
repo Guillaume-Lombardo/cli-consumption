@@ -75,10 +75,9 @@ failure.
 
 Batching resets only aggregate candidate, read, and normalized-record budgets. An
 individually oversized JSONL file or line, an unsafe symlink or file type, an
-oversized single conversation, or a Claude Code session whose copies across all
-sources plus their nested subagent transcripts exceed one batch budget still fail
-with the generic
-`provider_limit_exceeded` code. A separate 10,000-batch command ceiling bounds total
+oversized single conversation, or a Claude Code session whose transcripts across all
+sources and project directories, including its subagent transcripts, exceed one
+batch budget still fail with the generic `provider_limit_exceeded` code. A separate 10,000-batch command ceiling bounds total
 work, one directory listing is capped at 1,000,000 entries, and strict metadata
 staging is capped at 4 GiB.
 

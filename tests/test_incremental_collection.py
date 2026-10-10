@@ -192,20 +192,31 @@ def test_claude_batches_keep_each_session_with_its_subagents(
 
     batches = list(ClaudeAdapter().collect_incrementally([("desktop", home)]))
 
-    # Session groups come first in name order; legacy transcripts follow them.
+    # Each group holds every transcript that shares a session identity, including
+    # legacy flat agent transcripts that name the session only inside the file.
     assert [sorted(_external_ids(batch)) for batch in batches] == [
-        ["beta", "beta:agent:helper"],
-        ["session-1", "session-1:agent:explorer", "session-1:agent:flow"],
-        ["session-1:agent:legacy"],
-        ["beta:agent:old"],
+        [
+            "session-1",
+            "session-1:agent:explorer",
+            "session-1:agent:flow",
+            "session-1:agent:legacy",
+        ],
+        ["beta", "beta:agent:helper", "beta:agent:old"],
     ]
     assert all(batch.subagent_merge for batch in batches)
     assert all(batch.authoritative_subagent_scopes == frozenset() for batch in batches)
-    legacy = batches[2].snapshot
-    # The parent response was read in an earlier batch and is still filtered.
-    assert legacy.conversations[0]["total_tokens"] == 10
-    assert legacy.subagents[0]["parent_thread_id"] == "session-1"
-    assert batches[3].snapshot.conversations[0]["total_tokens"] == 10
+    tokens = {
+        row["external_id"]: row["total_tokens"]
+        for batch in batches
+        for row in batch.snapshot.conversations
+    }
+    assert tokens["session-1:agent:legacy"] == tokens["beta:agent:old"] == 10
+    parents = {
+        row["child_thread_id"]: row["parent_thread_id"]
+        for batch in batches
+        for row in batch.snapshot.subagents
+    }
+    assert parents["session-1:agent:legacy"] == "session-1"
     assert CANARY not in str([batch.snapshot.to_dict() for batch in batches])
 
 
@@ -250,13 +261,10 @@ def test_claude_batches_split_on_read_limit_but_keep_indivisible_groups(
 ) -> None:
     home = _claude_store(tmp_path / "claude")
     projects = home / "projects"
-    session_group = (
-        sum(
-            path.stat().st_size
-            for path in (projects / "-srv-work-acme-service").rglob("*")
-            if path.is_file()
-        )
-        - (projects / "-srv-work-acme-service" / "agent-legacy.jsonl").stat().st_size
+    session_group = sum(
+        path.stat().st_size
+        for path in (projects / "-srv-work-acme-service").rglob("*")
+        if path.is_file()
     )
     monkeypatch.setattr(
         "cli_consumption.adapters._shared.MAX_PROVIDER_READ_BYTES", session_group
@@ -584,9 +592,15 @@ def test_automatic_batches_resume_after_partial_failure(
 ) -> None:
     home = _claude_sessions(tmp_path / "claude", 2)
     project = home / "projects" / "p"
-    target = _write_jsonl(tmp_path / "outside.jsonl", _session_events("z", "m-z"))
-    (project / "z.jsonl").symlink_to(target)
-    monkeypatch.setattr("cli_consumption.adapters._shared.MAX_PROVIDER_CANDIDATES", 2)
+    _write_jsonl(project / "z.jsonl", _session_events("z", "m-z"))
+    nested = project / "z" / "subagents"
+    _write_jsonl(nested / "agent-a.jsonl", _agent_events("a", "m-a", session_id="z"))
+    # Agent metadata is read only while a batch is normalized, after the identity
+    # pass, so this unsafe symlink fails the last batch after two were committed.
+    target = tmp_path / "outside.meta.json"
+    target.write_text(json.dumps({"agentType": "Explore"}), encoding="utf-8")
+    (nested / "agent-a.meta.json").symlink_to(target)
+    monkeypatch.setattr("cli_consumption.adapters._shared.MAX_PROVIDER_CANDIDATES", 3)
     monkeypatch.setattr(claude_module, "INCREMENTAL_CANDIDATES_PER_BATCH", 1)
     database = tmp_path / "resume.sqlite"
     arguments = ["--source", f"desktop={home}", "--database", str(database)]
@@ -604,8 +618,8 @@ def test_automatic_batches_resume_after_partial_failure(
     assert "2 earlier incremental batch(es) were committed" in human_failure.stderr
     assert str(tmp_path) not in failed.output + human_failure.output
 
-    (project / "z.jsonl").unlink()
-    shutil.copyfile(target, project / "z.jsonl")
+    (nested / "agent-a.meta.json").unlink()
+    shutil.copyfile(target, nested / "agent-a.meta.json")
     resumed = _collect(*arguments, "--json")
     fresh_database = tmp_path / "fresh.sqlite"
     fresh = _collect(
@@ -614,7 +628,7 @@ def test_automatic_batches_resume_after_partial_failure(
 
     assert resumed.exit_code == fresh.exit_code == 0, resumed.output
     assert (
-        json.loads(resumed.stdout)["ingestions"][0] | {"written": 3, "skipped": 0}
+        json.loads(resumed.stdout)["ingestions"][0] | {"written": 4, "skipped": 0}
         == (json.loads(fresh.stdout)["ingestions"][0])
     )
     assert json.loads(resumed.stdout)["ingestions"][0]["skipped"] == 2
@@ -622,7 +636,8 @@ def test_automatic_batches_resume_after_partial_failure(
     fresh_engine = create_database_engine(fresh_database)
     try:
         assert _tables(resumed_engine) == _tables(fresh_engine)
-        assert len(read_table(resumed_engine, "conversations")) == 3
+        assert len(read_table(resumed_engine, "conversations")) == 4
+        assert len(read_table(resumed_engine, "subagents")) == 1
     finally:
         resumed_engine.dispose()
         fresh_engine.dispose()
@@ -726,7 +741,7 @@ def test_non_incremental_provider_keeps_all_or_nothing_limit(
     }
 
 
-def test_carried_parent_copy_wins_over_a_poorer_copy_in_a_later_batch(
+def test_copies_sharing_a_session_id_share_a_batch_whatever_their_file_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "claude"
@@ -742,7 +757,7 @@ def test_carried_parent_copy_wins_over_a_poorer_copy_in_a_later_batch(
         _agent_events("legacy", "m-only-a", session_id="s", tokens=100_000)
         + _agent_events("legacy", "m-own", session_id="s")[1:],
     )
-    monkeypatch.setattr(claude_module, "INCREMENTAL_CANDIDATES_PER_BATCH", 2)
+    monkeypatch.setattr(claude_module, "INCREMENTAL_CANDIDATES_PER_BATCH", 1)
 
     batches = list(ClaudeAdapter().collect_incrementally([("desktop", home)]))
     single = create_database_engine(tmp_path / "single.sqlite")
@@ -755,10 +770,13 @@ def test_carried_parent_copy_wins_over_a_poorer_copy_in_a_later_batch(
         single.dispose()
         batched.dispose()
 
+    # Both copies of session "s" and the legacy transcript naming it form one
+    # group; the nested transcript under directory "a" names session "a".
     assert [sorted(_external_ids(batch)) for batch in batches] == [
-        ["a:agent:n", "s"],
+        ["a:agent:n"],
         ["s", "s:agent:legacy"],
     ]
+    assert batches[1].snapshot.duplicate_conversations == 1
     legacy = next(
         row
         for row in batches[1].snapshot.conversations

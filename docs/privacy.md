@@ -154,10 +154,11 @@ temporary directory with private files, ingests only after every batch passes, a
 removes the staging directory on every exit. Machine-readable output adds only a fixed
 `incremental_trigger` label and a per-provider `batched` boolean.
 
-Between Claude Code batches, the collector keeps in memory only the provider response
-identifiers of selected parent sessions in a project that contains legacy flat agent
-transcripts, until those transcripts are read. The identifiers serve only to exclude
-replayed responses and are never persisted, logged, or emitted.
+Before Claude Code batches are formed, an identity pass reads each transcript only
+until it finds the provider session and agent identifiers used for duplicate
+selection, under the per-file and per-line limits. It keeps in memory only paths and
+those identifiers, which serve only to group transcripts and are never persisted,
+logged, or emitted.
 
 Incremental Codex collection does not read or replace SQLite subagent relationships.
 Conversation batches explicitly suppress authoritative subagent-scope replacement, so

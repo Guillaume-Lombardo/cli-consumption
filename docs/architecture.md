@@ -351,17 +351,23 @@ keeps its already collected snapshot. `--no-incremental` disables the switch and
 safely; strict mode stages every validated batch before opening the database. Output
 reports the trigger, a per-provider `batched` flag, and aggregate counters only.
 
-Claude Code first indexes paths (not contents) across every source, under the listing
-bound, and groups every copy of one session transcript with every copy of the nested
-transcripts under the session directory of the same name. Sidechain replay filtering
-therefore always uses the same winning parent copy as a single collection, and the
-session's own relationships never cross a batch boundary. Legacy flat agent
-transcripts follow all session groups, one per group. Until they are read, the
-response identifiers of the most complete copy of each session in a project
-directory containing legacy transcripts are carried in memory under the existing
-250,000-identifier bound. Copies of a child transcript are therefore normalized
-identically wherever a batch boundary falls, and storage converges on the same
-winner by raw rank.
+In one collection, a Claude Code session transcript interacts with other transcripts
+only through its selection key, its session ID. A subagent transcript interacts
+only through its selection key, `<parent>:agent:<agent>`, and the parent session ID
+whose winning copy filters its replays. Batched collection therefore starts with an
+identity pass over every source. The pass reads each transcript only until it finds
+the same first `sessionId` and `agentId` labels that normalization uses, and reads a
+whole file only when a label is absent and the file-name or content-hash fallback
+applies. It keeps only paths and labels, under the 1,000,000-path bound and the
+per-file and per-line limits. The keys are joined into connected components, and
+each component becomes one indivisible group whose members keep the
+single-collection order of source, then sorted path. No selection key or parent
+lookup crosses a group, so normalizing each group alone gives exactly the
+single-collection records, and no duplicate is ever split between batches. This
+holds whatever the file names or project directories of the copies. A randomized
+property test compares batch sizes 1, 2, and 1,000 and a rerun with one collection.
+The residual difference is a transcript rewritten, rather than appended to, between
+the identity pass and its batch, because one collection reads each file only once.
 
 A batch never sees a complete provider/source-machine relationship graph, so Claude
 Code batches use merge semantics instead of graph replacement. In the ingestion
